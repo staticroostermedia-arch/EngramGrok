@@ -23,11 +23,44 @@ Memories are retrieved by **geometric similarity** — the system finds memories
 
 ## Quick Start
 
+> **Integration configs** for all supported IDEs are in [`integrations/`](integrations/)
+
 ### Install
 
 ```bash
 cargo install engram --git https://github.com/StaticRoosterMedia/engram
 ```
+
+### Google Antigravity IDE
+
+Engram ships a ready-to-use config for Google Antigravity IDE.
+
+**One-time install:**
+```bash
+cargo install --git https://github.com/staticroostermedia-arch/engram engram
+```
+
+**Add to `~/.gemini/antigravity/mcp_config.json`:**
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "engram",
+      "args": ["mcp", "--store", "~/.engram/manifold"],
+      "disabled": false
+    }
+  }
+}
+```
+
+Or copy the template directly:
+```bash
+cp integrations/antigravity/mcp_config.json ~/.gemini/antigravity/mcp_config.json
+```
+
+Click **Manage MCP Servers → Refresh** in the Antigravity side panel. The `remember`, `recall`, `forget`, and `list_concepts` tools will appear immediately. Antigravity can now build a persistent geometric memory of your codebase — facts, context, and decisions that survive across sessions.
+
+---
 
 ### Claude Desktop Integration
 

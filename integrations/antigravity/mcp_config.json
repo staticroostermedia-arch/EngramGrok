@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "engram": {
+      "command": "engram",
+      "args": ["mcp", "--store", "~/.engram/manifold"],
+      "disabled": false
+    }
+  }
+}
