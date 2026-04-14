@@ -1,0 +1,19 @@
+[package]
+name        = "engram-cli"
+description = "CLI tool for Engram — remember, recall, forget"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "engram-cli"
+path = "src/main.rs"
+
+[dependencies]
+engram-core = { path = "../engram-core" }
+clap        = { workspace = true }
+serde_json  = { workspace = true }
+anyhow       = { workspace = true }
+shellexpand  = { workspace = true }

@@ -1,0 +1,7 @@
+/target
+.env
+*.leg
+*.leg3
+*.leg3q
+data/manifold/
+~/.engram/

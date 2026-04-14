@@ -1,0 +1,26 @@
+[package]
+name        = "engram-gpu"
+description = "CUDA GPU backend for Engram — LBVH O(log N) K-NN + parallel cosine kernels"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default  = []
+# Enable CUDA kernel compilation via nvcc in build.rs
+cuda-kernels = []
+
+[dependencies]
+engram-core  = { path = "../engram-core", default-features = false }
+num-complex  = { workspace = true }
+anyhow       = { workspace = true }
+tracing      = { workspace = true }
+shellexpand  = { workspace = true }
+libc         = { workspace = true }
+rayon        = { workspace = true }
+
+[build-dependencies]
+# cc is used to compile the CUDA kernels when cuda-kernels feature is enabled
+cc = "1"
