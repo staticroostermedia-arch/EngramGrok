@@ -8,8 +8,9 @@ pub type SharedStore = Arc<Mutex<StoreHandle>>;
 
 /// Wraps a VsaBackend with its configured store path.
 pub struct StoreHandle {
-    backend: CpuBackend,
+    pub backend: CpuBackend,
     path: String,
+    pub daemon: Option<Arc<crate::daemon::DaemonControl>>,
 }
 
 impl StoreHandle {
@@ -19,7 +20,14 @@ impl StoreHandle {
         Self {
             backend: CpuBackend::new(&expanded),
             path: expanded,
+            daemon: None, // Initialized later via boot_daemon
         }
+    }
+
+    pub fn boot_daemon(store_arc: SharedStore) {
+        let control = crate::daemon::spawn(store_arc.clone());
+        let mut lock = store_arc.lock().unwrap();
+        lock.daemon = Some(control);
     }
 
     pub fn store_path(&self) -> &str { &self.path }
@@ -38,6 +46,25 @@ impl StoreHandle {
 
     pub fn list(&self) -> Vec<String> {
         self.backend.list()
+    }
+    pub fn fetch(&self, concept: &str) -> Option<Box<[engram_core::Complex32; 8192]>> {
+        self.backend.fetch(concept)
+    }
+
+    pub fn fetch_block(&self, concept: &str) -> Option<engram_core::types::Leg3Pointer> {
+        self.backend.fetch_block(concept)
+    }
+
+    pub fn encode(&self, text: &str) -> engram_core::types::Leg3Pointer {
+        self.backend.encode(text)
+    }
+
+    pub fn query(&self, query_vec: &[engram_core::Complex32; 8192], k: usize) -> Vec<Memory> {
+        self.backend.query(query_vec, k)
+    }
+
+    pub fn store(&self, concept: &str, block: engram_core::types::Leg3Pointer) -> anyhow::Result<()> {
+        self.backend.store(concept, block)
     }
 }
 

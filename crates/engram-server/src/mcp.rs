@@ -132,6 +132,34 @@ fn tool_list() -> Value {
                     "type": "object",
                     "properties": {}
                 }
+            },
+            {
+                "name": "mcp_engram_watch_workspace",
+                "description": "Tell the background Agentic Daemon to recursively watch a specific directory for native file-saves.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Absolute path to the workspace folder (e.g. /home/a/Documents/CodeLand)"
+                        }
+                    },
+                    "required": ["path"]
+                }
+            },
+            {
+                "name": "mcp_engram_pin",
+                "description": "Lock a project management concept into the manifold so the Autophagy Daemon never decays it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "Concept tag to pin (e.g. 'task_board' or 'system_architecture')"
+                        }
+                    },
+                    "required": ["concept"]
+                }
             }
         ]
     })
@@ -232,6 +260,31 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
+        "mcp_engram_watch_workspace" => {
+            let path = args["path"].as_str().unwrap_or("").trim().to_string();
+            let lock = store.lock().unwrap();
+            if let Some(daemon) = &lock.daemon {
+                let d = daemon.clone();
+                let p = path.clone();
+                tokio::spawn(async move { d.set_watch_workspace(&p).await; });
+            }
+            json!({
+                "content": [{ "type": "text", "text": format!("✓ Agentic Daemon now recursively watching: {}", path) }]
+            })
+        }
+
+        "mcp_engram_pin" => {
+            let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
+            let mut lock = store.lock().unwrap();
+            if let Some(mut m) = lock.fetch_block(&concept) {
+                m.crs_score = 1.0; // Pinned mathematically
+                let _ = lock.store(&concept, m);
+                json!({ "content": [{ "type": "text", "text": format!("✓ Pinned concept to CRS 1.0. Autophagy will ignore it.: {}", concept) }] })
+            } else {
+                json!({ "content": [{ "type": "text", "text": format!("Memory not found: {}", concept) }], "isError": true })
+            }
+        }
+
         unknown => json!({
             "content": [{ "type": "text", "text": format!("Unknown tool: {unknown}") }],
             "isError": true
@@ -293,6 +346,9 @@ fn dispatch(req: Request, store: &SharedStore) -> Option<Response> {
 /// Run the MCP server, reading from stdin and writing to stdout.
 /// Blocks until stdin is closed (i.e. the client disconnects).
 pub fn run(store: SharedStore) -> anyhow::Result<()> {
+    // ── Boot the Background Worker ─────────────────────────────────
+    crate::store::StoreHandle::boot_daemon(store.clone());
+
     info!("Engram MCP server ready (protocol 2024-11-05)");
     info!("Store: {}", store.lock().unwrap().store_path());
 

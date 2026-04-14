@@ -18,6 +18,7 @@
 mod mcp;
 mod serve;
 mod store;
+pub mod daemon;
 
 use clap::{Parser, Subcommand};
 use store::open_store;
@@ -66,14 +67,16 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let store = open_store(&cli.store);
 
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
     match cli.command {
         Commands::Mcp => {
+            let _guard = rt.enter();
             mcp::run(store)?;
         }
         Commands::Serve { port } => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?;
             rt.block_on(serve::run(store, port))?;
         }
     }

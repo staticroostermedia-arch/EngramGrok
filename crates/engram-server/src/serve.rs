@@ -33,6 +33,15 @@ struct ForgetReq {
     concept: String,
 }
 
+#[derive(Deserialize)]
+struct TraceReq {
+    term_a: String,
+    op: String,
+    term_b: String,
+    #[serde(default = "default_k")]
+    k: usize,
+}
+
 #[derive(Serialize)]
 struct MemoryRes {
     concept: String,
@@ -144,6 +153,42 @@ async fn forget(
     }
 }
 
+async fn trace(
+    State(store): State<SharedStore>,
+    Json(payload): Json<TraceReq>,
+) -> impl IntoResponse {
+    use engram_core::ops::{op_add, op_bind};
+    
+    let term_a = payload.term_a.trim();
+    let term_b = payload.term_b.trim();
+    let op = payload.op.trim().to_uppercase();
+    let k = payload.k.clamp(1, 20);
+
+    if term_a.is_empty() || term_b.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(vec![]));
+    }
+
+    let mut lock = store.lock().unwrap();
+    let q_a = lock.fetch(term_a).unwrap_or_else(|| Box::new(lock.encode(term_a).q));
+    let q_b = lock.fetch(term_b).unwrap_or_else(|| Box::new(lock.encode(term_b).q));
+
+    let q_res = match op.as_str() {
+        "ADD" => op_add(&q_a, &q_b),
+        "BIND" => op_bind(&q_a, &q_b),
+        _ => return (StatusCode::BAD_REQUEST, Json(vec![])),
+    };
+
+    let results = lock.query(&q_res, k);
+    let res: Vec<MemoryRes> = results.into_iter().map(|m| MemoryRes {
+        concept: m.concept,
+        score: m.score,
+        crs: m.crs,
+        text: m.provlog,
+    }).collect();
+
+    (StatusCode::OK, Json(res))
+}
+
 async fn list_concepts(State(store): State<SharedStore>) -> impl IntoResponse {
     let list = store.lock().unwrap().list();
     (StatusCode::OK, Json(list))
@@ -152,6 +197,9 @@ async fn list_concepts(State(store): State<SharedStore>) -> impl IntoResponse {
 // ── Server Setup ───────────────────────────────────────────────────────
 
 pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
+    // ── Boot the Background Worker ─────────────────────────────────
+    crate::store::StoreHandle::boot_daemon(store.clone());
+
     if env::var("ENGRAM_API_KEY").is_ok() {
         info!("ENGRAM_API_KEY detected. Bearer token required for all endpoints.");
     } else {
@@ -162,6 +210,7 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
         .route("/api/remember", post(remember))
         .route("/api/recall", post(recall))
         .route("/api/forget", post(forget))
+        .route("/api/trace", post(trace))
         .route("/api/list", get(list_concepts))
         .layer(middleware::from_fn(auth_middleware))
         .layer(tower_http::cors::CorsLayer::permissive())

@@ -110,6 +110,14 @@ impl VsaBackend for CudaBackend {
         self.cpu.encode(text)
     }
 
+    fn fetch(&self, concept: &str) -> Option<Box<[num_complex::Complex32; 8192]>> {
+        self.cpu.fetch(concept)
+    }
+
+    fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> {
+        self.cpu.fetch_block(concept)
+    }
+
     fn query(&self, q: &[num_complex::Complex32; 8192], k: usize) -> Vec<Memory> {
         self.ensure_bvh();
 

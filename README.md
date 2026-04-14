@@ -3,27 +3,53 @@
 > **Persistent geometric memory for AI agents.**  
 > Patent Pending US19/372,256 — Aric Goodman & Static Rooster Media
 
-Engram gives your AI agent a long-term memory that works like human associative memory — store anything, retrieve by meaning, not keywords. No vector database. No cloud. No API key. Runs entirely on your machine.
+Engram gives your AI agent a long-term memory that works directly like human associative memory—store anything, retrieve by meaning, not keywords. No vector database. No cloud. No API key. Runs entirely on your machine via the Model Context Protocol (MCP).
 
 ---
 
-## How It Works
+## 🚀 The AI Native Agentic Daemon
 
-Every piece of knowledge is stored as a **HolographicBlock** — a 256KB binary container (`.leg` file) in the LEG container format (U.S. Patent Application 19/372,256, pending). Each block contains:
+Engram is not just a passive database. When you map it into an LLM IDE (like Antigravity or Cursor), it boots an **Agentic Daemon** that handles geometric awareness completely in the background:
 
-- A **8192-dimensional complex phase vector** — the geometric fingerprint of the concept
-- A **momentum tensor** — encodes relational binding state  
-- A **CRS score** — geometric memory health [0.0, 1.0]
-- A **ProvLog payload** — the original source text
-- A **BLAKE3 Merkle footer** — cryptographic lineage, no registry required
-
-Memories are retrieved by **geometric similarity** — the system finds memories whose phase vectors point in the same direction as your query.
+1. **Native OS Watcher:** By calling the `mcp_engram_watch_workspace` JSON tool, the Daemon binds directly to OS-level kernel events (`inotify`/`fsevents`). The moment you or your Agent saves *any* major code file, Engram immediately re-ingests the vector chunk to the manifold. Your contextual window never decays into staleness.
+2. **Autophagy Garbage Collection:** Every hour, a deep-asynchronous Tokio thread wakes up and scans your memory manifold. Irrelevant ephemeral states automatically log-decay. If a geometric block drops below `0.40 CRS` (Coherence-Reliability Score), it is permanently forgotten by the system to save compute space.
+3. **Project Matrix Pinning:** Using the `mcp_engram_pin` tool, a connecting LLM can permanently bind critical Task Boards or Architectural Decisions to a perfect `1.0 CRS`. The Autophagy Daemon is hardcoded to never decay pinned vectors.
 
 ---
 
-## Quick Start
+## ⚡ The Semantic Ray-Tracer (VSA Arithmetic)
 
-> **Integration configs** for all supported IDEs are in [`integrations/`](integrations/)
+Because Engram uses **Vector Symbolic Architectures** inside the core math engine, you and your agents are capable of performing complex geometrical operations *before* extracting memory.
+
+Instead of hunting for keywords, you can mathematically bind, superpose, and intersect concepts across the hyperdimensional plane using the **Trace** commands:
+
+```bash
+# Locate the precise `.rs` chunks where native "CUDA" overlaps contextually with "Memory"
+engram-cli trace "cuda" BIND "memory"
+
+# Find code blocks that share equivalence between two combined domains
+engram-cli trace "geometric" ADD "tensor"
+```
+These logophysical math routes are available locally over CLI, or explicitly exposed to AI integrations over the robust `/api/trace` Axum REST route!
+
+---
+
+## 💾 Engineering Limitations: NVMe `O_DIRECT` Block Rules
+
+> [!WARNING]  
+> If you are modifying the `engram-core` serialization pipelines, **strictly adhere to the 256KB block rules**.
+
+Every piece of knowledge is stamped into fundamentally isolated **HolographicBlocks** (`.leg` files). We designed these logical containers to be exactly **262,144 bytes (256KB)** in memory space. 
+
+**This is not an arbitrary limitation.**
+The exact 256KB payload was specifically optimized for **O_DIRECT physical SSD alignments**. This ensures that geometrical tensors can completely bypass standard Operating System CPU buffer-caches, and be Direct Memory Access (DMA) streamed off of M.2 NVMe drives directly into GPU VRAM for CUDA or ROCm kernel processing. 
+If you alter the struct geometry in `types.rs` so that it no longer aligns evenly to modern block bounds, you will break the underlying DMA speeds!
+
+---
+
+## ⚡ Quick Start integration
+
+> **Integration configs** for all supported IDEs are openly tracked in [`integrations/`](integrations/)
 
 ### Install
 
@@ -33,14 +59,7 @@ cargo install engram --git https://github.com/StaticRoosterMedia/engram
 
 ### Google Antigravity IDE
 
-Engram ships a ready-to-use config for Google Antigravity IDE.
-
-**One-time install:**
-```bash
-cargo install --git https://github.com/staticroostermedia-arch/engram engram
-```
-
-**Add to `~/.gemini/antigravity/mcp_config.json`:**
+Engram ships a ready-to-use config for Google Antigravity IDE. Add to `~/.gemini/antigravity/mcp_config.json`:
 ```json
 {
   "mcpServers": {
@@ -53,19 +72,9 @@ cargo install --git https://github.com/staticroostermedia-arch/engram engram
 }
 ```
 
-Or copy the template directly:
-```bash
-cp integrations/antigravity/mcp_config.json ~/.gemini/antigravity/mcp_config.json
-```
-
-Click **Manage MCP Servers → Refresh** in the Antigravity side panel. The `remember`, `recall`, `forget`, and `list_concepts` tools will appear immediately. Antigravity can now build a persistent geometric memory of your codebase — facts, context, and decisions that survive across sessions.
-
----
-
 ### Claude Desktop Integration
 
 Add to `~/.config/claude-desktop/claude_desktop_config.json`:
-
 ```json
 {
   "mcpServers": {
@@ -76,105 +85,37 @@ Add to `~/.config/claude-desktop/claude_desktop_config.json`:
   }
 }
 ```
-
-Restart Claude Desktop. You'll have four new tools: `remember`, `recall`, `forget`, `list_concepts`.
-
-### Cursor Integration
-
-Add to `.cursor/mcp.json` in your project:
-
-```json
-{
-  "mcpServers": {
-    "engram": {
-      "command": "engram",
-      "args": ["mcp", "--store", "${workspaceFolder}/.engram"]
-    }
-  }
-}
-```
-
-### CLI Usage
-
-```bash
-# Store a memory
-engram-cli remember krebs_cycle "The Krebs cycle converts acetyl-CoA to ATP via 8 enzymatic steps"
-
-# Find semantically similar memories
-engram-cli recall "how does cellular respiration produce energy"
-
-# List everything stored
-engram-cli list
-
-# Delete a memory
-engram-cli forget krebs_cycle
-```
-
-### REST API Usage
-
-You can also run Engram as an HTTP server for native integration with any language or client (NodeJS, Python, Go):
-
-```bash
-# Start the local server
-engram serve --port 3456
-```
-
-Secure it by passing the `ENGRAM_API_KEY` environment variable, which enables Bearer Token enforcement.
-
-```bash
-curl -X POST http://127.0.0.1:3456/api/recall \
-  -H "Authorization: Bearer YOUR_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "krebs cycle", "k": 3}'
-```
-
-### VS Code Extension
-
-The `vscode-engram` package gives your IDE native GUI access to the geometric memory.
-
-1. Install NodeJS/NPM on your main machine.
-2. Run `cd extensions/vscode && npm install && npm run compile`.
-3. Sideload the `extensions/vscode` directory into VS Code.
-4. Highlight any code and execute **Engram: Remember Selection**. Or use **Engram: Recall Context** to search geometry directly via the Output pane.
+Restart Claude Desktop. You immediately tap into the native tools: `remember`, `recall`, `forget`, `list_concepts`, `mcp_engram_watch_workspace`, `mcp_engram_pin`.
 
 ---
 
-## Architecture
+## 💻 CLI Operations & Manifold Bootstrapping
 
+If you're bringing Engram into a legacy repository, you do not need to manually parse your code logs. Just utilize the native recursive chunking engine:
+
+```bash
+# Bootstrap an entire monolithic repository into geometric logic inside of seconds:
+engram-cli ingest /path/to/monolithic-workspace --chunk-size 8000
+
+# Store single ad-hoc memories:
+engram-cli remember krebs_cycle "The Krebs cycle converts acetyl-CoA to ATP via 8 enzymatic steps"
+
+# Interrogate memory conceptually:
+engram-cli recall "how does cellular respiration produce energy"
+# Prints exactly the Krebs Cycle vector, and exact code lines tied to that phase domain.
 ```
-engram/
-├── crates/
-│   ├── engram-core/     # LEG format, VSA ops, encoder, direct I/O storage
-│   ├── engram-gpu/      # CUDA backend (Phase 2 — BVH index, parallel cosine)
-│   ├── engram-server/   # MCP + REST server (Claude Desktop / Cursor)
-│   └── engram-cli/      # CLI tool
-└── extensions/
-    └── vscode/          # VS Code extension (Phase 4)
-```
-
-### The VSA Operations
-
-Engram uses **Fourier Holographic Reduced Representations (FHRR)** — all vectors live on the unit hypersphere in 8192-dimensional complex space:
-
-| Operation | Description |
-|-----------|-------------|
-| `op_bind(role, filler)` | Associate two concepts — encodes `role → filler` |
-| `op_add(a, b)` | Superpose two memories — result is similar to both |
-| `cosine_similarity(a, b)` | Geometric similarity ∈ [−1.0, 1.0] |
-| `holographic_unbind(result, role)` | Recover filler from bound result |
-| `op_invert(v)` | Negate a concept (π rotation) |
 
 ---
 
 ## Hardware Support
 
-Engram maps identically across the top three hardware architectures. Enable them in Cargo via features:
+Engram maps identically across the top hardware architectures natively:
 
 | Backend | Flag | Status | Notes |
 |---------|------|--------|-------|
 | CPU (Rayon) | Default | ✅ v1.0 | Linear scan natively, works on any machine |
-| CUDA (NVIDIA) | `cuda-kernels` | ✅ v1.0 | BVH O(log N) index, parallel kernel computation |
-| ROCm (AMD) | `rocm-kernels` | ✅ v1.0 | Wavefront HIP execution |
+| CUDA (NVIDIA) | `cuda-kernels` | ✅ v2.0 | BVH O(log N) index, NVMe parallel kernel computation |
+| ROCm (AMD) | `rocm-kernels` | ✅ v2.0 | Wavefront HIP execution |
 | Metal (Apple) | `metal` (Auto) | ✅ v1.0 | macOS MSL dynamic runtime compilation via metal-rs |
 
 ---
@@ -191,7 +132,3 @@ This is a **reference implementation**. Commercial licenses (including for SaaS/
 Contact: **StaticRoosterMedia@gmail.com**
 
 See [PATENT-NOTICE.md](PATENT-NOTICE.md) for full details.
-
----
-
-*Built by Aric Goodman & Static Rooster Media · Oregon, USA*

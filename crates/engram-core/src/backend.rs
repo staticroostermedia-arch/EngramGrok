@@ -39,6 +39,12 @@ pub trait VsaBackend: Send + Sync {
     /// Encode free-form text into a HolographicBlock.
     fn encode(&self, text: &str) -> Leg3Pointer;
 
+    /// Fetch the exact phase vector for a named concept, if it exists.
+    fn fetch(&self, concept: &str) -> Option<Box<[Complex32; 8192]>>;
+
+    /// Fetch the complete HolographicBlock for a named concept.
+    fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer>;
+
     /// Find the k most similar memories to a query vector.
     fn query(&self, query: &[Complex32; 8192], k: usize) -> Vec<Memory>;
 
@@ -83,6 +89,18 @@ impl CpuBackend {
 }
 
 impl VsaBackend for CpuBackend {
+    fn fetch(&self, concept: &str) -> Option<Box<[Complex32; 8192]>> {
+        let path = self.manifold_dir.join(format!("{}.leg", concept));
+        let block = crate::storage::read_block(&path).ok()?;
+        Some(Box::new(block.q))
+    }
+
+    fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> {
+        let path = self.manifold_dir.join(format!("{}.leg", concept));
+        let block = crate::storage::read_block(&path).ok()?;
+        Some(Leg3Pointer::from_boxed(block))
+    }
+
     fn encode(&self, text: &str) -> Leg3Pointer {
         crate::encode::from_text(text)
     }
