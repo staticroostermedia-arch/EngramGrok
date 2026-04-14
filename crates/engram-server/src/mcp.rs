@@ -241,11 +241,17 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
 // ── MCP request dispatch ──────────────────────────────────────────────────────
 
-fn dispatch(req: Request, store: &SharedStore) -> Response {
+fn dispatch(req: Request, store: &SharedStore) -> Option<Response> {
     let id = req.id.clone();
     let params = req.params.unwrap_or(json!({}));
 
-    match req.method.as_str() {
+    // If ID is completely missing, it is a JSON-RPC notification.
+    // The MCP client does not expect a response for notifications (e.g. notifications/initialized).
+    if id.is_none() {
+        return None;
+    }
+
+    let response = match req.method.as_str() {
         "initialize" => {
             Response::ok(id, json!({
                 "protocolVersion": "2024-11-05",
@@ -258,8 +264,8 @@ fn dispatch(req: Request, store: &SharedStore) -> Response {
         }
 
         "initialized" => {
-            // Notification — no response needed, but send empty ok for compatibility
-            Response::ok(id, json!({}))
+            // Deprecated fallback (should be caught by is_none above if compliant)
+            return None;
         }
 
         "tools/list" => Response::ok(id, tool_list()),
@@ -277,7 +283,9 @@ fn dispatch(req: Request, store: &SharedStore) -> Response {
             warn!("unknown method: {unknown}");
             Response::err(id, -32601, format!("Method not found: {unknown}"))
         }
-    }
+    };
+
+    Some(response)
 }
 
 // ── Server loop ───────────────────────────────────────────────────────────────
@@ -301,15 +309,17 @@ pub fn run(store: SharedStore) -> anyhow::Result<()> {
 
         debug!("→ {line}");
 
-        let response = match serde_json::from_str::<Request>(&line) {
+        let response_opt = match serde_json::from_str::<Request>(&line) {
             Ok(req) => dispatch(req, &store),
-            Err(e) => Response::err(None, -32700, format!("Parse error: {e}")),
+            Err(e) => Some(Response::err(None, -32700, format!("Parse error: {e}"))),
         };
 
-        let out_line = serde_json::to_string(&response)?;
-        debug!("← {out_line}");
-        writeln!(out, "{out_line}")?;
-        out.flush()?;
+        if let Some(response) = response_opt {
+            let out_line = serde_json::to_string(&response)?;
+            debug!("← {out_line}");
+            writeln!(out, "{out_line}")?;
+            out.flush()?;
+        }
     }
 
     info!("Engram MCP server shutdown");
