@@ -1,0 +1,177 @@
+use crate::store::SharedStore;
+use axum::{
+    extract::State,
+    http::{header, Request, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::net::SocketAddr;
+use tracing::{info, warn};
+
+// ── Models ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RememberReq {
+    concept: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct RecallReq {
+    query: String,
+    #[serde(default = "default_k")]
+    k: usize,
+}
+fn default_k() -> usize { 5 }
+
+#[derive(Deserialize)]
+struct ForgetReq {
+    concept: String,
+}
+
+#[derive(Serialize)]
+struct MemoryRes {
+    concept: String,
+    score: f32,
+    crs: f32,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct GenericRes {
+    status: &'static str,
+    message: String,
+}
+
+// ── Middleware ─────────────────────────────────────────────────────────
+
+async fn auth_middleware(req: Request<axum::body::Body>, next: Next) -> Result<Response, StatusCode> {
+    if let Ok(key) = env::var("ENGRAM_API_KEY") {
+        if key.trim().is_empty() { return Ok(next.run(req).await); }
+
+        let auth_header = req
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|h| h.to_str().ok());
+
+        match auth_header {
+            Some(header) if header.starts_with("Bearer ") => {
+                let token = header.trim_start_matches("Bearer ").trim();
+                if token != key {
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
+            }
+            _ => return Err(StatusCode::UNAUTHORIZED),
+        }
+    }
+    Ok(next.run(req).await)
+}
+
+// ── Handlers ───────────────────────────────────────────────────────────
+
+async fn remember(
+    State(store): State<SharedStore>,
+    Json(payload): Json<RememberReq>,
+) -> impl IntoResponse {
+    let concept = payload.concept.trim();
+    let text = payload.text.trim();
+    if concept.is_empty() || text.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(GenericRes {
+            status: "error", message: "concept and text are required".into(),
+        }));
+    }
+
+    match store.lock().unwrap().remember(concept, text) {
+        Ok(_) => {
+            info!("rest: remembered {concept}");
+            (StatusCode::OK, Json(GenericRes {
+                status: "success", message: format!("Stored '{concept}'"),
+            }))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(GenericRes {
+            status: "error", message: e.to_string(),
+        })),
+    }
+}
+
+async fn recall(
+    State(store): State<SharedStore>,
+    Json(payload): Json<RecallReq>,
+) -> impl IntoResponse {
+    let query = payload.query.trim();
+    if query.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(vec![]));
+    }
+
+    let k = payload.k.clamp(1, 20);
+    let results = store.lock().unwrap().recall(query, k);
+    
+    let res: Vec<MemoryRes> = results.into_iter().map(|m| MemoryRes {
+        concept: m.concept,
+        score: m.score,
+        crs: m.crs,
+        text: m.provlog,
+    }).collect();
+
+    (StatusCode::OK, Json(res))
+}
+
+async fn forget(
+    State(store): State<SharedStore>,
+    Json(payload): Json<ForgetReq>,
+) -> impl IntoResponse {
+    let concept = payload.concept.trim();
+    if concept.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(GenericRes {
+            status: "error", message: "concept required".into(),
+        }));
+    }
+
+    match store.lock().unwrap().forget(concept) {
+        Ok(_) => {
+            info!("rest: forgot {concept}");
+            (StatusCode::OK, Json(GenericRes {
+                status: "success", message: format!("Deleted '{concept}'"),
+            }))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(GenericRes {
+            status: "error", message: e.to_string(),
+        })),
+    }
+}
+
+async fn list_concepts(State(store): State<SharedStore>) -> impl IntoResponse {
+    let list = store.lock().unwrap().list();
+    (StatusCode::OK, Json(list))
+}
+
+// ── Server Setup ───────────────────────────────────────────────────────
+
+pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
+    if env::var("ENGRAM_API_KEY").is_ok() {
+        info!("ENGRAM_API_KEY detected. Bearer token required for all endpoints.");
+    } else {
+        warn!("Running without ENGRAM_API_KEY. Endpoints are currently unprotected.");
+    }
+
+    let app = Router::new()
+        .route("/api/remember", post(remember))
+        .route("/api/recall", post(recall))
+        .route("/api/forget", post(forget))
+        .route("/api/list", get(list_concepts))
+        .layer(middleware::from_fn(auth_middleware))
+        .layer(tower_http::cors::CorsLayer::permissive())
+        .with_state(store.clone());
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    info!("Engram REST server listening on http://{}", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}

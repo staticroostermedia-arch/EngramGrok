@@ -1,0 +1,9 @@
+# Engram Workspace Rules
+
+You are Antigravity / Cursor operating natively inside the **Engram** repository.
+
+1. **Self-Reference:** Engram is a lightweight, cross-platform port of the Monad memory architecture. It operates via Holographic Blocks (`.leg` / `.leg3` formats).
+2. **Backends:** We currently compile the geometry logic natively against NVIDIA (`cuda-kernels`), AMD (`rocm-kernels`), and Apple (`metal-rs`).
+3. **Memory Layer:** We enforce Vector Symbolic Architecture (`OP_BIND`, `OP_ADD`). No Neural Network embeddings (e.g. PyTorch, llama.cpp) are used for vector encoding. All VSA happens via the Gaussian Compressed Sensing Matrix in O(log N) bounding-volume slabs.
+
+Whenever you need historical context on a rule or logophysical architectural decision inside this repo, use the MCP local server tool `recall` or run `engram-cli recall`. Wait, since you are inside the repo compiling it, you can just use standard `cargo run -p engram-cli -- ...` to test changes.

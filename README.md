@@ -110,6 +110,33 @@ engram-cli list
 engram-cli forget krebs_cycle
 ```
 
+### REST API Usage
+
+You can also run Engram as an HTTP server for native integration with any language or client (NodeJS, Python, Go):
+
+```bash
+# Start the local server
+engram serve --port 3456
+```
+
+Secure it by passing the `ENGRAM_API_KEY` environment variable, which enables Bearer Token enforcement.
+
+```bash
+curl -X POST http://127.0.0.1:3456/api/recall \
+  -H "Authorization: Bearer YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "krebs cycle", "k": 3}'
+```
+
+### VS Code Extension
+
+The `vscode-engram` package gives your IDE native GUI access to the geometric memory.
+
+1. Install NodeJS/NPM on your main machine.
+2. Run `cd extensions/vscode && npm install && npm run compile`.
+3. Sideload the `extensions/vscode` directory into VS Code.
+4. Highlight any code and execute **Engram: Remember Selection**. Or use **Engram: Recall Context** to search geometry directly via the Output pane.
+
 ---
 
 ## Architecture
@@ -141,11 +168,14 @@ Engram uses **Fourier Holographic Reduced Representations (FHRR)** — all vecto
 
 ## Hardware Support
 
-| Backend | Status | Notes |
-|---------|--------|-------|
-| CPU (Rayon) | ✅ v0.1 | Linear scan, works on any machine |
-| CUDA | 🔄 Phase 2 | BVH O(log N) index, RTX 5060+ |
-| ROCm | 📋 Phase 3 | AMD RX 7000+ series |
+Engram maps identically across the top three hardware architectures. Enable them in Cargo via features:
+
+| Backend | Flag | Status | Notes |
+|---------|------|--------|-------|
+| CPU (Rayon) | Default | ✅ v1.0 | Linear scan natively, works on any machine |
+| CUDA (NVIDIA) | `cuda-kernels` | ✅ v1.0 | BVH O(log N) index, parallel kernel computation |
+| ROCm (AMD) | `rocm-kernels` | ✅ v1.0 | Wavefront HIP execution |
+| Metal (Apple) | `metal` (Auto) | ✅ v1.0 | macOS MSL dynamic runtime compilation via metal-rs |
 
 ---
 

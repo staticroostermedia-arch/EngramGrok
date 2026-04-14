@@ -7,18 +7,32 @@
 //! automatically falls back to the CPU BVH path.
 
 fn main() {
-    // Only compile kernels when feature is enabled
-    if std::env::var("CARGO_FEATURE_CUDA_KERNELS").is_err() {
+    // Check for CUDA compilation first
+    let build_cuda = std::env::var("CARGO_FEATURE_CUDA_KERNELS").is_ok();
+    let build_rocm = std::env::var("CARGO_FEATURE_ROCM_KERNELS").is_ok();
+
+    if !build_cuda && !build_rocm {
         return;
     }
 
-    // Check nvcc is available
-    let nvcc = which_nvcc();
-    let Some(nvcc_path) = nvcc else {
-        println!("cargo:warning=nvcc not found — skipping CUDA kernel compilation.");
-        println!("cargo:warning=The CudaBackend will use CPU BVH and cosine fallback.");
-        return;
-    };
+    if build_cuda {
+        if let Some(nvcc_path) = which_compiler("nvcc", "CUDA_HOME") {
+            compile_cuda(&nvcc_path);
+        } else {
+            println!("cargo:warning=nvcc not found — skipping CUDA kernel compilation.");
+        }
+    }
+
+    if build_rocm {
+        if let Some(hipcc_path) = which_compiler("hipcc", "ROCM_PATH") {
+            compile_rocm(&hipcc_path);
+        } else {
+            println!("cargo:warning=hipcc not found — skipping ROCm kernel compilation.");
+        }
+    }
+}
+
+fn compile_cuda(nvcc_path: &std::path::Path) {
 
     let kernel_dir = std::path::Path::new("kernels");
     let out_dir    = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -70,16 +84,58 @@ fn main() {
     }
 }
 
-fn which_nvcc() -> Option<std::path::PathBuf> {
-    // Check CUDA_HOME first, then PATH
-    if let Ok(cuda_home) = std::env::var("CUDA_HOME") {
-        let candidate = std::path::Path::new(&cuda_home).join("bin").join("nvcc");
+fn compile_rocm(hipcc_path: &std::path::Path) {
+    let kernel_dir = std::path::Path::new("kernels");
+    let out_dir    = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+
+    // For now we map arkade_8k.hip which implements HIP equivalents of Cuda Kernels
+    let kernels = ["arkade_8k.hip"];
+    let mut obj_files = Vec::new();
+
+    for kernel in &kernels {
+        let src   = kernel_dir.join(kernel);
+        let stem  = kernel.trim_end_matches(".hip");
+        let obj   = out_dir.join(format!("{stem}.o"));
+
+        let status = std::process::Command::new(hipcc_path)
+            .args([
+                "-O3",
+                "-fPIC",
+                "-c",
+                src.to_str().unwrap(),
+                "-o", obj.to_str().unwrap(),
+            ])
+            .status()
+            .expect("failed to exec hipcc");
+
+        if !status.success() {
+            println!("cargo:warning=ROCm kernel compilation failed for {kernel}");
+            continue;
+        }
+        obj_files.push(obj);
+    }
+
+    if !obj_files.is_empty() {
+        let lib_path = out_dir.join("libengram_rocm_kernels.a");
+        let mut ar = std::process::Command::new("ar");
+        ar.arg("crs").arg(&lib_path);
+        for obj in &obj_files { ar.arg(obj); }
+        ar.status().expect("failed to exec ar");
+
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+        println!("cargo:rustc-link-lib=static=engram_rocm_kernels");
+        println!("cargo:rustc-link-lib=dylib=amdhip64");
+    }
+}
+
+fn which_compiler(binary_name: &str, env_home: &str) -> Option<std::path::PathBuf> {
+    if let Ok(home) = std::env::var(env_home) {
+        let candidate = std::path::Path::new(&home).join("bin").join(binary_name);
         if candidate.exists() { return Some(candidate); }
     }
-    // Walk PATH
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path_var) {
-            let candidate = dir.join("nvcc");
+            let candidate = dir.join(binary_name);
             if candidate.exists() { return Some(candidate); }
         }
     }

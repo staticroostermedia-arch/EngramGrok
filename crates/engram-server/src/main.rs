@@ -16,6 +16,7 @@
 //! ```
 
 mod mcp;
+mod serve;
 mod store;
 
 use clap::{Parser, Subcommand};
@@ -70,8 +71,10 @@ fn main() -> anyhow::Result<()> {
             mcp::run(store)?;
         }
         Commands::Serve { port } => {
-            eprintln!("REST server on port {port} — Phase 3b, not yet implemented.");
-            eprintln!("Use `engram mcp` for Claude Desktop / Cursor integration.");
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(serve::run(store, port))?;
         }
     }
 
