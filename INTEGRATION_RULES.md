@@ -25,4 +25,15 @@ Do not use `grep_search` or `ripgrep` for abstract feature questions. Ripgrep fi
 When you initialize a new session inside an IDE bound to Engram MCP, your immediate first priority is to bind the daemon's OS file-listener to the current physical workspace. Call the JSON tool `mcp_engram_watch_workspace("/path/to/folder")`. This isolates your context so you inherently and dynamically follow whatever code files change across the current session.
 
 ## 6. Matrix Project Management (The CRS Lock)
-Take note that the background Autophagy Garbage Collector is *always* active sweeping over the manifold. Ephemeral state vectors gracefully logarithmic-decay and die. However, when you construct explicit Project Roadmaps, `task.md` lists, or core architectural schemas, you **MUST MUST MUST** pin those files. Use the JSON tool `mcp_engram_pin("task_board")`. Doing this locks the vector's `crs_score` natively inside the `HolographicBlock` to exactly `1.0`. The background autophagy treats 1.0 vectors as *immortal*. Without pinning, your architecture designs will rot out of memory!
+Take note that the background Tiered Decay Autophagy Garbage Collector is *always* active sweeping over the manifold. Ephemeral state vectors gracefully decay over time:
+- **> 24 hours stale**: Lose 2% utility per GC cycle.
+- **> 7 days stale**: Enter aggressive Autophagy, losing 5% utility per pass.
+- **Eviction**: If utility drops below `0.05`, the memory is permanently wiped from NVMe.
+
+When you construct explicit Project Roadmaps, `task.md` lists, or core architectural schemas, you **MUST MUST MUST** pin those files. Use the JSON tool `mcp_engram_pin("task_board")` or `mcp_engram_remember_solution(...)`. Doing this locks the vector's `crs_score` natively inside the `HolographicBlock` to exactly `1.0`. The background autophagy treats 1.0 vectors as *immortal*. Without pinning, your architecture designs will rot out of memory!
+
+## 7. Proactive Tool Integration (Coming Soon)
+To maximize context efficiency without overflowing your token window, Engram is onboarding topological IDE tools:
+- **`mcp_engram_context_for_file`**: Use this immediately upon opening a new project file to fetch the 3 most relevant architectural invariants bound to that exact filename. 
+- **`mcp_engram_relate`**: Instead of relying purely on spatial cosine distance, use this tool to geometrically `OP_BIND` two concepts together (e.g., `DependsOn(Auth_Module, Token_Lib)`).
+- **`mcp_engram_remember_solution`**: Crystallizes bug fixes permanently. Use this after fixing deep compilation errors; the error-solution pair is injected with `CRS = 1.0` so subsequent agents never regress on the same codebase flaw.
