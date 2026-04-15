@@ -18,6 +18,10 @@
 
 pub mod bvh;
 pub mod backend;
+pub mod rocm_backend;
+pub mod metal_backend;
 
 pub use bvh::{BvhManifold, Float3, LBVHNode};
 pub use backend::CudaBackend;
+pub use rocm_backend::RocmBackend;
+pub use metal_backend::MetalBackend;

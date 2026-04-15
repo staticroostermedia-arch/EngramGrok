@@ -149,10 +149,10 @@ Engram maps identically across the top hardware architectures natively:
 
 | Backend | Flag | Status | Notes |
 |---------|------|--------|-------|
-| CPU (Rayon) | Default | ✅ v1.0 | Linear scan natively, works on any machine |
-| CUDA (NVIDIA) | `cuda-kernels` | ✅ v2.0 | BVH O(log N) index, NVMe parallel kernel computation |
-| ROCm (AMD) | `rocm-kernels` | ✅ v2.0 | Wavefront HIP execution |
-| Metal (Apple) | `metal` (Auto) | ✅ v1.0 | macOS MSL dynamic runtime compilation via metal-rs |
+| CPU (Rayon) | Default | ✅ Stable | Exact linear scan, works on any machine |
+| CUDA (NVIDIA) | `cuda-kernels` | ✅ Stable | BVH O(log N) index + GPU cosine kernels. Runtime probe — no compile-time CUDA required |
+| ROCm (AMD) | `rocm-kernels` | 🔧 Beta | HIP kernel (`arkade_8k.hip`) is complete. Runtime probe via `libamdhip64.so`. CPU BVH fallback active. GPU dispatch wired in Phase 10 |
+| Metal (Apple) | `metal` | 🔧 Beta | MSL kernel (`arkade_8k.metal`) compiled at startup via `metal-rs`. CPU fallback active. GPU dispatch wired in Phase 10 |
 
 ---
 

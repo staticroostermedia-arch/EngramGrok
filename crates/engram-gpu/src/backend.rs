@@ -119,7 +119,8 @@ impl VsaBackend for CudaBackend {
     }
 
     fn query(&self, q: &[num_complex::Complex32; 8192], k: usize) -> Vec<Memory> {
-        self.ensure_bvh();
+        // Only build BVH if a real GPU was detected at startup
+        if self.gpu_available { self.ensure_bvh(); }
 
         // Try BVH O(log N) path first
         if let Ok(guard) = self.bvh.read() {
