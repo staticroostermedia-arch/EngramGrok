@@ -53,29 +53,45 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                 }
 
                 _ = gc_interval.tick() => {
-                    info!("Daemon: Initiating deep-sleep Garbage Collection (Autophagy)...");
+                    info!("Daemon: Initiating Tiered Decay Garbage Collection (Autophagy)...");
                     let mut lock = store.lock().unwrap();
                     let concepts = lock.list();
                     let mut culled = 0;
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                     
                     for c in concepts {
                         // We fetch the memory block. We skip anything pinned (crs == 1.0)
                         if let Some(mut m) = lock.fetch_block(&c) {
                             if m.crs_score < 1.0 {
-                                // Decay CRS by 15% per hour
-                                m.crs_score *= 0.85;
-                                if m.crs_score < 0.40 {
-                                    let _ = lock.forget(&c);
-                                    culled += 1;
-                                } else {
-                                    // Save the decayed CRS
-                                    let _ = lock.store(&c, m);
+                                let hours_stale = now.saturating_sub(m.last_accessed_timestamp) as f32 / 3600.0;
+                                let mut decayed = false;
+
+                                // Praxis-style tiered decay curve
+                                if hours_stale > 168.0 {
+                                    // > 7 days stale: aggressive 5% penalty per pass
+                                    m.crs_score *= 0.95;
+                                    decayed = true;
+                                } else if hours_stale > 24.0 {
+                                    // > 1 day stale: mild 2% penalty per pass
+                                    m.crs_score *= 0.98;
+                                    decayed = true;
+                                }
+
+                                if decayed {
+                                    if m.crs_score < 0.05 {
+                                        // Floor hit -> thermodynamic eviction
+                                        let _ = lock.forget(&c);
+                                        culled += 1;
+                                    } else {
+                                        // Save the decayed CRS back to NVMe
+                                        let _ = lock.store(&c, m);
+                                    }
                                 }
                             }
                         }
                     }
                     if culled > 0 {
-                        info!("Daemon: Autophagy swept {} dead/low-CRS concept bindings.", culled);
+                        info!("Daemon: Autophagy swept {} dead/stale concept bindings.", culled);
                     }
                 }
 

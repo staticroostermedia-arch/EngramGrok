@@ -23,3 +23,4 @@ pub mod metal_backend;
 pub use bvh::{BvhManifold, Float3, LBVHNode};
 pub use backend::CudaBackend;
 pub use metal_backend::MetalBackend;
+pub mod quant;

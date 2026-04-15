@@ -68,6 +68,8 @@ pub struct ManifoldEntry {
     pub concept: String,
     pub center_3d: Float3,
     pub file_offset_id: u64,
+    pub q_quantized: Vec<u8>,
+    pub crs_score: f32,
 }
 
 struct LeafData {
@@ -171,13 +173,22 @@ impl BvhManifold {
         let mut path_index:   HashMap<usize, PathBuf>    = HashMap::with_capacity(entries_raw.len());
         let mut concept_index: HashMap<String, usize>    = HashMap::with_capacity(entries_raw.len());
 
-        for (concept, path, q) in &entries_raw {
+        for (concept, path, q, crs_score) in &entries_raw {
             let center = Self::project_to_3d(q);
             let id = (entries.len() as u64) + 1;
             leaves.push(LeafData { center, file_offset_id: id });
             concept_index.insert(concept.clone(), entries.len());
             path_index.insert(entries.len(), path.clone());
-            entries.push(ManifoldEntry { concept: concept.clone(), center_3d: center, file_offset_id: id });
+            
+            let q_quantized = crate::quant::quantize_b4(q);
+            
+            entries.push(ManifoldEntry { 
+                concept: concept.clone(), 
+                center_3d: center, 
+                file_offset_id: id,
+                q_quantized,
+                crs_score: *crs_score
+            });
         }
 
         let mut nodes = Vec::new();
@@ -245,27 +256,43 @@ impl BvhManifold {
         let pos = Self::project_to_3d(q);
         let ids = self.filter_cpu(pos, KNN_FILTER_CANDIDATES);
 
-        let mut scored: Vec<Memory> = ids.iter().filter_map(|&id| {
+        #[derive(Clone)]
+        struct ScoredCandidate {
+            entry_idx: usize,
+            score: f32,
+            crs: f32,
+        }
+
+        let mut scored: Vec<ScoredCandidate> = ids.iter().filter_map(|&id| {
             let entry_idx = (id as usize).saturating_sub(1);
             let entry = self.entries.get(entry_idx)?;
-            let path  = self.path_index.get(&entry_idx)?;
 
-            let block = engram_core::storage::read_block(path).ok()?;
-            let sim   = engram_core::ops::cosine_similarity(q, &block.q);
-            let crs   = block.crs_score.clamp(0.0, 1.0);
+            // In-memory Phase 8: B=4 TurboQuant codebook inner-product (no disk I/O!)
+            let sim = crate::quant::cosine_similarity_quantized(q, &entry.q_quantized);
+            let crs = entry.crs_score.clamp(0.0, 1.0);
             let score = sim * (0.5 + 0.5 * crs);
-            let provlog = engram_core::storage::read_provlog(&block);
 
+            Some(ScoredCandidate { entry_idx, score, crs })
+        }).collect();
+
+        // Sort candidates
+        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(k);
+
+        // Map top K back to Memory results by pulling provlog from disk ONLY for the winners
+        let final_results: Vec<Memory> = scored.into_iter().filter_map(|c| {
+            let entry = self.entries.get(c.entry_idx)?;
+            let path = self.path_index.get(&c.entry_idx)?;
+            let block = engram_core::storage::read_block(path).ok()?;
+            let provlog = engram_core::storage::read_provlog(&block);
+            
             Some(Memory {
                 concept: entry.concept.clone(),
-                score,
-                crs,
+                score: c.score,
+                crs: c.crs,
                 provlog,
             })
         }).collect();
-
-        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(k);
 
         // Cache result
         if let Ok(mut cache) = self.query_cache.write() {
@@ -275,11 +302,11 @@ impl BvhManifold {
                         if let Some(old) = queue.pop_front() { cache.remove(&old); }
                     }
                     queue.push_back(qhash);
-                    cache.insert(qhash, scored.clone());
+                    cache.insert(qhash, final_results.clone());
                 }
             }
         }
-        scored
+        final_results
     }
 
     /// Project an 8192-D vector to 3D Arkade space (CPU MurmurHash path).
@@ -301,7 +328,7 @@ impl BvhManifold {
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    fn scan_dir(dir: &Path) -> Option<Vec<(String, PathBuf, Box<[Complex32; 8192]>)>> {
+    fn scan_dir(dir: &Path) -> Option<Vec<(String, PathBuf, Box<[num_complex::Complex32; 8192]>, f32)>> {
         let mut results = Vec::new();
         for entry in fs::read_dir(dir).ok()?.flatten() {
             let path = entry.path();
@@ -310,7 +337,7 @@ impl BvhManifold {
             if concept.is_empty() { continue; }
             let block = engram_core::storage::read_block(&path).ok()?;
             let q = Box::new(block.q);
-            results.push((concept, path, q));
+            results.push((concept, path, q, block.crs_score));
         }
         Some(results)
     }
