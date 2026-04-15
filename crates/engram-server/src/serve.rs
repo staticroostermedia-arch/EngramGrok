@@ -93,8 +93,16 @@ async fn remember(
             status: "error", message: "concept and text are required".into(),
         }));
     }
+    // ── Phase 8 Moloch Guard: Inline PII Scrubbing ──
+    let ssn_re = regex::Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap();
+    let cc_re = regex::Regex::new(r"\b(?:\d[ -]*?){13,16}\b").unwrap();
+    let email_re = regex::Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap();
 
-    match store.lock().unwrap().remember(concept, text) {
+    let mut sanitized = ssn_re.replace_all(text, "[REDACTED_SSN]").into_owned();
+    sanitized = cc_re.replace_all(&sanitized, "[REDACTED_CC]").into_owned();
+    sanitized = email_re.replace_all(&sanitized, "[REDACTED_EMAIL]").into_owned();
+
+    match store.lock().unwrap().remember(concept, &sanitized) {
         Ok(_) => {
             info!("rest: remembered {concept}");
             (StatusCode::OK, Json(GenericRes {
@@ -234,22 +242,6 @@ async fn boot_agent() -> impl IntoResponse {
     }
 }
 
-// ── Chat UI static files (embedded at compile time — binary is self-contained) ──
-
-const CHAT_HTML: &str = include_str!("../web/index.html");
-const CHAT_CSS:  &str = include_str!("../web/chat.css");
-const CHAT_JS:   &str = include_str!("../web/chat.js");
-
-async fn serve_chat_html() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], CHAT_HTML)
-}
-async fn serve_chat_css() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], CHAT_CSS)
-}
-async fn serve_chat_js() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "application/javascript; charset=utf-8")], CHAT_JS)
-}
-
 // ── Server Setup ───────────────────────────────────────────────────────
 
 
@@ -264,10 +256,6 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
     }
 
     let app = Router::new()
-        // ─ Chat UI (self-contained, no auth required) ─
-        .route("/chat",       get(serve_chat_html))
-        .route("/web/chat.css", get(serve_chat_css))
-        .route("/web/chat.js",  get(serve_chat_js))
         // ─ Memory API ─
         .route("/api/remember", post(remember))
         .route("/api/recall",   post(recall))
