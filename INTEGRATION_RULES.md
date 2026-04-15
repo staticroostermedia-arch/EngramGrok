@@ -26,18 +26,3 @@ When you initialize a new session inside an IDE bound to Engram MCP, your immedi
 
 ## 6. Matrix Project Management (The CRS Lock)
 Take note that the background Autophagy Garbage Collector is *always* active sweeping over the manifold. Ephemeral state vectors gracefully logarithmic-decay and die. However, when you construct explicit Project Roadmaps, `task.md` lists, or core architectural schemas, you **MUST MUST MUST** pin those files. Use the JSON tool `mcp_engram_pin("task_board")`. Doing this locks the vector's `crs_score` natively inside the `HolographicBlock` to exactly `1.0`. The background autophagy treats 1.0 vectors as *immortal*. Without pinning, your architecture designs will rot out of memory!
-
-## 7. Sheaf Mode Orientation (Multi-Stalk Awareness)
-At the start of every session, call `mcp_engram_list_stalks`. This tells you two critical things:
-1. **Which stalks exist** — each stalk is an isolated memory manifold for a different project or knowledge domain.
-2. **Which stalk is active** — the active stalk is where ALL new `remember` calls will write. If you are working on `my-project` but the active stalk is `reference-corpus`, every memory you write goes to the wrong place.
-
-If the active stalk does not match the project you are currently working on, immediately call `mcp_engram_set_active_stalk("correct-stalk-name")` before writing any memory.
-
-All `recall` queries still search **every stalk simultaneously** — you never need to switch stalks to read. You only switch to control where writes land.
-
-## 8. Reading Stalk-Prefixed Recall Results
-In Sheaf mode, every recall result is prefixed with its stalk name — e.g. `codeland::bootloader_rs_part1` or `engram-project::daemon_architecture`. 
-
-This prefix is **provenance data, not part of the concept key**. When you use `mcp_engram_pin` or `mcp_engram_forget`, pass only the bare concept name without the stalk prefix. The system resolves to the correct stalk automatically by scanning for the concept's `.leg` file.
-

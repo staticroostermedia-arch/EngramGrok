@@ -43,11 +43,12 @@ pub mod index;
 pub use types::{
     HolographicBlock, Leg3Pointer, LegFooter, Logenergetics,
     BLOCK_SIZE, DIMENSION,
+    // ZEDOS epistemic tags — exposed so downstream storage tools can work with the full format
     ZEDOS_DECLARATIVE, ZEDOS_EPISODIC, ZEDOS_OPERATIONAL,
-    ZEDOS_BODY, ZEDOS_VERBATIM, ZEDOS_PRAXIS, ZEDOS_RELATION,
+    ZEDOS_BODY, ZEDOS_VERBATIM, ZEDOS_PRAXIS,
 };
 pub use ops::{op_add, op_bind, cosine_similarity};
-pub use backend::{VsaBackend, SheafBackend};
+pub use backend::VsaBackend;
 
 /// `Complex32` — a 32-bit complex number. The fundamental unit of the phase vector.
 pub use num_complex::Complex32;

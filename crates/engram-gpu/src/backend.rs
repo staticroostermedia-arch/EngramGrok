@@ -8,7 +8,7 @@ use crate::bvh::BvhManifold;
 use engram_core::backend::{CpuBackend, Memory, VsaBackend};
 use engram_core::types::Leg3Pointer;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use anyhow::Result;
 
 /// CUDA-accelerated backend with BVH K-NN filter.
@@ -30,7 +30,8 @@ pub struct CudaBackend {
     cpu: CpuBackend,
     /// BVH index for O(log N) queries (rebuilt after writes)
     bvh: RwLock<Option<BvhManifold>>,
-    /// Whether a GPU was detected at startup
+    /// Whether a GPU was detected at startup (reserved for future CUDA dispatch)
+    #[allow(dead_code)]
     gpu_available: bool,
 }
 
@@ -45,6 +46,8 @@ impl CudaBackend {
         let gpu_available = Self::probe_cuda();
         if gpu_available {
             eprintln!("[engram-gpu] CUDA device detected.");
+        } else if cfg!(target_os = "macos") {
+            eprintln!("[engram-gpu] macOS detected — use MetalBackend for Apple Silicon GPU. CPU BVH active.");
         } else {
             eprintln!("[engram-gpu] No CUDA device — using CPU BVH fallback.");
         }
@@ -119,8 +122,7 @@ impl VsaBackend for CudaBackend {
     }
 
     fn query(&self, q: &[num_complex::Complex32; 8192], k: usize) -> Vec<Memory> {
-        // Only build BVH if a real GPU was detected at startup
-        if self.gpu_available { self.ensure_bvh(); }
+        self.ensure_bvh();
 
         // Try BVH O(log N) path first
         if let Ok(guard) = self.bvh.read() {
