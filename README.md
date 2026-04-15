@@ -17,6 +17,42 @@ Engram is not just a passive database. When you map it into an LLM IDE (like Ant
 
 ---
 
+## 🗂️ Sheaf Mode — Multi-Project Memory
+
+By default Engram uses a single manifold directory. For developers working across multiple projects (or agents managing multiple codebases simultaneously), **Sheaf Mode** lets you run isolated memory stalks that can still be queried as a unified whole.
+
+In mathematics, a Sheaf is a structure that assigns local data to each region of a space while allowing those regions to be "glued" into a global view. Engram's `.leg` blocks already encode this topology in their `footer.merkle_sub_root` field — the Sheaf routing layer simply exposes it.
+
+### Setup
+
+Create `~/.engram/sheaf.toml`:
+
+```toml
+active_stalk = "my-project"   # new memories write here
+
+[[stalks]]
+name = "my-project"
+path = "~/.engram/stalks/my-project"
+
+[[stalks]]
+name = "reference-corpus"
+path = "~/.engram/stalks/reference-corpus"
+```
+
+Restart `engram mcp`. All recall queries automatically fan out across **all stalks in parallel** and return a merged, re-ranked result set. Each result is prefixed with its stalk name (`my-project::concept_name`) so agents always know the provenance of a memory.
+
+### MCP Tools (Sheaf)
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_list_stalks` | List all registered stalks and show which is active |
+| `mcp_engram_set_active_stalk` | Switch write target to a different stalk at runtime |
+
+> [!TIP]
+> Keep your active codebase in one stalk and your persistent reference knowledge (tokenizers, ontologies, prior corpus) in another. The agent always searches both but writes only to the active one — no cross-contamination.
+
+---
+
 ## ⚡ The Semantic Ray-Tracer (VSA Arithmetic)
 
 Because Engram uses **Vector Symbolic Architectures** inside the core math engine, you and your agents are capable of performing complex geometrical operations *before* extracting memory.
