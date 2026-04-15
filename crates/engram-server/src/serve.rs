@@ -220,7 +220,24 @@ async fn recent_concepts(
     (StatusCode::OK, Json(res))
 }
 
+// ── Chat UI static files (embedded at compile time — binary is self-contained) ──
+
+const CHAT_HTML: &str = include_str!("../web/index.html");
+const CHAT_CSS:  &str = include_str!("../web/chat.css");
+const CHAT_JS:   &str = include_str!("../web/chat.js");
+
+async fn serve_chat_html() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], CHAT_HTML)
+}
+async fn serve_chat_css() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], CHAT_CSS)
+}
+async fn serve_chat_js() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "application/javascript; charset=utf-8")], CHAT_JS)
+}
+
 // ── Server Setup ───────────────────────────────────────────────────────
+
 
 pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
     // ── Boot the Background Worker ─────────────────────────────────
@@ -233,12 +250,17 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
     }
 
     let app = Router::new()
+        // ─ Chat UI (self-contained, no auth required) ─
+        .route("/chat",       get(serve_chat_html))
+        .route("/web/chat.css", get(serve_chat_css))
+        .route("/web/chat.js",  get(serve_chat_js))
+        // ─ Memory API ─
         .route("/api/remember", post(remember))
-        .route("/api/recall", post(recall))
-        .route("/api/forget", post(forget))
-        .route("/api/trace", post(trace))
-        .route("/api/list", get(list_concepts))
-        .route("/api/recent", get(recent_concepts))
+        .route("/api/recall",   post(recall))
+        .route("/api/forget",   post(forget))
+        .route("/api/trace",    post(trace))
+        .route("/api/list",     get(list_concepts))
+        .route("/api/recent",   get(recent_concepts))
         .layer(middleware::from_fn(auth_middleware))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(store.clone());

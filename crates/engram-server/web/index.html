@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engram — Local Agent</title>
+  <meta name="description" content="Engram persistent geometric memory — local AI agent interface with VSA memory context">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/web/chat.css">
+</head>
+<body>
+
+<!-- ── Header ────────────────────────────────────────────────────── -->
+<header class="eg-header">
+  <div class="eg-logo">
+    <span class="eg-logo-text">ENGRAM</span>
+    <span class="eg-logo-sub">Geometric Memory · Local Agent</span>
+  </div>
+  <div class="eg-header-status">
+    <div class="status-row" id="st-memory">
+      <span class="sdot off" id="dot-memory"></span>
+      <span class="slabel">Memory</span>
+      <span class="spill off" id="pill-memory">OFFLINE</span>
+    </div>
+    <div class="status-row" id="st-agent">
+      <span class="sdot off" id="dot-agent"></span>
+      <span class="slabel">Agent</span>
+      <span class="spill off" id="pill-agent">OFFLINE</span>
+    </div>
+    <div class="status-row">
+      <span class="slabel" style="color:#4a5a72">CRS Gate</span>
+      <span class="spill warn" id="pill-crs">≥ 0.74</span>
+    </div>
+  </div>
+  <div class="eg-header-right">
+    <span class="live-pill" id="live-badge" style="display:none">
+      <span class="ldot"></span>LIVE
+    </span>
+    <span class="eg-concept-count" id="concept-count">— concepts</span>
+  </div>
+</header>
+
+<!-- ── Main layout ───────────────────────────────────────────────── -->
+<div class="eg-layout">
+
+  <!-- ── LEFT SIDEBAR ─────────────────────────────────────────────── -->
+  <aside class="eg-sidebar">
+
+    <!-- Model selector -->
+    <div class="sidebar-section">
+      <div class="section-head">⚡ Model</div>
+      <div class="model-btns">
+        <button class="model-btn sys1 active" id="btn-sys1" onclick="selectModel('system1')" title="Fast — GPU">Sys 1 GPU</button>
+        <button class="model-btn sys2" id="btn-sys2" onclick="selectModel('system2')" title="Deep — RAM">Sys 2 RAM</button>
+      </div>
+    </div>
+
+    <!-- File drop zone -->
+    <div class="sidebar-section">
+      <div class="section-head">📂 Ingest</div>
+      <div class="drop-zone" id="drop-zone"
+           ondragover="event.preventDefault(); this.classList.add('drag-over')"
+           ondragleave="this.classList.remove('drag-over')"
+           ondrop="handleDrop(event)">
+        <div class="drop-icon">⬇</div>
+        <div class="drop-label">Drop files to ingest</div>
+        <div class="drop-sub">.txt · .md · .rs · .py · .js · any text</div>
+        <input type="file" id="file-input" multiple style="display:none" onchange="handleFileSelect(event)">
+        <button class="drop-btn" onclick="document.getElementById('file-input').click()">Browse</button>
+      </div>
+      <div id="ingest-log" class="ingest-log"></div>
+    </div>
+
+    <!-- JIT mint queue -->
+    <div class="sidebar-section" id="mint-section" style="display:none">
+      <div class="section-head">🪙 Minting Queue <span id="mint-count" class="mint-badge"></span></div>
+      <div id="mint-list" class="mint-list"></div>
+    </div>
+
+    <!-- Recent memories -->
+    <div class="sidebar-section" style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;">
+      <div class="section-head">🕐 Recent Memory <span id="recent-ts" class="recent-ts"></span></div>
+      <div id="recent-list" class="recent-list"></div>
+    </div>
+
+  </aside>
+
+  <!-- ── CENTER: CHAT ──────────────────────────────────────────────── -->
+  <main class="eg-chat">
+
+    <!-- Messages -->
+    <div class="chat-messages" id="chat-messages">
+      <div class="msg assistant">
+        <div class="bubble">
+          <div class="bubble-inner">Engram online. Manifold loaded. I have access to your full geometric memory — ask me anything or drop files to ingest them.</div>
+          <div class="bubble-meta">Engram Agent · now</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Internal monologue strip (thoughts from nemo_agency) -->
+    <div class="thought-strip" id="thought-strip" style="display:none">
+      <div class="thought-label">◎ Reasoning</div>
+      <div class="thought-text" id="thought-text"></div>
+    </div>
+
+    <!-- Image preview -->
+    <div id="img-preview" style="display:none" class="img-preview-bar">
+      <img id="img-preview-img" alt="preview">
+      <button onclick="clearImage()" class="img-clear">❌</button>
+    </div>
+
+    <!-- Input bar -->
+    <div class="chat-input-bar">
+      <input type="file" id="media-input" accept="image/*" style="display:none" onchange="handleMediaUpload(event)">
+      <button class="input-btn" id="btn-attach" onclick="document.getElementById('media-input').click()" title="Attach image">📎</button>
+      <textarea class="chat-input" id="chat-input"
+        placeholder="Ask anything — the agent grounds in your VSA memory automatically…"
+        onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();send()}"
+        oninput="autoResize(this)"></textarea>
+      <button class="send-btn" id="btn-send" onclick="send()">Transmit</button>
+    </div>
+
+  </main>
+
+  <!-- ── RIGHT PANEL: MEMORY CONTEXT ──────────────────────────────── -->
+  <aside class="eg-context">
+
+    <!-- Context from last reply -->
+    <div class="context-section" style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;">
+      <div class="section-head">🧠 Live Memory Context
+        <span class="context-sub" id="ctx-query-label"></span>
+      </div>
+      <div id="context-list" class="context-list">
+        <div class="ctx-empty">Send a message to see which memories the agent drew from.</div>
+      </div>
+    </div>
+
+    <!-- Task / Goals board -->
+    <div class="context-section">
+      <div class="section-head">📋 Tasks &amp; Goals
+        <button class="add-task-btn" onclick="openAddTask()">+ Add</button>
+      </div>
+      <div id="task-list" class="task-list">
+        <div class="task-empty">No active tasks. Add a goal to track agent progress.</div>
+      </div>
+    </div>
+
+    <!-- VSA Trace -->
+    <div class="context-section">
+      <div class="section-head">⬡ VSA Trace</div>
+      <div class="trace-form">
+        <input class="trace-input" id="trace-a" placeholder="concept A">
+        <select class="trace-op" id="trace-op">
+          <option>ADD</option>
+          <option>BIND</option>
+        </select>
+        <input class="trace-input" id="trace-b" placeholder="concept B">
+        <button class="trace-btn" onclick="runTrace()">Trace</button>
+      </div>
+      <div id="trace-results" class="trace-results"></div>
+    </div>
+
+  </aside>
+
+</div>
+
+<!-- ── Add Task Modal ─────────────────────────────────────────────── -->
+<div class="modal-overlay" id="task-modal" style="display:none" onclick="if(event.target===this)closeAddTask()">
+  <div class="modal">
+    <div class="modal-head">New Task / Goal</div>
+    <input class="modal-input" id="task-title" placeholder="Goal title…">
+    <textarea class="modal-textarea" id="task-desc" placeholder="Description or acceptance criteria…"></textarea>
+    <div class="modal-priority">
+      <label>Priority</label>
+      <select id="task-priority" class="modal-select">
+        <option value="high">🔴 High</option>
+        <option value="medium" selected>🟡 Medium</option>
+        <option value="low">🟢 Low</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeAddTask()">Cancel</button>
+      <button class="modal-save" onclick="saveTask()">Save Task</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ──────────────────────────────────────────────────────── -->
+<div id="toast" class="toast" style="display:none">
+  <div class="toast-head" id="toast-head"></div>
+  <div class="toast-body" id="toast-body"></div>
+</div>
+
+<script src="/web/chat.js"></script>
+</body>
+</html>
