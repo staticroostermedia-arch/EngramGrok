@@ -220,6 +220,20 @@ async fn recent_concepts(
     (StatusCode::OK, Json(res))
 }
 
+// ── System Process Management ────────────────────────────────────────────────────
+async fn boot_agent() -> impl IntoResponse {
+    use std::process::Command;
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg("cd /home/a/Documents/CodeLand && mkdir -p data/logs && nohup cargo run --release --bin nemo_agency > data/logs/nemo_agency.log 2>&1 &")
+        .spawn();
+        
+    match out {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status": "booting"}))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
 // ── Chat UI static files (embedded at compile time — binary is self-contained) ──
 
 const CHAT_HTML: &str = include_str!("../web/index.html");
@@ -261,6 +275,8 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
         .route("/api/trace",    post(trace))
         .route("/api/list",     get(list_concepts))
         .route("/api/recent",   get(recent_concepts))
+        // ─ System ─
+        .route("/api/boot_agent", post(boot_agent))
         .layer(middleware::from_fn(auth_middleware))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(store.clone());

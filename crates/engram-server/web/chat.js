@@ -56,9 +56,28 @@ async function pollStatus() {
     const crsEl = document.getElementById('pill-crs');
     if (crsEl) { crsEl.textContent = `≥ ${(d.crs_threshold || 0.74).toFixed(2)}`; }
     document.getElementById('live-badge').style.display = 'flex';
+    document.getElementById('btn-boot').style.display = 'none';
   } catch {
     setStatus('agent', false, 'OFFLINE');
     document.getElementById('live-badge').style.display = 'none';
+    document.getElementById('btn-boot').style.display = 'inline-block';
+  }
+}
+
+async function bootAgent() {
+  const btn = document.getElementById('btn-boot');
+  btn.textContent = 'BOOTING…';
+  btn.style.opacity = '0.5';
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${ENGRAM_BASE}/api/boot_agent`, { method: 'POST' });
+    if (!r.ok) throw new Error('Boot failed');
+    showToast('🚀 Booting Agent', 'nemo_agency is starting in the background…');
+  } catch(e) {
+    showToast('✗ Error', e.message);
+    btn.textContent = '▶ BOOT';
+    btn.style.opacity = '1';
+    btn.disabled = false;
   }
 }
 
