@@ -56,6 +56,24 @@ struct GenericRes {
     message: String,
 }
 
+#[derive(Deserialize)]
+struct RelateReq {
+    concept_a: String,
+    concept_b: String,
+    label: String,
+}
+
+#[derive(Deserialize)]
+struct SolutionReq {
+    error_pattern: String,
+    solution: String,
+}
+
+#[derive(Deserialize)]
+struct ExportReq {
+    summary: String,
+}
+
 // ── Middleware ─────────────────────────────────────────────────────────
 
 async fn auth_middleware(req: Request<axum::body::Body>, next: Next) -> Result<Response, StatusCode> {
@@ -194,7 +212,55 @@ async fn list_concepts(State(store): State<SharedStore>) -> impl IntoResponse {
     (StatusCode::OK, Json(list))
 }
 
+// ── Phase 10 Handlers ────────────────────────────────────────────────
+
+async fn status_handler(
+    State(store): State<SharedStore>,
+    axum::extract::Path(concept): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let mut lock = store.lock().unwrap();
+    if let Some(status) = lock.status(&concept) {
+        (StatusCode::OK, Json(GenericRes { status: "success", message: status }))
+    } else {
+        (StatusCode::NOT_FOUND, Json(GenericRes { status: "error", message: format!("Concept '{}' not found", concept) }))
+    }
+}
+
+async fn relate_handler(
+    State(store): State<SharedStore>,
+    Json(payload): Json<RelateReq>,
+) -> impl IntoResponse {
+    let mut lock = store.lock().unwrap();
+    match lock.relate(&payload.concept_a, &payload.concept_b, &payload.label) {
+        Ok(msg) => (StatusCode::OK, Json(GenericRes { status: "success", message: msg })),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(GenericRes { status: "error", message: e.to_string() })),
+    }
+}
+
+async fn remember_solution_handler(
+    State(store): State<SharedStore>,
+    Json(payload): Json<SolutionReq>,
+) -> impl IntoResponse {
+    let mut lock = store.lock().unwrap();
+    match lock.remember_solution(&payload.error_pattern, &payload.solution) {
+        Ok(msg) => (StatusCode::OK, Json(GenericRes { status: "success", message: msg })),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(GenericRes { status: "error", message: e.to_string() })),
+    }
+}
+
+async fn export_context_handler(
+    State(store): State<SharedStore>,
+    Json(payload): Json<ExportReq>,
+) -> impl IntoResponse {
+    let mut lock = store.lock().unwrap();
+    match lock.export_context(&payload.summary) {
+        Ok(msg) => (StatusCode::OK, Json(GenericRes { status: "success", message: msg })),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(GenericRes { status: "error", message: e.to_string() })),
+    }
+}
+
 // ── Server Setup ───────────────────────────────────────────────────────
+
 
 pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
     // ── Boot the Background Worker ─────────────────────────────────
@@ -212,6 +278,11 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
         .route("/api/forget", post(forget))
         .route("/api/trace", post(trace))
         .route("/api/list", get(list_concepts))
+        // ── Phase 10 routes ──────────────────────────────────────────────
+        .route("/api/status/:concept", get(status_handler))
+        .route("/api/relate", post(relate_handler))
+        .route("/api/remember_solution", post(remember_solution_handler))
+        .route("/api/export_context", post(export_context_handler))
         .layer(middleware::from_fn(auth_middleware))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(store.clone());

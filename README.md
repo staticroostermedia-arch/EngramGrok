@@ -83,6 +83,23 @@ If you alter the struct geometry in `types.rs` so that it no longer aligns evenl
 
 ---
 
+## 🚦 Four Deployment Modes
+
+Engram is **model-agnostic** and **IDE-agnostic**. The same geometric manifold powers every configuration. Pick the mode that fits your setup:
+
+| Mode | Setup | Internet? | Use Case |
+|---|---|---|---|
+| **1 — IDE + Cloud** | IDE + Gemini/Claude + Engram MCP | Required | Standard developer workflow |
+| **2 — Hybrid** | IDE + cloud agent + local LLM sharing one manifold | Required for cloud agent | Multi-agent collaboration |
+| **3 — IDE + Local, Offline** | IDE + local LLM (Gemma 4 / any GGUF) + Engram MCP | **None** | Enterprise, medical, air-gapped |
+| **4 — Headless Standalone** | `nemo-agency` Rust orchestrator + local LLM + Engram REST | **None** | Autonomous agents, CI/CD, scripted |
+
+> **Any OpenAI-compatible local LLM works in Modes 3 and 4** — Gemma 4, Llama 3, Mistral, Qwen, Phi-4, DeepSeek. Swap the `.gguf` file. No code changes.
+
+📖 **[Full deployment guide → `docs/DEPLOYMENT_MODES.md`](docs/DEPLOYMENT_MODES.md)**
+
+---
+
 ## ⚡ Quick Start integration
 
 > **Integration configs** for all supported IDEs are openly tracked in [`integrations/`](integrations/)
