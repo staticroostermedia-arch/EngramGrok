@@ -1,5 +1,8 @@
 # Engram
 
+[![Build Status](https://github.com/StaticRoosterMedia/engram/actions/workflows/rust.yml/badge.svg)](https://github.com/StaticRoosterMedia/engram/actions)
+[![MCP](https://img.shields.io/badge/MCP-Native-blue)](https://modelcontextprotocol.io)
+
 > **Persistent geometric memory for AI agents.**  
 > Patent Pending US19/372,256 — Aric Goodman & Static Rooster Media
 
