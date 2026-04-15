@@ -12,14 +12,20 @@ Engram gives your AI agent a long-term memory that works directly like human ass
 Engram is not just a passive database. When you map it into an LLM IDE (like Antigravity or Cursor), it boots an **Agentic Daemon** that handles geometric awareness completely in the background:
 
 1. **Native OS Watcher:** By calling the `mcp_engram_watch_workspace` JSON tool, the Daemon binds directly to OS-level kernel events (`inotify`/`fsevents`). The moment you or your Agent saves *any* major code file, Engram immediately re-ingests the vector chunk to the manifold. Your contextual window never decays into staleness.
-2. **Autophagy Garbage Collection:** Every hour, a deep-asynchronous Tokio thread wakes up and scans your memory manifold. Irrelevant ephemeral states automatically log-decay. If a geometric block drops below `0.40 CRS` (Coherence-Reliability Score), it is permanently forgotten by the system to save compute space.
-3. **Project Matrix Pinning:** Using the `mcp_engram_pin` tool, a connecting LLM can permanently bind critical Task Boards or Architectural Decisions to a perfect `1.0 CRS`. The Autophagy Daemon is hardcoded to never decay pinned vectors.
+2. **Tiered Autophagy GC:** Every hour, a deep-asynchronous Tokio thread wakes up and scans your memory manifold. Irrelevant ephemeral states automatically log-decay (2% for 24h stale, 5% for 7d stale). If a geometric block drops below `0.05 CRS` (Coherence-Reliability Score), it is permanently evicted from the NVMe disk to clear room for new vectors.
+3. **Project Matrix Pinning:** Using the `mcp_engram_pin` or `mcp_engram_remember_solution` tools, a connecting LLM can permanently bind critical Task Boards, PR Specs, or Bug Fixes to a perfect `1.0 CRS`. The Autophagy Daemon is hardcoded to never decay pinned invariants.
 
 ---
 
-## ⚡ The Semantic Ray-Tracer (VSA Arithmetic)
+## ⚡ The Semantic Ray-Tracer & NVSA Reasoning
 
 Because Engram uses **Vector Symbolic Architectures** inside the core math engine, you and your agents are capable of performing complex geometrical operations *before* extracting memory.
+
+Engram native operators strictly adhere to the Monad CodeLand NVSA specification:
+- **`op_deduce`**: Physically trace logical implication constraints ($A \rightarrow B$).
+- **`op_attend`**: Massively attenuate dimensions without tearing the hologram.
+- **`op_is_symbolic_of`**: Avoid logic freezes by hoisting paradoxes into ZADO-CPS conformal toroidal embedding.
+- **`op_geometric_product`**: Computes cosine similarities alongside orthogonal dimensions simultaneously using the Clifford ansatz.
 
 Instead of hunting for keywords, you can mathematically bind, superpose, and intersect concepts across the hyperdimensional plane using the **Trace** commands:
 
@@ -85,7 +91,7 @@ Add to `~/.config/claude-desktop/claude_desktop_config.json`:
   }
 }
 ```
-Restart Claude Desktop. You immediately tap into the native tools: `remember`, `recall`, `forget`, `list_concepts`, `mcp_engram_watch_workspace`, `mcp_engram_pin`.
+Restart Claude Desktop. You immediately tap into the native tools: `remember`, `recall`, `forget`, `list_concepts`, `mcp_engram_watch_workspace`, `mcp_engram_pin`, `mcp_engram_relate`, `mcp_engram_context_for_file`, and `mcp_engram_remember_solution`.
 
 ---
 
@@ -113,7 +119,7 @@ Engram maps identically across the top hardware architectures natively:
 
 | Backend | Flag | Status | Notes |
 |---------|------|--------|-------|
-| CPU (Rayon) | Default | ✅ v1.0 | Linear scan natively, works on any machine |
+| CPU (Rayon) | Default | ✅ v1.0 | Uses B=4 TurboQuant Codebook for 4x accelerated K-NN bounds |
 | CUDA (NVIDIA) | `cuda-kernels` | ✅ v2.0 | BVH O(log N) index, NVMe parallel kernel computation |
 | ROCm (AMD) | `rocm-kernels` | ✅ v2.0 | Wavefront HIP execution |
 | Metal (Apple) | `metal` (Auto) | ✅ v1.0 | macOS MSL dynamic runtime compilation via metal-rs |

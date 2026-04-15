@@ -193,6 +193,86 @@ pub fn complex_conjugate(v: &[Complex32; 8192]) -> [Complex32; 8192] {
     conj
 }
 
+/// **The Solver (OP_DEDUCE)**
+/// Represents Logical Implication (A -> B).
+/// Computes a rotation matrix moving a Premise to a Conclusion vector via B * conj(A).
+pub fn op_deduce(premise: &[Complex32; 8192], conclusion: &[Complex32; 8192]) -> [Complex32; 8192] {
+    let mut deduce = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        let conj_a_re = premise[i].re;
+        let conj_a_im = -premise[i].im;
+
+        deduce[i].re = conclusion[i].re * conj_a_re - conclusion[i].im * conj_a_im;
+        deduce[i].im = conclusion[i].re * conj_a_im + conclusion[i].im * conj_a_re;
+    }
+    normalize(&deduce)
+}
+
+/// **The Sensor (OP_ATTEND)**
+/// Selects specific dimensions from a superposed vector via geometric amplitude attenuation.
+pub fn op_attend(superposed: &[Complex32; 8192], attention_mask: &[Complex32; 8192]) -> [Complex32; 8192] {
+    let mut attended = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        attended[i].re = superposed[i].re * attention_mask[i].re;
+        attended[i].im = superposed[i].im * attention_mask[i].re;
+    }
+    normalize(&attended)
+}
+
+/// **The Clifford Interaction Ansatz (Geometric Product)**
+/// Computes both scalar similarity (dot) and bivector orthogonality (wedge) simultaneously.
+/// Replaces standard dot-product attention in the NVSA layer.
+pub fn op_geometric_product(u: &[Complex32; 8192], v: &[Complex32; 8192]) -> [Complex32; 8192] {
+    let mut gp = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        gp[i].re = u[i].re * v[i].re + u[i].im * v[i].im;
+        gp[i].im = u[i].im * v[i].re - u[i].re * v[i].im;
+    }
+    normalize(&gp)
+}
+
+/// **The Paradox Lifter (OP_IS_SYMBOLIC_OF)**
+/// Resolves Cohomological Obstructions (H^1 ≠ 0) by mapping the obstructed
+/// Vector into a dual-phase toroidal embedding (ZADO-CPS: V = e^{i(\theta_A \cdot k + \theta_B)}).
+pub fn op_is_symbolic_of(raw_vector: &[Complex32; 8192], is_obstructed_h1: bool) -> [Complex32; 8192] {
+    if !is_obstructed_h1 { return *raw_vector; }
+
+    let mut resolved = [Complex32::default(); 8192];
+    for k in 0..8192 {
+        let val = raw_vector[k];
+        let theta_a = val.im.atan2(val.re); 
+        let theta_b = (val.re * val.re + val.im * val.im).sqrt(); 
+        let phase = theta_a * (k as f32) + theta_b;
+
+        resolved[k].re = phase.cos();
+        resolved[k].im = phase.sin();
+    }
+    normalize(&resolved)
+}
+
+/// Deterministic Apeiron primitive — BLAKE3 XOF for maximum entropy initialization.
+fn apeiron_primitive() -> [Complex32; 8192] {
+    let mut reader = blake3::Hasher::new()
+        .update(b"APEIRON::MONAD::LOGOPHYSICS::MAXIMUM_ENTROPY_POTENTIAL")
+        .finalize_xof();
+    let mut buf = vec![0u8; 8192 * 2];
+    reader.fill(&mut buf);
+    let mut v = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        v[i].re = (buf[i * 2] as f32 / 127.5) - 1.0;
+        v[i].im = (buf[i * 2 + 1] as f32 / 127.5) - 1.0;
+    }
+    normalize(&v)
+}
+
+/// **OP_SUSPEND — The Apeiron Binding**
+/// Transforms a rejected thought-vector into a "Known Unknown" by binding it with the
+/// maximum-entropy Apeiron primitive. Essential for Inverse Ray Tracing via K-NN.
+pub fn op_suspend(v: &[Complex32; 8192]) -> [Complex32; 8192] {
+    let apeiron = apeiron_primitive();
+    op_bind(v, &apeiron)
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 fn project(a: &[Complex32; 8192], b: &[Complex32; 8192]) -> [Complex32; 8192] {
