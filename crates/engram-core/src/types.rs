@@ -45,6 +45,8 @@ pub const ZEDOS_BODY: u8         = 0xB0;
 pub const ZEDOS_VERBATIM: u8     = 0xB1;
 /// Praxis memory: crystallized learned procedures.
 pub const ZEDOS_PRAXIS: u8       = 0x50;
+/// Phase M: Relation block — links two concepts via OP_BIND (Merkle-chained).
+pub const ZEDOS_RELATION: u8     = 0xE1;
 
 // ── Compile-time size seal ──────────────────────────────────────────────────────
 const _: () = assert!(

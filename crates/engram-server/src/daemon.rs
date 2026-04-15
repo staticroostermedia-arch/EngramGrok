@@ -103,7 +103,7 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                             end -= 1;
                                         }
                                         
-                                        let lock = store.lock().unwrap();
+                                        let mut lock = store.lock().unwrap();
                                         if let Err(e) = lock.remember(&concept_name, &content[..end]) {
                                             error!("Daemon failed to auto-sync file {}: {}", path.display(), e);
                                         } else {

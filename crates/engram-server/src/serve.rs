@@ -194,6 +194,32 @@ async fn list_concepts(State(store): State<SharedStore>) -> impl IntoResponse {
     (StatusCode::OK, Json(list))
 }
 
+/// GET /api/recent?n=10
+/// Returns the N most recently accessed concept names + timestamps.
+/// Zero disk I/O — reads from the in-memory AccessIndex.
+async fn recent_concepts(
+    State(store): State<SharedStore>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let n = params.get("n")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10)
+        .min(100);
+    let entries = store.lock().unwrap().recent(n);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let res: Vec<serde_json::Value> = entries.into_iter().map(|(concept, ts)| {
+        let secs_ago = now.saturating_sub(ts);
+        let ago = if secs_ago < 60 { format!("{}s ago", secs_ago) }
+            else if secs_ago < 3600 { format!("{}m ago", secs_ago / 60) }
+            else { format!("{}h ago", secs_ago / 3600) };
+        serde_json::json!({ "concept": concept, "last_accessed": ts, "ago": ago })
+    }).collect();
+    (StatusCode::OK, Json(res))
+}
+
 // ── Server Setup ───────────────────────────────────────────────────────
 
 pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
@@ -212,6 +238,7 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
         .route("/api/forget", post(forget))
         .route("/api/trace", post(trace))
         .route("/api/list", get(list_concepts))
+        .route("/api/recent", get(recent_concepts))
         .layer(middleware::from_fn(auth_middleware))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(store.clone());

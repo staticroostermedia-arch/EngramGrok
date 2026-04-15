@@ -3,7 +3,7 @@
 //! Implement this trait to add a new hardware backend (CPU, CUDA, ROCm, Vulkan).
 //! The rest of the Engram stack (server, CLI, MCP) is backend-agnostic.
 
-use crate::types::Leg3Pointer;
+use crate::types::{HolographicBlock, Leg3Pointer};
 use crate::ops::cosine_similarity;
 use num_complex::Complex32;
 use anyhow::Result;
@@ -161,5 +161,107 @@ impl VsaBackend for CpuBackend {
                     .collect()
             })
             .unwrap_or_default()
+    }
+}
+
+// ── Sheaf Backend (multi-manifold) ───────────────────────────────────────────
+
+/// A `VsaBackend` spanning multiple independent manifold directories (stalks).
+///
+/// Queries fan out across all stalks in parallel and results merge by cosine
+/// similarity, giving a unified ranked view. Writes go to the active stalk only.
+///
+/// This implements the Sheaf topology already encoded in the LEG Merkle footer:
+/// each stalk is a local section; `SheafBackend` is the global section.
+pub struct SheafBackend {
+    stalks: Vec<(String, Box<dyn VsaBackend + Send + Sync>)>,
+    active: std::sync::atomic::AtomicUsize,
+}
+
+impl SheafBackend {
+    /// Create from a list of `(name, path)` pairs using CpuBackend per stalk (default).
+    pub fn new(stalks: Vec<(String, std::path::PathBuf)>) -> Self {
+        let stalks: Vec<(String, Box<dyn VsaBackend + Send + Sync>)> = stalks
+            .into_iter()
+            .map(|(name, path)| {
+                std::fs::create_dir_all(&path).ok();
+                let b: Box<dyn VsaBackend + Send + Sync> = Box::new(CpuBackend::new(path));
+                (name, b)
+            })
+            .collect();
+        Self { stalks, active: std::sync::atomic::AtomicUsize::new(0) }
+    }
+
+    /// Create with pre-built backend instances per stalk.
+    /// Use this to pass `CudaBackend` or any other `VsaBackend` implementor.
+    pub fn new_boxed(stalks: Vec<(String, Box<dyn VsaBackend + Send + Sync>)>) -> Self {
+        Self { stalks, active: std::sync::atomic::AtomicUsize::new(0) }
+    }
+
+    pub fn set_active_stalk(&self, name: &str) -> bool {
+        if let Some(idx) = self.stalks.iter().position(|(n, _)| n == name) {
+            self.active.store(idx, std::sync::atomic::Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn active_stalk_name(&self) -> &str {
+        let idx = self.active.load(std::sync::atomic::Ordering::Relaxed);
+        &self.stalks[idx].0
+    }
+
+    pub fn stalk_names(&self) -> Vec<&str> {
+        self.stalks.iter().map(|(n, _)| n.as_str()).collect()
+    }
+}
+
+impl VsaBackend for SheafBackend {
+    fn encode(&self, text: &str) -> Leg3Pointer { crate::encode::from_text(text) }
+
+    fn fetch(&self, concept: &str) -> Option<Box<[Complex32; 8192]>> {
+        self.stalks.iter().find_map(|(_, s)| s.fetch(concept))
+    }
+
+    fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> {
+        self.stalks.iter().find_map(|(_, s)| s.fetch_block(concept))
+    }
+
+    fn query(&self, query: &[Complex32; 8192], k: usize) -> Vec<Memory> {
+        use rayon::prelude::*;
+        let mut all: Vec<Memory> = self.stalks
+            .par_iter()
+            .flat_map_iter(|(stalk_name, backend)| {
+                let name = stalk_name.clone();
+                backend.query(query, k).into_iter().map(move |mut m| {
+                    m.concept = format!("{}::{}", name, m.concept);
+                    m
+                })
+            })
+            .collect();
+        all.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all.truncate(k);
+        all
+    }
+
+    fn store(&self, concept: &str, block: Leg3Pointer) -> anyhow::Result<()> {
+        let idx = self.active.load(std::sync::atomic::Ordering::Relaxed);
+        self.stalks[idx].1.store(concept, block)
+    }
+
+    fn forget(&self, concept: &str) -> anyhow::Result<()> {
+        for (_, stalk) in &self.stalks {
+            if stalk.fetch(concept).is_some() { return stalk.forget(concept); }
+        }
+        Ok(())
+    }
+
+    fn list(&self) -> Vec<String> {
+        self.stalks.iter()
+            .flat_map(|(name, stalk)| {
+                stalk.list().into_iter().map(move |c| format!("{}::{}", name, c))
+            })
+            .collect()
     }
 }
