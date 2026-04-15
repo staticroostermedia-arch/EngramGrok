@@ -448,9 +448,7 @@ fn dispatch(req: Request, store: &SharedStore) -> Option<Response> {
 
     // If ID is completely missing, it is a JSON-RPC notification.
     // The MCP client does not expect a response for notifications (e.g. notifications/initialized).
-    if id.is_none() {
-        return None;
-    }
+    id.as_ref()?;
 
     let response = match req.method.as_str() {
         "initialize" => {

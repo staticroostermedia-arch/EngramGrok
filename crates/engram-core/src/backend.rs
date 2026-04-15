@@ -3,7 +3,7 @@
 //! Implement this trait to add a new hardware backend (CPU, CUDA, ROCm, Vulkan).
 //! The rest of the Engram stack (server, CLI, MCP) is backend-agnostic.
 
-use crate::types::{HolographicBlock, Leg3Pointer};
+use crate::types::Leg3Pointer;
 use crate::ops::cosine_similarity;
 use num_complex::Complex32;
 use anyhow::Result;

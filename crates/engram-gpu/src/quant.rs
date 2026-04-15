@@ -1,6 +1,6 @@
 use num_complex::Complex32;
 
-const D_SQRT: f32 = 90.509_665; // √8192
+const D_SQRT: f32 = 90.509_67; // √8192
 
 const CENTROIDS_B4: [f32; 16] = [
     -2.7326 / D_SQRT, -2.0690 / D_SQRT, -1.5184 / D_SQRT, -1.0563 / D_SQRT,

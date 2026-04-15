@@ -1,10 +1,10 @@
 use crate::store::SharedStore;
-use notify_debouncer_full::{new_debouncer, notify::*, DebouncedEvent};
+use notify_debouncer_full::{new_debouncer, notify::*};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Starts the global agentic background daemon attached to the MCP / REST Server.
 pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
@@ -108,7 +108,7 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                 
                                 if allowed_exts.contains(&ext) && !path.to_string_lossy().contains("/target/") && !path.to_string_lossy().contains("/.git/") {
                                     // Re-ingest the file directly into the manifold!
-                                    if let Ok(content) = std::fs::read_to_string(&path) {
+                                    if let Ok(content) = std::fs::read_to_string(path) {
                                         let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("unknown");
                                         let concept_name = format!("{}_daemon", file_name.replace('.', "_"));
                                         

@@ -62,7 +62,7 @@ pub fn from_text(text: &str) -> Leg3Pointer {
         let char_phase = (ch as f32 / 1114111.0) * std::f32::consts::TAU; // Unicode max
         let rotor = Complex32::new(char_phase.cos(), char_phase.sin());
         for d in dim_start..dim_end {
-            q[d] = q[d] * rotor;
+            q[d] *= rotor;
         }
     }
 

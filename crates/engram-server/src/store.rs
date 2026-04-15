@@ -18,7 +18,6 @@ use engram_core::backend::{CpuBackend, Memory, VsaBackend, SheafBackend};
 use engram_gpu::backend::CudaBackend;
 use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION};
 use engram_core::ops::{op_add, op_bind};
-use engram_core::storage;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

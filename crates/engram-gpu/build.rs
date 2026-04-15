@@ -44,10 +44,10 @@ fn compile_cuda(nvcc_path: &std::path::Path) {
         let src   = kernel_dir.join(kernel);
         let stem  = kernel.trim_end_matches(".cu");
         let obj   = out_dir.join(format!("{stem}.o"));
-        let ptx   = out_dir.join(format!("{stem}.ptx"));
+        let _ptx   = out_dir.join(format!("{stem}.ptx"));
 
         // Compile to PTX then to .o using nvcc
-        let status = std::process::Command::new(&nvcc_path)
+        let status = std::process::Command::new(nvcc_path)
             .args([
                 "-O3",
                 "--gpu-architecture=sm_75",     // Turing+ (RTX 2000, T4, A100, RTX 5060)
