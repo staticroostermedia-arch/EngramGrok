@@ -160,6 +160,28 @@ fn tool_list() -> Value {
                     },
                     "required": ["concept"]
                 }
+            },
+            {
+                "name": "mcp_engram_set_active_stalk",
+                "description": "Switch the active write-target stalk in Sheaf mode. New memories will be written to this stalk.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name of the stalk to activate (must be registered in sheaf.toml)"
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "mcp_engram_list_stalks",
+                "description": "List all registered Sheaf stalks and show which one is currently active.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
             }
         ]
     })
@@ -282,6 +304,30 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 json!({ "content": [{ "type": "text", "text": format!("✓ Pinned concept to CRS 1.0. Autophagy will ignore it.: {}", concept) }] })
             } else {
                 json!({ "content": [{ "type": "text", "text": format!("Memory not found: {}", concept) }], "isError": true })
+            }
+        }
+
+        "mcp_engram_set_active_stalk" => {
+            let name = args["name"].as_str().unwrap_or("").trim().to_string();
+            let lock = store.lock().unwrap();
+            if lock.set_active_stalk(&name) {
+                json!({ "content": [{ "type": "text", "text": format!("✓ Active stalk switched to: {}", name) }] })
+            } else {
+                json!({ "content": [{ "type": "text", "text": format!("Stalk '{}' not found in sheaf.toml — register it first.", name) }], "isError": true })
+            }
+        }
+
+        "mcp_engram_list_stalks" => {
+            let lock = store.lock().unwrap();
+            if lock.is_sheaf_mode() {
+                let names = lock.stalk_names();
+                let active = lock.active_stalk_name();
+                let list = names.iter().map(|n| {
+                    if n == &active { format!("• {} ← active", n) } else { format!("  {}", n) }
+                }).collect::<Vec<_>>().join("\n");
+                json!({ "content": [{ "type": "text", "text": format!("Sheaf stalks:\n{}", list) }] })
+            } else {
+                json!({ "content": [{ "type": "text", "text": "Running in single-store mode. No sheaf.toml detected at ~/.engram/sheaf.toml." }] })
             }
         }
 

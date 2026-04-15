@@ -48,7 +48,7 @@ pub use types::{
     ZEDOS_BODY, ZEDOS_VERBATIM, ZEDOS_PRAXIS,
 };
 pub use ops::{op_add, op_bind, cosine_similarity};
-pub use backend::VsaBackend;
+pub use backend::{VsaBackend, SheafBackend};
 
 /// `Complex32` — a 32-bit complex number. The fundamental unit of the phase vector.
 pub use num_complex::Complex32;
