@@ -244,8 +244,13 @@ async function send() {
         if (data === '[DONE]') break;
         try {
           const parsed = JSON.parse(data);
-          const delta  = parsed.choices?.[0]?.delta?.content || '';
-          full += delta;
+          const delta  = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.message?.content || '';
+          // If the server sends the full message at once (message format), don't append to itself
+          if (parsed.choices?.[0]?.message?.content) {
+              full = delta;
+          } else {
+              full += delta;
+          }
           bubble.textContent = full;
           bubble.scrollIntoView({ block: 'end', behavior: 'smooth' });
         } catch {}
