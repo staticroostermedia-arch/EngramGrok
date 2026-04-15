@@ -8,7 +8,7 @@ use crate::bvh::BvhManifold;
 use engram_core::backend::{CpuBackend, Memory, VsaBackend};
 use engram_core::types::Leg3Pointer;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use anyhow::Result;
 
 /// CUDA-accelerated backend with BVH K-NN filter.
@@ -28,15 +28,15 @@ pub struct CudaBackend {
     store_path: PathBuf,
     /// CPU backend for writes and linear-scan fallback
     cpu: CpuBackend,
-    /// BVH index for O(log N) queries — shared with background build thread
-    bvh: Arc<RwLock<Option<BvhManifold>>>,
-    /// Whether a GPU was detected at startup
+    /// BVH index for O(log N) queries (rebuilt after writes)
+    bvh: RwLock<Option<BvhManifold>>,
+    /// Whether a GPU was detected at startup (reserved for future CUDA dispatch)
+    #[allow(dead_code)]
     gpu_available: bool,
 }
 
 impl CudaBackend {
-    /// Create a new CUDA backend. BVH is built eagerly in a background thread.
-    /// During the short build window, queries fall through to CPU linear scan.
+    /// Create a new CUDA backend. BVH is built lazily on first query.
     pub fn new(path: impl AsRef<Path>) -> Self {
         let path = shellexpand::tilde(
             path.as_ref().to_str().unwrap_or("~/.engram/manifold")
@@ -46,27 +46,16 @@ impl CudaBackend {
         let gpu_available = Self::probe_cuda();
         if gpu_available {
             eprintln!("[engram-gpu] CUDA device detected.");
+        } else if cfg!(target_os = "macos") {
+            eprintln!("[engram-gpu] macOS detected — use MetalBackend for Apple Silicon GPU. CPU BVH active.");
         } else {
             eprintln!("[engram-gpu] No CUDA device — using CPU BVH fallback.");
         }
 
-        let bvh: Arc<RwLock<Option<BvhManifold>>> = Arc::new(RwLock::new(None));
-        let bvh_bg = Arc::clone(&bvh);
-        let build_path = path.clone();
-        // Kick off BVH build immediately in background — never blocks callers.
-        // Queries fall through to CPU linear scan during the short build window.
-        std::thread::spawn(move || {
-            if let Some(manifold) = BvhManifold::build_from_dir(&build_path) {
-                if let Ok(mut guard) = bvh_bg.write() {
-                    *guard = Some(manifold);
-                }
-            }
-        });
-
         Self {
             cpu: CpuBackend::new(&path),
             store_path: PathBuf::from(path),
-            bvh,  // Arc shared with background build thread
+            bvh: RwLock::new(None),
             gpu_available,
         }
     }
@@ -83,39 +72,27 @@ impl CudaBackend {
     /// Check if a CUDA-capable GPU is reachable.
     /// Uses the CUDA runtime API via a safe probe.
     fn probe_cuda() -> bool {
+        // Try to call cudaGetDeviceCount via libc dlsym
+        // If libcuda.so isn't loaded or returns 0 devices → false
         #[cfg(target_os = "linux")]
         {
-            // Try multiple paths — background processes may not have LD_LIBRARY_PATH set
-            let candidates: &[&[u8]] = &[
-                b"libcuda.so.1\0",
-                b"/lib/x86_64-linux-gnu/libcuda.so.1\0",
-                b"/usr/lib/x86_64-linux-gnu/libcuda.so.1\0",
-                b"/usr/local/cuda/lib64/libcuda.so.1\0",
-            ];
+            // We check by probing the shared library — no compile-time CUDA required
             unsafe {
-                for path in candidates {
-                    let lib = libc::dlopen(
-                        path.as_ptr() as *const libc::c_char,
-                        libc::RTLD_NOW | libc::RTLD_LOCAL,
-                    );
-                    if lib.is_null() { continue; }
-
-                    // cuInit must be called before cuDeviceGetCount
-                    let init_sym = libc::dlsym(lib, b"cuInit\0".as_ptr() as *const libc::c_char);
-                    if !init_sym.is_null() {
-                        let cu_init: extern "C" fn(u32) -> i32 = std::mem::transmute(init_sym);
-                        cu_init(0); // flags must be 0 per CUDA spec
-                    }
-
-                    let sym = libc::dlsym(lib, b"cuDeviceGetCount\0".as_ptr() as *const libc::c_char);
-                    if sym.is_null() { libc::dlclose(lib); continue; }
-                    let get_count: extern "C" fn(*mut i32) -> i32 = std::mem::transmute(sym);
-                    let mut count: i32 = 0;
-                    let rc = get_count(&mut count);
+                let lib = libc::dlopen(
+                    b"libcuda.so.1\0".as_ptr() as *const libc::c_char,
+                    libc::RTLD_NOW | libc::RTLD_LOCAL,
+                );
+                if lib.is_null() { return false; }
+                let sym = libc::dlsym(lib, b"cuDeviceGetCount\0".as_ptr() as *const libc::c_char);
+                if sym.is_null() {
                     libc::dlclose(lib);
-                    if rc == 0 && count > 0 { return true; }
+                    return false;
                 }
-                false
+                let get_count: extern "C" fn(*mut i32) -> i32 = std::mem::transmute(sym);
+                let mut count: i32 = 0;
+                let rc = get_count(&mut count);
+                libc::dlclose(lib);
+                rc == 0 && count > 0
             }
         }
         #[cfg(not(target_os = "linux"))]
@@ -145,8 +122,7 @@ impl VsaBackend for CudaBackend {
     }
 
     fn query(&self, q: &[num_complex::Complex32; 8192], k: usize) -> Vec<Memory> {
-        // Only build BVH if a real GPU was detected at startup
-        if self.gpu_available { self.ensure_bvh(); }
+        self.ensure_bvh();
 
         // Try BVH O(log N) path first
         if let Ok(guard) = self.bvh.read() {

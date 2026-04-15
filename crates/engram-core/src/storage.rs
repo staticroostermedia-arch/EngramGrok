@@ -98,18 +98,3 @@ pub fn write_provlog(block: &mut HolographicBlock, text: &str) {
     let len = bytes.len().min(block.payload.len());
     block.payload[..len].copy_from_slice(&bytes[..len]);
 }
-
-/// Update `last_accessed_timestamp` on an existing block file without changing any other data.
-///
-/// Used by `status` and `export_context` when we want accurate access tracking but
-/// do NOT want to rewrite block data on every passive recall hit.
-/// Performs a full 256KB O_DIRECT read-modify-write cycle.
-pub fn touch_block<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
-    let mut block = read_block(path.as_ref())?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    block.last_accessed_timestamp = now;
-    write_block(path.as_ref(), &block)
-}

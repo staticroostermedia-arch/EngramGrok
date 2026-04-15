@@ -34,8 +34,7 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
         info!("Agentic Daemon (Phase 7) online. Garbage Collection active.");
 
         // Loop checks both incoming watcher events, and periodically runs Garbage Collection
-        let mut gc_interval    = tokio::time::interval(Duration::from_secs(3600)); // Every hour
-        let mut flush_interval = tokio::time::interval(Duration::from_secs(60));   // Every 60s
+        let mut gc_interval = tokio::time::interval(Duration::from_secs(3600)); // Every hour
         
         loop {
             if ctrl.shutdown.load(Ordering::Relaxed) {
@@ -80,11 +79,6 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                     }
                 }
 
-                _ = flush_interval.tick() => {
-                    let mut lock = store.lock().unwrap();
-                    lock.access_index.flush_if_dirty();
-                }
-
                 event = rx.recv_async() => {
                     if let Ok(ev) = event {
                         if ev.kind.is_modify() || ev.kind.is_create() {
@@ -109,7 +103,7 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                             end -= 1;
                                         }
                                         
-                                        let mut lock = store.lock().unwrap();
+                                        let lock = store.lock().unwrap();
                                         if let Err(e) = lock.remember(&concept_name, &content[..end]) {
                                             error!("Daemon failed to auto-sync file {}: {}", path.display(), e);
                                         } else {

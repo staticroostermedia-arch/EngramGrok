@@ -23,8 +23,7 @@
 //! let bvh = BvhManifold::build_from_dir("/home/user/.engram/manifold").unwrap();
 //! ```
 
-use engram_core::backend::{Memory, VsaBackend};
-use engram_core::types::DIMENSION;
+use engram_core::backend::Memory;
 use num_complex::Complex32;
 use std::collections::HashMap;
 use std::fs;
