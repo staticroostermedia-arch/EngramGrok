@@ -160,6 +160,60 @@ fn tool_list() -> Value {
                     },
                     "required": ["concept"]
                 }
+            },
+            {
+                "name": "mcp_engram_relate",
+                "description": "Bind two concepts via op_bind and store a directional relation block (ZEDOS_RELATION).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept_a": {
+                            "type": "string",
+                            "description": "Source concept"
+                        },
+                        "concept_b": {
+                            "type": "string",
+                            "description": "Target concept"
+                        },
+                        "label": {
+                            "type": "string",
+                            "description": "Relation label (e.g. 'depends_on', 'implements')"
+                        }
+                    },
+                    "required": ["concept_a", "concept_b", "label"]
+                }
+            },
+            {
+                "name": "mcp_engram_context_for_file",
+                "description": "Surface the top 5 most relevant memories for a given file path. Useful for proactive context loading when opening a file.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path (e.g. /home/user/project/backend.rs)"
+                        }
+                    },
+                    "required": ["path"]
+                }
+            },
+            {
+                "name": "mcp_engram_remember_solution",
+                "description": "Store a crystallized error→solution pair as a ZEDOS_PRAXIS block, auto-pinned to CRS=1.0. Solutions never decay.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "error_pattern": {
+                            "type": "string",
+                            "description": "The error or problem pattern (error message, concept, or description)"
+                        },
+                        "solution": {
+                            "type": "string",
+                            "description": "The solution or approach that resolved it"
+                        }
+                    },
+                    "required": ["error_pattern", "solution"]
+                }
             }
         ]
     })
@@ -282,6 +336,100 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 json!({ "content": [{ "type": "text", "text": format!("✓ Pinned concept to CRS 1.0. Autophagy will ignore it.: {}", concept) }] })
             } else {
                 json!({ "content": [{ "type": "text", "text": format!("Memory not found: {}", concept) }], "isError": true })
+            }
+        }
+
+        "mcp_engram_relate" => {
+            let concept_a = args["concept_a"].as_str().unwrap_or("").trim().to_string();
+            let concept_b = args["concept_b"].as_str().unwrap_or("").trim().to_string();
+            let label     = args["label"].as_str().unwrap_or("").trim().to_string();
+
+            if concept_a.is_empty() || concept_b.is_empty() || label.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: missing required strings" }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            let block_a = lock.fetch_block(&concept_a);
+            let block_b = lock.fetch_block(&concept_b);
+
+            match (block_a, block_b) {
+                (Some(a), Some(b)) => {
+                    let mut rel_block = engram_core::types::Leg3Pointer::mint();
+                    
+                    // Topologically bind the two concept vectors (circular convolution)
+                    let bound_q = engram_core::ops::op_bind(&a.q, &b.q);
+                    rel_block.q.copy_from_slice(&bound_q);
+                    
+                    // Mark as a formal relation mapping
+                    rel_block.zedos_tag = engram_core::types::ZEDOS_RELATION;
+                    rel_block.crs_score = (a.crs_score + b.crs_score) / 2.0;
+
+                    let payload_str = format!("{} ---[{}]---> {}", concept_a, label, concept_b);
+                    let payload_bytes = payload_str.as_bytes();
+                    let end = payload_bytes.len().min(rel_block.payload.len());
+                    rel_block.payload[..end].copy_from_slice(&payload_bytes[..end]);
+
+                    let relation_concept = format!("{}_{}_{}", concept_a, label, concept_b);
+                    let _ = lock.store(&relation_concept, rel_block);
+
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Topologically bound '{}' and '{}'. Relation memory stored as '{}'", concept_a, concept_b, relation_concept) }] })
+                }
+                _ => {
+                    json!({ "content": [{ "type": "text", "text": format!("Error: Context blocks missing. Ensure both '{concept_a}' and '{concept_b}' exist in memory before binding.") }], "isError": true })
+                }
+            }
+        }
+
+        "mcp_engram_context_for_file" => {
+            let path = args["path"].as_str().unwrap_or("").trim().to_string();
+            if path.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: path is required." }], "isError": true });
+            }
+
+            // Perform a highly focused query based on the filename/path
+            let results = store.lock().unwrap().recall(&path, 5);
+            if results.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": format!("No specific topological memory found for {}", path) }] });
+            }
+
+            let mut output = format!("Architectural Context for {}:\n\n", path);
+            for mem in results.iter() {
+                output.push_str(&format!(
+                    "**{}** (crs: {:.2})\n{}\n\n",
+                    mem.concept, mem.crs,
+                    if mem.provlog.is_empty() { "(no text content)" } else { mem.provlog.as_str() }
+                ));
+            }
+            json!({ "content": [{ "type": "text", "text": output.trim() }] })
+        }
+
+        "mcp_engram_remember_solution" => {
+            let error_pattern = args["error_pattern"].as_str().unwrap_or("").trim().to_string();
+            let solution      = args["solution"].as_str().unwrap_or("").trim().to_string();
+            
+            if error_pattern.is_empty() || solution.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: missing required strings" }], "isError": true });
+            }
+
+            // Synthesize the concept name securely
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            error_pattern.hash(&mut h);
+            let concept_name = format!("praxis_solution_{}", h.finish());
+            let payload = format!("ERROR PATTERN:\n{}\n\nSOLUTION:\n{}", error_pattern, solution);
+
+            let mut lock = store.lock().unwrap();
+            match lock.remember(&concept_name, &payload) {
+                Ok(_) => {
+                    // Fetch the block immediately to pin and tag it
+                    if let Some(mut m) = lock.fetch_block(&concept_name) {
+                        m.zedos_tag = engram_core::types::ZEDOS_PRAXIS;
+                        m.crs_score = 1.0; // Pinned mathematically
+                        let _ = lock.store(&concept_name, m);
+                    }
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Crystallized Solution permanently into geometric memory (CRS = 1.0).\nStored as: {}", concept_name) }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Failed to crystallize solution: {}", e) }], "isError": true })
             }
         }
 
