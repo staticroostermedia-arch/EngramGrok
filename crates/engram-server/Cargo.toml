@@ -11,8 +11,14 @@ repository.workspace = true
 name = "engram"
 path = "src/main.rs"
 
+[features]
+default = []
+# Enable GPU-accelerated BVH K-NN backend + CUDA cosine kernels
+cuda = ["dep:engram-gpu", "engram-gpu/cuda-kernels"]
+
 [dependencies]
 engram-core  = { path = "../engram-core" }
+engram-gpu   = { path = "../engram-gpu", optional = true }
 
 # Async runtime
 tokio        = { workspace = true }

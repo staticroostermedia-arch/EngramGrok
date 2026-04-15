@@ -14,6 +14,8 @@
 //! to `~/.engram/access_index.bin` every 60 seconds by the Autophagy daemon.
 
 use engram_core::backend::{CpuBackend, Memory, VsaBackend, SheafBackend};
+#[cfg(feature = "cuda")]
+use engram_gpu::backend::CudaBackend;
 use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION};
 use engram_core::ops::{op_add, op_bind};
 use engram_core::storage;
@@ -99,46 +101,108 @@ impl AccessIndex {
 // ── Backend enum ─────────────────────────────────────────────────────────────
 
 enum Backend {
+    #[cfg(feature = "cuda")]
+    Gpu(CudaBackend),
     Single(CpuBackend),
     Sheaf(SheafBackend),
 }
 
 impl Backend {
     fn remember(&self, concept: &str, text: &str) -> Result<()> {
-        match self { Backend::Single(b) => b.remember(concept, text), Backend::Sheaf(b) => b.remember(concept, text) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.remember(concept, text),
+            Backend::Single(b) => b.remember(concept, text),
+            Backend::Sheaf(b) => b.remember(concept, text),
+        }
     }
     fn recall(&self, q: &str, k: usize) -> Vec<Memory> {
-        match self { Backend::Single(b) => b.recall(q, k), Backend::Sheaf(b) => b.recall(q, k) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.recall(q, k),
+            Backend::Single(b) => b.recall(q, k),
+            Backend::Sheaf(b) => b.recall(q, k),
+        }
     }
     fn forget(&self, concept: &str) -> Result<()> {
-        match self { Backend::Single(b) => b.forget(concept), Backend::Sheaf(b) => b.forget(concept) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.forget(concept),
+            Backend::Single(b) => b.forget(concept),
+            Backend::Sheaf(b) => b.forget(concept),
+        }
     }
     fn list(&self) -> Vec<String> {
-        match self { Backend::Single(b) => b.list(), Backend::Sheaf(b) => b.list() }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.list(),
+            Backend::Single(b) => b.list(),
+            Backend::Sheaf(b) => b.list(),
+        }
     }
     fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> {
-        match self { Backend::Single(b) => b.fetch_block(concept), Backend::Sheaf(b) => b.fetch_block(concept) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.fetch_block(concept),
+            Backend::Single(b) => b.fetch_block(concept),
+            Backend::Sheaf(b) => b.fetch_block(concept),
+        }
     }
     fn fetch(&self, concept: &str) -> Option<Box<[engram_core::Complex32; 8192]>> {
-        match self { Backend::Single(b) => b.fetch(concept), Backend::Sheaf(b) => b.fetch(concept) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.fetch(concept),
+            Backend::Single(b) => b.fetch(concept),
+            Backend::Sheaf(b) => b.fetch(concept),
+        }
     }
     fn encode(&self, text: &str) -> Leg3Pointer {
-        match self { Backend::Single(b) => b.encode(text), Backend::Sheaf(b) => b.encode(text) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.encode(text),
+            Backend::Single(b) => b.encode(text),
+            Backend::Sheaf(b) => b.encode(text),
+        }
     }
     fn query(&self, q: &[engram_core::Complex32; 8192], k: usize) -> Vec<Memory> {
-        match self { Backend::Single(b) => b.query(q, k), Backend::Sheaf(b) => b.query(q, k) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.query(q, k),
+            Backend::Single(b) => b.query(q, k),
+            Backend::Sheaf(b) => b.query(q, k),
+        }
     }
     fn store(&self, concept: &str, block: Leg3Pointer) -> Result<()> {
-        match self { Backend::Single(b) => b.store(concept, block), Backend::Sheaf(b) => b.store(concept, block) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(b) => b.store(concept, block),
+            Backend::Single(b) => b.store(concept, block),
+            Backend::Sheaf(b) => b.store(concept, block),
+        }
     }
     fn set_active_stalk(&self, name: &str) -> bool {
-        match self { Backend::Single(_) => false, Backend::Sheaf(b) => b.set_active_stalk(name) }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(_) => false,
+            Backend::Single(_) => false,
+            Backend::Sheaf(b) => b.set_active_stalk(name),
+        }
     }
     fn stalk_names(&self) -> Vec<String> {
-        match self { Backend::Single(_) => vec!["default".to_string()], Backend::Sheaf(b) => b.stalk_names().into_iter().map(|s| s.to_string()).collect() }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(_) => vec!["default".to_string()],
+            Backend::Single(_) => vec!["default".to_string()],
+            Backend::Sheaf(b) => b.stalk_names().into_iter().map(|s| s.to_string()).collect(),
+        }
     }
     fn active_stalk_name(&self) -> String {
-        match self { Backend::Single(_) => "default".to_string(), Backend::Sheaf(b) => b.active_stalk_name().to_string() }
+        match self {
+            #[cfg(feature = "cuda")]
+            Backend::Gpu(_) => "default".to_string(),
+            Backend::Single(_) => "default".to_string(),
+            Backend::Sheaf(b) => b.active_stalk_name().to_string(),
+        }
     }
     fn is_sheaf(&self) -> bool { matches!(self, Backend::Sheaf(_)) }
 }
@@ -170,7 +234,27 @@ impl StoreHandle {
                     let stalks: Vec<(String, PathBuf)> = config.stalks.iter().map(|s| {
                         (s.name.clone(), PathBuf::from(shellexpand::tilde(&s.path).into_owned()))
                     }).collect();
-                    let sheaf = SheafBackend::new(stalks);
+
+                    #[cfg(feature = "cuda")]
+                    let sheaf = {
+                        tracing::info!("engram-gpu: Sheaf × CudaBackend — {} stalks with BVH K-NN", config.stalks.len());
+                        let boxed_stalks: Vec<(String, Box<dyn engram_core::backend::VsaBackend + Send + Sync>)> = stalks
+                            .into_iter()
+                            .map(|(name, path)| {
+                                std::fs::create_dir_all(&path).ok();
+                                let b: Box<dyn engram_core::backend::VsaBackend + Send + Sync> =
+                                    Box::new(CudaBackend::new(&path));
+                                (name, b)
+                            })
+                            .collect();
+                        SheafBackend::new_boxed(boxed_stalks)
+                    };
+
+                    #[cfg(not(feature = "cuda"))]
+                    let sheaf = {
+                        SheafBackend::new(stalks)
+                    };
+
                     if let Some(active) = &config.active_stalk { sheaf.set_active_stalk(active); }
                     tracing::info!("Engram Sheaf mode: {} stalks loaded", config.stalks.len());
                     Backend::Sheaf(sheaf)
@@ -181,7 +265,16 @@ impl StoreHandle {
                 }
             }
         } else {
-            Backend::Single(CpuBackend::new(&expanded))
+            // Use GPU-accelerated BVH backend when compiled with --features cuda
+            #[cfg(feature = "cuda")]
+            {
+                tracing::info!("engram-gpu: CudaBackend selected (BVH + CUDA cosine kernels)");
+                Backend::Gpu(CudaBackend::new(&expanded))
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                Backend::Single(CpuBackend::new(&expanded))
+            }
         };
 
         Self { backend, path: expanded, access_index, daemon: None }

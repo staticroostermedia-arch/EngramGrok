@@ -174,20 +174,27 @@ impl VsaBackend for CpuBackend {
 /// This implements the Sheaf topology already encoded in the LEG Merkle footer:
 /// each stalk is a local section; `SheafBackend` is the global section.
 pub struct SheafBackend {
-    stalks: Vec<(String, CpuBackend)>,
+    stalks: Vec<(String, Box<dyn VsaBackend + Send + Sync>)>,
     active: std::sync::atomic::AtomicUsize,
 }
 
 impl SheafBackend {
-    /// Create from a list of `(name, path)` pairs. First entry is the active stalk.
+    /// Create from a list of `(name, path)` pairs using CpuBackend per stalk (default).
     pub fn new(stalks: Vec<(String, std::path::PathBuf)>) -> Self {
-        let stalks = stalks
+        let stalks: Vec<(String, Box<dyn VsaBackend + Send + Sync>)> = stalks
             .into_iter()
             .map(|(name, path)| {
                 std::fs::create_dir_all(&path).ok();
-                (name, CpuBackend::new(path))
+                let b: Box<dyn VsaBackend + Send + Sync> = Box::new(CpuBackend::new(path));
+                (name, b)
             })
             .collect();
+        Self { stalks, active: std::sync::atomic::AtomicUsize::new(0) }
+    }
+
+    /// Create with pre-built backend instances per stalk.
+    /// Use this to pass `CudaBackend` or any other `VsaBackend` implementor.
+    pub fn new_boxed(stalks: Vec<(String, Box<dyn VsaBackend + Send + Sync>)>) -> Self {
         Self { stalks, active: std::sync::atomic::AtomicUsize::new(0) }
     }
 
