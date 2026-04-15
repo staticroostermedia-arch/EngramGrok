@@ -1,7 +1,7 @@
 # Engram
 
-[![Build Status](https://github.com/StaticRoosterMedia/engram/actions/workflows/rust.yml/badge.svg)](https://github.com/StaticRoosterMedia/engram/actions)
-[![MCP](https://img.shields.io/badge/MCP-Native-blue)](https://modelcontextprotocol.io)
+[![Build Status](https://github.com/staticroostermedia-arch/engram/actions/workflows/rust.yml/badge.svg)](https://github.com/staticroostermedia-arch/engram/actions)
+[![MCP](https://img.shields.io/badge/MCP-Native-blue)](https://github.com/modelcontextprotocol)
 
 > **Persistent geometric memory for AI agents.**  
 > Patent Pending US19/372,256 — Aric Goodman & Static Rooster Media
@@ -63,7 +63,7 @@ If you alter the struct geometry in `types.rs` so that it no longer aligns evenl
 ### Install
 
 ```bash
-cargo install engram --git https://github.com/StaticRoosterMedia/engram
+cargo install engram --git https://github.com/staticroostermedia-arch/engram
 ```
 
 ### Google Antigravity IDE
