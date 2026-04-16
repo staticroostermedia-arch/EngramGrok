@@ -16,14 +16,34 @@ use crate::ops::normalize;
 use crate::storage::write_provlog;
 use num_complex::Complex32;
 
-/// Encode free-form text into a `HolographicBlock`.
-///
-/// This is the primary entry point for creating new memories.
-///
-/// ```rust,no_run
-/// use engram_core::encode;
-/// let block = encode::from_text("Rust ownership prevents memory leaks at compile time");
-/// ```
+/// Attempt to fetch a Neural Embedding from the local Transductive Suture (llama-server)
+fn fetch_neural_embedding(text: &str) -> Option<Vec<f32>> {
+    use serde_json::json;
+    
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_millis(500))
+        .build()
+        .ok()?;
+        
+    let body = json!({
+        "input": text,
+        "model": "local" // llama-server ignores model but expects the key
+    });
+    
+    let res: serde_json::Value = client.post("http://localhost:8085/v1/embeddings")
+        .json(&body)
+        .send()
+        .ok()?
+        .json()
+        .ok()?;
+        
+    let emb = res["data"][0]["embedding"].as_array()?;
+    let vec: Vec<f32> = emb.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+    if vec.is_empty() { return None; }
+    Some(vec)
+}
+
+/// Encode free-form text into a `HolographicBlock` using Hybrid HRR + Neural Strategy.
 pub fn from_text(text: &str) -> Leg3Pointer {
     let mut block = Leg3Pointer::mint();
     block.magic = *b"LEG3";
@@ -31,38 +51,40 @@ pub fn from_text(text: &str) -> Leg3Pointer {
     block.zedos_tag = ZEDOS_DECLARATIVE;
     block.spin_state = 0x01; // Axiomatic (lit)
 
-    // Phase 1: BLAKE3 hash → XOF seed for deterministic phase generation
-    let seed_hash = blake3::hash(text.as_bytes());
-    let mut xof = blake3::Hasher::new();
-    xof.update(seed_hash.as_bytes());
-    let mut phase_bytes = vec![0u8; DIMENSION * 4]; // 4 bytes per complex element
-    xof.finalize_xof().fill(&mut phase_bytes);
-
-    // Phase 2: Generate base phase vector from XOF
+    // Structural Anchor (Method A) - Native Logophysical HRR accumulation
     let mut q = [Complex32::default(); DIMENSION];
-    for i in 0..DIMENSION {
-        let b0 = phase_bytes[i * 4]     as f32;
-        let b1 = phase_bytes[i * 4 + 1] as f32;
-        let b2 = phase_bytes[i * 4 + 2] as f32;
-        let b3 = phase_bytes[i * 4 + 3] as f32;
-        // Map bytes to phase angles in [0, 2π]
-        let theta_re = (b0 * 256.0 + b1) / 65535.0 * std::f32::consts::TAU;
-        let theta_im = (b2 * 256.0 + b3) / 65535.0 * std::f32::consts::TAU;
-        q[i] = Complex32::new(theta_re.cos(), theta_im.sin());
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    
+    for token in &tokens {
+        let seed_hash = blake3::hash(token.to_lowercase().as_bytes());
+        let mut xof = blake3::Hasher::new();
+        xof.update(seed_hash.as_bytes());
+        let mut phase_bytes = vec![0u8; DIMENSION * 4];
+        xof.finalize_xof().fill(&mut phase_bytes);
+
+        for i in 0..DIMENSION {
+            let b0 = phase_bytes[i * 4]     as f32;
+            let b1 = phase_bytes[i * 4 + 1] as f32;
+            let b2 = phase_bytes[i * 4 + 2] as f32;
+            let b3 = phase_bytes[i * 4 + 3] as f32;
+            let theta_re = (b0 * 256.0 + b1) / 65535.0 * std::f32::consts::TAU;
+            let theta_im = (b2 * 256.0 + b3) / 65535.0 * std::f32::consts::TAU;
+            
+            // Vector Superposition (Accumulate pure token phases)
+            q[i] += Complex32::new(theta_re.cos(), theta_im.sin());
+        }
     }
 
-    // Phase 3: Character-level spiral weighting
-    // Each character in the text imprints a phase rotation onto its corresponding
-    // dimension range, giving structurally similar texts similar vectors.
-    let chars: Vec<u32> = text.chars().map(|c| c as u32).collect();
-    let char_stride = DIMENSION / chars.len().max(1);
-    for (idx, &ch) in chars.iter().enumerate() {
-        let dim_start = (idx * char_stride).min(DIMENSION - 1);
-        let dim_end   = ((idx + 1) * char_stride).min(DIMENSION);
-        let char_phase = (ch as f32 / 1114111.0) * std::f32::consts::TAU; // Unicode max
-        let rotor = Complex32::new(char_phase.cos(), char_phase.sin());
-        for d in dim_start..dim_end {
-            q[d] *= rotor;
+    // Semantic Aura (Method B) - Deep Neural Integration via llama-server fallback
+    if let Some(neural_vec) = fetch_neural_embedding(text) {
+        let neural_len = neural_vec.len();
+        // Bind the neural geometry directly into the logophysical structure
+        for i in 0..DIMENSION {
+            let n_val = neural_vec[i % neural_len];
+            let neural_phase = Complex32::new(n_val.cos(), n_val.sin());
+            // Binding (Multiply) structural token accumulation by Neural Semantic concept
+            // and apply a 5x superposition weight so the Aura heavily guides similarity
+            q[i] = (q[i] * neural_phase) + (Complex32::new(n_val * 5.0, 0.0));
         }
     }
 
@@ -74,12 +96,11 @@ pub fn from_text(text: &str) -> Leg3Pointer {
     block.energetics.crs = 1.0;
     block.energetics.heat_dissipated = 5.47e-4; // Minimum action quantum
 
-    // Phase 6: Set BLAKE3 provenance hash in footer sig_0
+    // Store provenance identifier
+    let seed_hash = blake3::hash(text.as_bytes());
     block.footer.sig_0 = *seed_hash.as_bytes();
 
-    // Phase 7: Store source text as ProvLog
     write_provlog(&mut block, text);
-
     block
 }
 

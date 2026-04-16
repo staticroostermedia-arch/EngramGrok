@@ -21,6 +21,7 @@ serde        = { workspace = true }
 serde_json   = { workspace = true }
 anyhow       = { workspace = true }
 thiserror    = { workspace = true }
+reqwest      = { workspace = true }
 tracing      = { workspace = true }
 
 libc         = "0.2"   # O_DIRECT flag for direct I/O reads
