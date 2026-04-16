@@ -2,73 +2,190 @@
 
 [![Build Status](https://github.com/staticroostermedia-arch/engram/actions/workflows/rust.yml/badge.svg)](https://github.com/staticroostermedia-arch/engram/actions)
 [![MCP](https://img.shields.io/badge/MCP-Native-blue)](https://github.com/modelcontextprotocol)
+[![Glama](https://glama.ai/mcp/servers/staticroostermedia-arch/engram/badge)](https://glama.ai/mcp/servers/staticroostermedia-arch/engram)
 
-> **Persistent geometric memory for AI agents.**  
+> **Persistent geometric memory for AI agents — 21 MCP tools.**  
 > Patent Pending US19/372,256 — Aric Goodman & Static Rooster Media
 
-Engram gives your AI agent a long-term memory that works directly like human associative memory—store anything, retrieve by meaning, not keywords. No vector database. No cloud. No API key. Runs entirely on your machine via the Model Context Protocol (MCP).
+Engram gives your AI agent a long-term memory that works like human associative memory — store anything, retrieve by meaning, not keywords. No vector database. No cloud. No API key. Runs entirely on your machine via the Model Context Protocol (MCP).
 
 ---
 
-## 🚀 The AI Native Agentic Daemon
-
-Engram is not just a passive database. When you map it into an LLM IDE (like Antigravity or Cursor), it boots an **Agentic Daemon** that handles geometric awareness completely in the background:
-
-1. **Native OS Watcher:** By calling the `mcp_engram_watch_workspace` JSON tool, the Daemon binds directly to OS-level kernel events (`inotify`/`fsevents`). The moment you or your Agent saves *any* major code file, Engram immediately re-ingests the vector chunk to the manifold. Your contextual window never decays into staleness.
-2. **Tiered Autophagy GC:** Every hour, a deep-asynchronous Tokio thread wakes up and scans your memory manifold. Irrelevant ephemeral states automatically log-decay (2% for 24h stale, 5% for 7d stale). If a geometric block drops below `0.05 CRS` (Coherence-Reliability Score), it is permanently evicted from the NVMe disk to clear room for new vectors.
-3. **Project Matrix Pinning:** Using the `mcp_engram_pin` or `mcp_engram_remember_solution` tools, a connecting LLM can permanently bind critical Task Boards, PR Specs, or Bug Fixes to a perfect `1.0 CRS`. The Autophagy Daemon is hardcoded to never decay pinned invariants.
-
----
-
-## ⚡ The Semantic Ray-Tracer & NVSA Reasoning
-
-Because Engram uses **Vector Symbolic Architectures** inside the core math engine, you and your agents are capable of performing complex geometrical operations *before* extracting memory.
-
-Engram native operators strictly adhere to the Monad CodeLand NVSA specification:
-- **`op_deduce`**: Physically trace logical implication constraints ($A \rightarrow B$).
-- **`op_attend`**: Massively attenuate dimensions without tearing the hologram.
-- **`op_is_symbolic_of`**: Avoid logic freezes by hoisting paradoxes into ZADO-CPS conformal toroidal embedding.
-- **`op_geometric_product`**: Computes cosine similarities alongside orthogonal dimensions simultaneously using the Clifford ansatz.
-
-Instead of hunting for keywords, you can mathematically bind, superpose, and intersect concepts across the hyperdimensional plane using the **Trace** commands:
-
-```bash
-# Locate the precise `.rs` chunks where native "CUDA" overlaps contextually with "Memory"
-engram-cli trace "cuda" BIND "memory"
-
-# Find code blocks that share equivalence between two combined domains
-engram-cli trace "geometric" ADD "tensor"
-```
-These logophysical math routes are available locally over CLI, or explicitly exposed to AI integrations over the robust `/api/trace` Axum REST route!
-
----
-
-## 💾 Engineering Limitations: NVMe `O_DIRECT` Block Rules
-
-> [!WARNING]  
-> If you are modifying the `engram-core` serialization pipelines, **strictly adhere to the 256KB block rules**.
-
-Every piece of knowledge is stamped into fundamentally isolated **HolographicBlocks** (`.leg` files). We designed these logical containers to be exactly **262,144 bytes (256KB)** in memory space. 
-
-**This is not an arbitrary limitation.**
-The exact 256KB payload was specifically optimized for **O_DIRECT physical SSD alignments**. This ensures that geometrical tensors can completely bypass standard Operating System CPU buffer-caches, and be Direct Memory Access (DMA) streamed off of M.2 NVMe drives directly into GPU VRAM for CUDA or ROCm kernel processing. 
-If you alter the struct geometry in `types.rs` so that it no longer aligns evenly to modern block bounds, you will break the underlying DMA speeds!
-
----
-
-## ⚡ Quick Start integration
-
-> **Integration configs** for all supported IDEs are openly tracked in [`integrations/`](integrations/)
-
-### Install
+## 🚀 Quick Start
 
 ```bash
 cargo install engram --git https://github.com/staticroostermedia-arch/engram
 ```
 
+Add to your MCP config and restart your IDE:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "engram",
+      "args": ["mcp", "--store", "~/.engram/manifold"]
+    }
+  }
+}
+```
+
+Your agent immediately has access to all 21 tools. See [`integrations/`](integrations/) for IDE-specific configs.
+
+---
+
+## 🧰 MCP Tools Reference
+
+Engram exposes **21 tools** across 5 capability groups.
+
+### Core Memory
+
+| Tool | Description |
+|---|---|
+| `remember` | Encode text and store as a persistent memory block |
+| `recall` | Semantic similarity search — returns top-k memories for a query |
+| `forget` | Delete a specific memory by concept name |
+| `list_concepts` | List all stored concept names |
+| `mcp_engram_update` | Re-encode an existing memory in place (uses `op_add` superposition) |
+| `mcp_engram_pin` | Lock a memory at CRS=1.0 — Autophagy daemon never decays it |
+
+### Memory Intelligence
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_stats` | Manifold health report: total count, pinned, avg/min/max CRS, disk usage |
+| `mcp_engram_recall_recent` | Return N most recently accessed memories, sorted by access time |
+| `mcp_engram_summarize` | Project-state digest: pinned memories + top-N by CRS. Single-call `/wake_up` replacement |
+| `mcp_engram_forget_old` | On-demand autophagy: evict memories below a CRS threshold (pinned exempt) |
+
+### Bulk & Portability
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_batch_remember` | Ingest multiple memories in a single call |
+| `mcp_engram_export` | Export manifold (or filtered subset) to portable JSON — for backup and migration |
+| `mcp_engram_import` | Restore memories from a previously exported JSON array |
+
+### Namespaces
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_set_namespace` | Switch to a project-specific memory namespace (stalk) |
+| `mcp_engram_list_namespaces` | List all namespaces and show which is active |
+
+### Knowledge Graph
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_relate` | Bind two concepts via `op_bind` — stores a directional ZEDOS_RELATION block |
+| `mcp_engram_search_by_relation` | Traverse the graph: find all concepts related to a seed by label and direction |
+| `mcp_engram_visualize` | BFS from a seed concept → outputs a Mermaid `graph LR` diagram |
+
+### Workspace & Agentic
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_watch_workspace` | Tell the daemon to watch a directory; re-ingests files on save |
+| `mcp_engram_context_for_file` | Surface top-5 relevant memories for a file path (proactive loading) |
+| `mcp_engram_remember_solution` | Store an error→solution pair at CRS=1.0 — crystallized learning |
+
+---
+
+## 🧠 The Agentic Daemon
+
+When Engram boots as an MCP server it also launches a **background Agentic Daemon** that manages three autonomous systems:
+
+- **Native OS Watcher** — `inotify`/`fsevents` kernel integration. When `mcp_engram_watch_workspace` is called, the daemon binds to OS file-save events and re-ingests changed files into the manifold instantly.
+- **Tiered Autophagy GC** — Hourly geometric decay pass. Idle memories lose 2% CRS per 24h stale, 5% per 7d stale. Blocks below `0.05 CRS` are permanently evicted. Pinned blocks (`CRS=1.0`) are completely exempt.
+- **Access Index** — In-memory hot metadata layer. Access timestamps are maintained in RAM and flushed to `access_index.bin` every 60 seconds — `O_DIRECT` block rewrites are never triggered by a simple recall query.
+
+---
+
+## 📐 The Geometry Engine
+
+Engram uses **Vector Symbolic Architecture (NVSA)** rather than flat embedding search. Every memory is a 8192-dimensional complex phase vector (`Complex32[8192]`). The math engine supports:
+
+- **`op_add`** — Superposition. Merge semantic content without losing coherence.
+- **`op_bind`** — Circular convolution. Create a new vector that carries both parent concepts — the basis for knowledge graph relations.
+- **`op_deduce`** — Logical implication constraint tracking via rotation matrices.
+- **`op_attend`** — Geometric amplitude attenuation for focused context retrieval.
+- **`op_geometric_product`** — Clifford bivector product: computes cosine similarity and orthogonality simultaneously.
+- **`op_is_symbolic_of`** — ZADO-CPS toroidal embedding; resolves topological paradoxes without logic freezes.
+- **`op_suspend`** — Binds to the Apeiron primitive — marks "Known Unknowns" for inverse ray-tracing.
+
+---
+
+## 🔑 Knowledge Graph
+
+Every `mcp_engram_relate` call stores a BLAKE3-fingerprinted `ZEDOS_RELATION` block and writes a deduplicated edge to `~/.engram/relation_index.json`. The sidecar persists across restarts and powers two tools:
+
+```
+# What does "authentication" depend on?
+search_by_relation("authentication", label="depends_on", direction="from")
+
+# Show a 2-hop Mermaid graph from "authentication"
+visualize("authentication", depth=2)
+```
+
+Output:
+````
+```mermaid
+graph LR
+  authentication["authentication"] -->|depends_on| blake3_hashing["blake3_hashing"]
+  blake3_hashing["blake3_hashing"] -->|implements| merkle_chain["merkle_chain"]
+```
+````
+
+---
+
+## 💾 Storage: NVMe O_DIRECT HolographicBlocks
+
+> [!WARNING]
+> If you are modifying `engram-core` serialization, strictly adhere to the 256KB block constraint.
+
+Every memory is a **HolographicBlock** — exactly 262,144 bytes (256KB), 4096-byte aligned. This is not an arbitrary size:
+
+- Aligned to NVMe physical block boundaries for `O_DIRECT` DMA streaming
+- Bypasses OS page-cache — tensors stream directly from SSD to VRAM
+- Verified at compile time: `const _: () = assert!(size_of::<HolographicBlock>() == 262144)`
+
+Each block carries:
+- **Geometric tensors**: `q[8192]` (knowledge), `p[8192]` (binding momentum)
+- **ZEDOS epistemic tag**: DECLARATIVE, EPISODIC, OPERATIONAL, PRAXIS, RELATION...
+- **CRS score** (Coherence-Reliability Score): geometric health metric, range [0.0, 1.0]
+- **BLAKE3 Merkle footer**: cryptographic provenance chain — every memory has a verifiable lineage
+
+---
+
+## 🌐 Multi-Project Namespaces
+
+Use sheaf mode to isolate memories by project. Create `~/.engram/sheaf.toml`:
+
+```toml
+active_stalk = "codeland"
+
+[[stalks]]
+name = "codeland"
+path = "~/.engram/stalks/codeland"
+
+[[stalks]]
+name = "personal"
+path = "~/.engram/stalks/personal"
+```
+
+Then switch namespaces via MCP at any time:
+```
+mcp_engram_set_namespace("personal")
+```
+
+---
+
+## 💻 IDE Integration
+
+> Integration configs for all supported IDEs: [`integrations/`](integrations/)
+
 ### Google Antigravity IDE
 
-Engram ships a ready-to-use config for Google Antigravity IDE. Add to `~/.gemini/antigravity/mcp_config.json`:
 ```json
 {
   "mcpServers": {
@@ -81,9 +198,8 @@ Engram ships a ready-to-use config for Google Antigravity IDE. Add to `~/.gemini
 }
 ```
 
-### Claude Desktop Integration
+### Claude Desktop
 
-Add to `~/.config/claude-desktop/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
@@ -94,42 +210,34 @@ Add to `~/.config/claude-desktop/claude_desktop_config.json`:
   }
 }
 ```
-Restart Claude Desktop. You immediately tap into the native tools: `remember`, `recall`, `forget`, `list_concepts`, `mcp_engram_watch_workspace`, `mcp_engram_pin`, `mcp_engram_relate`, `mcp_engram_context_for_file`, and `mcp_engram_remember_solution`.
 
----
+### Cursor / VS Code
 
-## 💻 CLI Operations & Manifold Bootstrapping
-
-If you're bringing Engram into a legacy repository, you do not need to manually parse your code logs. Just utilize the native recursive chunking engine:
-
-```bash
-# Bootstrap an entire monolithic repository into geometric logic inside of seconds:
-engram-cli ingest /path/to/monolithic-workspace --chunk-size 8000
-
-# Store single ad-hoc memories:
-engram-cli remember krebs_cycle "The Krebs cycle converts acetyl-CoA to ATP via 8 enzymatic steps"
-
-# Interrogate memory conceptually:
-engram-cli recall "how does cellular respiration produce energy"
-# Prints exactly the Krebs Cycle vector, and exact code lines tied to that phase domain.
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "engram",
+      "args": ["mcp", "--store", "~/.engram/manifold"]
+    }
+  }
+}
 ```
 
 ---
 
-## Hardware Support
+## ⚙️ Hardware Support
 
-Engram maps identically across the top hardware architectures natively:
-
-| Backend | Flag | Status | Notes |
-|---------|------|--------|-------|
-| CPU (Rayon) | Default | ✅ v1.0 | Uses B=4 TurboQuant Codebook for 4x accelerated K-NN bounds |
-| CUDA (NVIDIA) | `cuda-kernels` | ✅ v2.0 | BVH O(log N) index, NVMe parallel kernel computation |
-| ROCm (AMD) | `rocm-kernels` | ✅ v2.0 | Wavefront HIP execution |
-| Metal (Apple) | `metal` (Auto) | ✅ v1.0 | macOS MSL dynamic runtime compilation via metal-rs |
+| Backend | Feature Flag | Status | Notes |
+|---|---|---|---|
+| CPU (Rayon) | Default | ✅ | TurboQuant B=4 codebook, 4x K-NN acceleration |
+| CUDA (NVIDIA) | `cuda-kernels` | ✅ | BVH O(log N) index, NVMe→VRAM parallel DMA |
+| ROCm (AMD) | `rocm-kernels` | ✅ | Wavefront HIP execution |
+| Metal (Apple) | `metal` | ✅ | MSL dynamic runtime compilation via metal-rs |
 
 ---
 
-## License & Patent
+## 📄 License & Patent
 
 This software is licensed under **AGPL-3.0-only**.
 
@@ -137,7 +245,7 @@ The `.LEG` container format is covered by **U.S. Patent Application No. 19/372,2
 *Self-Contained Variable File System (.LEG Container Format)*,  
 Applicant: **Aric Goodman**, Oregon, USA — Static Rooster Media.
 
-This is a **reference implementation**. Commercial licenses (including for SaaS/cloud use) are available.  
+Commercial licenses (SaaS/cloud/enterprise) are available.  
 Contact: **StaticRoosterMedia@gmail.com**
 
 See [PATENT-NOTICE.md](PATENT-NOTICE.md) for full details.
