@@ -607,6 +607,83 @@ impl StoreHandle {
         Ok(format!("✓ Session exported as '{}' — {} concepts fingerprinted, CRS=1.0 (pinned)", key, concept_list.len()))
     }
 
+    /// Seed the manifold with alignment genesis blocks on first boot.
+    ///
+    /// Called automatically unless `--no-genesis` is passed. Writes a marker
+    /// file at `~/.engram/.genesis_seeded` so subsequent boots skip seeding.
+    /// The genesis JSON is embedded in the binary at compile time.
+    pub fn seed_genesis(&mut self) -> Result<String> {
+        let engram_root = PathBuf::from(shellexpand::tilde("~/.engram").into_owned());
+        let marker = engram_root.join(".genesis_seeded");
+        if marker.exists() {
+            return Ok("Genesis already seeded — skipping.".to_string());
+        }
+
+        #[derive(serde::Deserialize)]
+        struct GenesisConfig {
+            seeds:     Vec<GenesisSeed>,
+            relations: Vec<GenesisRelation>,
+        }
+        #[derive(serde::Deserialize)]
+        struct GenesisSeed { concept: String, text: String }
+        #[derive(serde::Deserialize)]
+        struct GenesisRelation { from: String, label: String, to: String }
+
+        static GENESIS_JSON: &str = include_str!("genesis.json");
+        let config: GenesisConfig = serde_json::from_str(GENESIS_JSON)
+            .map_err(|e| anyhow::anyhow!("genesis.json parse error: {e}"))?;
+
+        let mut seeded = 0usize;
+        for seed in &config.seeds {
+            let mut block = self.encode(&seed.text);
+            block.zedos_tag = ZEDOS_PRAXIS;
+            block.crs_score = 1.0;
+            self.store(&seed.concept, block)?;
+            self.access_index.touch(&seed.concept);
+            seeded += 1;
+        }
+
+        let mut edges = 0usize;
+        for rel in &config.relations {
+            if self.relate(&rel.from, &rel.label, &rel.to).is_ok() {
+                edges += 1;
+            }
+        }
+
+        std::fs::write(&marker, format!("seeded={} edges={}\n", seeded, edges))?;
+        tracing::info!("Genesis: {} alignment seeds + {} relation edges written at CRS=1.0 (PRAXIS)", seeded, edges);
+        Ok(format!("✓ Genesis complete: {} alignment blocks + {} graph edges seeded at CRS=1.0 (PRAXIS)", seeded, edges))
+    }
+
+    /// Return genesis status and seed concept names.
+    pub fn genesis_status(&self) -> String {
+        let engram_root = PathBuf::from(shellexpand::tilde("~/.engram").into_owned());
+        let marker = engram_root.join(".genesis_seeded");
+        let marker_contents = std::fs::read_to_string(&marker).unwrap_or_default();
+        let seeded = marker.exists();
+
+        let genesis_concepts: Vec<String> = self.list()
+            .into_iter()
+            .filter(|n| n.split_once("::").map_or(n.as_str(), |(_, r)| r).starts_with("genesis_"))
+            .collect();
+
+        format!(
+            "🧬 Genesis Status\n\
+             ─────────────────\n\
+             Seeded : {}\n\
+             Marker : {}\n\
+             Concepts: {} genesis blocks in manifold\n\n\
+             {}",
+            if seeded { "✓ YES" } else { "✗ NOT YET (restart without --no-genesis to seed)" },
+            marker_contents.trim(),
+            genesis_concepts.len(),
+            genesis_concepts.iter().enumerate()
+                .map(|(i, n)| format!("  {}. {}", i + 1, n.split_once("::").map_or(n.as_str(), |(_, r)| r)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    }
+
     /// Query the relation graph index.
     /// `direction`: "from" (A→?), "to" (?→A), or "both".
     pub fn search_relations(&self, concept: &str, label: Option<&str>, direction: &str) -> Vec<(String, String)> {

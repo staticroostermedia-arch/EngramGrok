@@ -43,13 +43,21 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run as an MCP server over stdin/stdout (for Claude Desktop, Cursor, etc.)
-    Mcp,
+    Mcp {
+        /// Skip seeding alignment genesis blocks on first boot
+        #[arg(long, default_value_t = false)]
+        no_genesis: bool,
+    },
 
     /// Run as a REST HTTP server
     Serve {
         /// Port to listen on
         #[arg(long, default_value_t = 3456)]
         port: u16,
+
+        /// Skip seeding alignment genesis blocks on first boot
+        #[arg(long, default_value_t = false)]
+        no_genesis: bool,
     },
 }
 
@@ -72,11 +80,23 @@ fn main() -> anyhow::Result<()> {
         .build()?;
 
     match cli.command {
-        Commands::Mcp => {
+        Commands::Mcp { no_genesis } => {
+            if !no_genesis {
+                match store.lock().unwrap().seed_genesis() {
+                    Ok(msg)  => tracing::info!("{msg}"),
+                    Err(e)   => tracing::warn!("Genesis seed failed: {e}"),
+                }
+            }
             let _guard = rt.enter();
             mcp::run(store)?;
         }
-        Commands::Serve { port } => {
+        Commands::Serve { port, no_genesis } => {
+            if !no_genesis {
+                match store.lock().unwrap().seed_genesis() {
+                    Ok(msg)  => tracing::info!("{msg}"),
+                    Err(e)   => tracing::warn!("Genesis seed failed: {e}"),
+                }
+            }
             rt.block_on(serve::run(store, port))?;
         }
     }

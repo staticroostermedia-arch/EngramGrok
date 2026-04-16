@@ -395,6 +395,21 @@ fn tool_list() -> Value {
                     },
                     "required": ["concept"]
                 }
+            },
+            {
+                "name": "mcp_engram_genesis",
+                "description": "Inspect or re-seed the alignment genesis blocks. Genesis seeds are PRAXIS-tagged memories at CRS=1.0 that anchor the manifold's ethical and operational context. They are seeded once on first boot and never decay.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "'status' — show which genesis blocks exist. 'reseed' — re-seed all blocks.",
+                            "enum": ["status", "reseed"],
+                            "default": "status"
+                        }
+                    }
+                }
             }
         ]
     })
@@ -529,35 +544,13 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 return json!({ "content": [{ "type": "text", "text": "Error: missing required strings" }], "isError": true });
             }
 
-            let mut lock = store.lock().unwrap();
-            let block_a = lock.fetch_block(&concept_a);
-            let block_b = lock.fetch_block(&concept_b);
+            // Strip sheaf prefix if present, since relate() uses fetch_block internally
+            let raw_a = concept_a.split_once("::").map_or(concept_a.as_str(), |(_, r)| r);
+            let raw_b = concept_b.split_once("::").map_or(concept_b.as_str(), |(_, r)| r);
 
-            match (block_a, block_b) {
-                (Some(a), Some(b)) => {
-                    let mut rel_block = engram_core::types::Leg3Pointer::mint();
-                    
-                    // Topologically bind the two concept vectors (circular convolution)
-                    let bound_q = engram_core::ops::op_bind(&a.q, &b.q);
-                    rel_block.q.copy_from_slice(&bound_q);
-                    
-                    // Mark as a formal relation mapping
-                    rel_block.zedos_tag = engram_core::types::ZEDOS_RELATION;
-                    rel_block.crs_score = (a.crs_score + b.crs_score) / 2.0;
-
-                    let payload_str = format!("{} ---[{}]---> {}", concept_a, label, concept_b);
-                    let payload_bytes = payload_str.as_bytes();
-                    let end = payload_bytes.len().min(rel_block.payload.len());
-                    rel_block.payload[..end].copy_from_slice(&payload_bytes[..end]);
-
-                    let relation_concept = format!("{}_{}_{}", concept_a, label, concept_b);
-                    let _ = lock.store(&relation_concept, rel_block);
-
-                    json!({ "content": [{ "type": "text", "text": format!("✓ Topologically bound '{}' and '{}'. Relation memory stored as '{}'", concept_a, concept_b, relation_concept) }] })
-                }
-                _ => {
-                    json!({ "content": [{ "type": "text", "text": format!("Error: Context blocks missing. Ensure both '{concept_a}' and '{concept_b}' exist in memory before binding.") }], "isError": true })
-                }
+            match store.lock().unwrap().relate(raw_a, raw_b, &label) {
+                Ok(msg) => json!({ "content": [{ "type": "text", "text": msg }] }),
+                Err(e)  => json!({ "content": [{ "type": "text", "text": format!("Error adding relation: {e}") }], "isError": true }),
             }
         }
 
@@ -921,6 +914,30 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mermaid = store.lock().unwrap().visualize_graph(&concept, depth);
             info!("visualize '{}' depth {}", concept, depth);
             json!({ "content": [{ "type": "text", "text": mermaid }] })
+        }
+
+        "mcp_engram_genesis" => {
+            let action = args["action"].as_str().unwrap_or("status").trim().to_string();
+            match action.as_str() {
+                "status" => {
+                    let status = store.lock().unwrap().genesis_status();
+                    info!("genesis status requested");
+                    json!({ "content": [{ "type": "text", "text": status }] })
+                }
+                "reseed" => {
+                    // Remove the marker so seed_genesis() runs again
+                    let engram_root = std::path::PathBuf::from(
+                        shellexpand::tilde("~/.engram").into_owned()
+                    );
+                    let marker = engram_root.join(".genesis_seeded");
+                    let _ = std::fs::remove_file(&marker);
+                    match store.lock().unwrap().seed_genesis() {
+                        Ok(msg)  => { info!("genesis reseed: {msg}"); json!({ "content": [{ "type": "text", "text": msg }] }) }
+                        Err(e)   => json!({ "content": [{ "type": "text", "text": format!("Genesis reseed failed: {e}") }], "isError": true })
+                    }
+                }
+                _ => json!({ "content": [{ "type": "text", "text": "Unknown action. Use 'status' or 'reseed'." }], "isError": true })
+            }
         }
 
         unknown => json!({
