@@ -623,7 +623,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut crs_min = f32::MAX;
             let mut crs_max = 0.0f32;
             for name in &concepts {
-                if let Some(block) = lock.fetch_block(name) {
+                if let Some(block) = lock.fetch_block(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
                     let crs = block.crs_score;
                     if crs >= 1.0 { pinned += 1; }
                     crs_sum += crs;
@@ -739,7 +739,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut ranked: Vec<(String, f32, String)> = Vec::new();
 
             for name in &concepts {
-                if let Some(block) = lock.fetch_block(name) {
+                if let Some(block) = lock.fetch_block(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
                     let crs = block.crs_score;
                     let raw = String::from_utf8_lossy(&block.payload);
                     let text = raw.trim_matches('\0');
@@ -803,7 +803,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let concepts = lock.list();
             let mut exported: Vec<Value> = Vec::new();
             for name in &concepts {
-                if let Some(block) = lock.fetch_block(name) {
+                if let Some(block) = lock.fetch_block(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
                     if block.crs_score < min_crs { continue; }
                     let raw = String::from_utf8_lossy(&block.payload);
                     let text = raw.trim_matches('\0').to_string();
@@ -858,13 +858,13 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let concepts = lock.list();
             let mut to_evict: Vec<String> = Vec::new();
             for name in &concepts {
-                if let Some(block) = lock.fetch_block(name) {
+                if let Some(block) = lock.fetch_block(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
                     if block.crs_score >= 1.0 { continue; } // Never evict pinned
                     let age_ok = older_than_days.map_or(true, |days| {
                         now_secs.saturating_sub(block.last_accessed_timestamp) >= days * 86400
                     });
                     if block.crs_score < min_crs && age_ok {
-                        to_evict.push(name.clone());
+                        to_evict.push(name.split_once("::").map_or(name.as_str(), |(_, r)| r).to_string());
                     }
                 }
             }
