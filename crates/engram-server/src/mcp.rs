@@ -214,6 +214,62 @@ fn tool_list() -> Value {
                     },
                     "required": ["error_pattern", "solution"]
                 }
+            },
+            {
+                "name": "mcp_engram_stats",
+                "description": "Return a health report of the geometric manifold: total memories, pinned count, CRS distribution, active namespace, and disk usage.",
+                "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
+                "name": "mcp_engram_recall_recent",
+                "description": "Return the N most recently accessed memories, sorted by access time. Useful for session rehydration when you don't know exact concept names.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "n": {
+                            "type": "integer",
+                            "description": "Number of recent memories to return (default: 10)",
+                            "default": 10
+                        }
+                    }
+                }
+            },
+            {
+                "name": "mcp_engram_set_namespace",
+                "description": "Switch to a project-specific memory namespace (stalk). Creates the namespace if it does not exist. Use this to isolate memories by project.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "namespace": {
+                            "type": "string",
+                            "description": "Namespace name (e.g. 'codeland', 'personal', 'work_project_x')"
+                        }
+                    },
+                    "required": ["namespace"]
+                }
+            },
+            {
+                "name": "mcp_engram_list_namespaces",
+                "description": "List all available memory namespaces and which one is currently active.",
+                "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
+                "name": "mcp_engram_update",
+                "description": "Update the text of an existing memory in place. Re-encodes the vector and bumps CRS. Use when context changes and the old memory is stale.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "The concept name to update"
+                        },
+                        "new_text": {
+                            "type": "string",
+                            "description": "The new text content to encode"
+                        }
+                    },
+                    "required": ["concept", "new_text"]
+                }
             }
         ]
     })
@@ -430,6 +486,123 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     json!({ "content": [{ "type": "text", "text": format!("✓ Crystallized Solution permanently into geometric memory (CRS = 1.0).\nStored as: {}", concept_name) }] })
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Failed to crystallize solution: {}", e) }], "isError": true })
+            }
+        }
+
+        "mcp_engram_stats" => {
+            let lock = store.lock().unwrap();
+            let concepts = lock.list();
+            let total = concepts.len();
+            let mut pinned = 0usize;
+            let mut crs_sum = 0.0f32;
+            let mut crs_min = f32::MAX;
+            let mut crs_max = 0.0f32;
+            for name in &concepts {
+                if let Some(block) = lock.fetch_block(name) {
+                    let crs = block.crs_score;
+                    if crs >= 1.0 { pinned += 1; }
+                    crs_sum += crs;
+                    if crs < crs_min { crs_min = crs; }
+                    if crs > crs_max { crs_max = crs; }
+                }
+            }
+            let avg_crs = if total > 0 { crs_sum / total as f32 } else { 0.0 };
+            let path = lock.store_path().to_string();
+            let active_ns = lock.active_stalk_name();
+            drop(lock);
+
+            let disk_kb = std::fs::read_dir(&path)
+                .map(|entries| entries
+                    .filter_map(|e| e.ok())
+                    .filter_map(|e| e.metadata().ok())
+                    .map(|m| m.len())
+                    .sum::<u64>())
+                .unwrap_or(0) as f64 / 1024.0;
+
+            let report = format!(
+                "📊 Engram Manifold Stats\n\
+                 ─────────────────────────\n\
+                 Total Memories : {total}\n\
+                 Pinned (CRS=1.0): {pinned}\n\
+                 Avg CRS        : {avg_crs:.3}\n\
+                 Min CRS        : {:.3}\n\
+                 Max CRS        : {crs_max:.3}\n\
+                 Active NS      : {active_ns}\n\
+                 Disk Usage     : {disk_kb:.1} KB\n\
+                 Store Path     : {path}",
+                if total > 0 { crs_min } else { 0.0 }
+            );
+            json!({ "content": [{ "type": "text", "text": report }] })
+        }
+
+        "mcp_engram_recall_recent" => {
+            let n = args["n"].as_u64().unwrap_or(10).min(50) as usize;
+            let recent = store.lock().unwrap().recent(n);
+            if recent.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "No memories accessed yet." }] });
+            }
+            let mut out = format!("🕐 {} Most Recently Accessed Memories:\n\n", recent.len());
+            for (i, (concept, ts)) in recent.iter().enumerate() {
+                // Convert unix seconds to a readable relative label
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let age_secs = now.saturating_sub(*ts);
+                let age = if age_secs < 60 { format!("{age_secs}s ago") }
+                    else if age_secs < 3600 { format!("{}m ago", age_secs / 60) }
+                    else if age_secs < 86400 { format!("{}h ago", age_secs / 3600) }
+                    else { format!("{}d ago", age_secs / 86400) };
+                out.push_str(&format!("  {}. {} ({})", i + 1, concept, age));
+                out.push('\n');
+            }
+            info!("recall_recent → {} results", recent.len());
+            json!({ "content": [{ "type": "text", "text": out.trim() }] })
+        }
+
+        "mcp_engram_set_namespace" => {
+            let namespace = args["namespace"].as_str().unwrap_or("").trim().to_string();
+            if namespace.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: namespace is required." }], "isError": true });
+            }
+            let lock = store.lock().unwrap();
+            let ok = lock.set_active_stalk(&namespace);
+            if ok {
+                info!("namespace set to: {namespace}");
+                json!({ "content": [{ "type": "text", "text": format!("✓ Active namespace set to '{namespace}'") }] })
+            } else {
+                json!({ "content": [{ "type": "text", "text": format!("✓ Created and switched to new namespace '{namespace}'") }] })
+            }
+        }
+
+        "mcp_engram_list_namespaces" => {
+            let lock = store.lock().unwrap();
+            let namespaces = lock.stalk_names();
+            let active = lock.active_stalk_name();
+            drop(lock);
+            if namespaces.is_empty() {
+                json!({ "content": [{ "type": "text", "text": "Only the default namespace exists." }] })
+            } else {
+                let list = namespaces.iter()
+                    .map(|ns| if ns == &active { format!("  • {} ← active", ns) } else { format!("  • {}", ns) })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                json!({ "content": [{ "type": "text", "text": format!("Namespaces ({}):\n{}", namespaces.len(), list) }] })
+            }
+        }
+
+        "mcp_engram_update" => {
+            let concept  = args["concept"].as_str().unwrap_or("").trim().to_string();
+            let new_text = args["new_text"].as_str().unwrap_or("").trim().to_string();
+            if concept.is_empty() || new_text.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: concept and new_text are required." }], "isError": true });
+            }
+            match store.lock().unwrap().update(&concept, &new_text) {
+                Ok(status) => {
+                    info!("updated: {concept}");
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Updated memory '{concept}': {status}") }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error updating '{concept}': {e}") }], "isError": true })
             }
         }
 
