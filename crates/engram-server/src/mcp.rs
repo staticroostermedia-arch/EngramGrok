@@ -270,6 +270,88 @@ fn tool_list() -> Value {
                     },
                     "required": ["concept", "new_text"]
                 }
+            },
+            {
+                "name": "mcp_engram_summarize",
+                "description": "Return a project-state digest: all pinned memories first, then the top N memories by CRS score. Ideal as a single-call /wake_up replacement.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "top_n": {
+                            "type": "integer",
+                            "description": "How many non-pinned memories to include, sorted by CRS (default: 10)",
+                            "default": 10
+                        }
+                    }
+                }
+            },
+            {
+                "name": "mcp_engram_batch_remember",
+                "description": "Store multiple memories in a single call. Faster than calling remember() N times.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "entries": {
+                            "type": "array",
+                            "description": "Array of {concept, text} objects to store",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "concept": { "type": "string" },
+                                    "text":    { "type": "string" }
+                                },
+                                "required": ["concept", "text"]
+                            }
+                        }
+                    },
+                    "required": ["entries"]
+                }
+            },
+            {
+                "name": "mcp_engram_export",
+                "description": "Export the manifold (or a filtered subset) as a portable JSON array. Use for backup, migration, or cross-machine sync.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "min_crs": {
+                            "type": "number",
+                            "description": "Only export memories with CRS >= this value (default: 0.0 = all)",
+                            "default": 0.0
+                        }
+                    }
+                }
+            },
+            {
+                "name": "mcp_engram_import",
+                "description": "Restore memories from a JSON array previously exported by mcp_engram_export. Each entry needs concept and text fields.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "json": {
+                            "type": "string",
+                            "description": "JSON string: array of {concept, text} objects"
+                        }
+                    },
+                    "required": ["json"]
+                }
+            },
+            {
+                "name": "mcp_engram_forget_old",
+                "description": "Manually trigger autophagy: evict all memories below a CRS threshold (pinned memories are always exempt).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "min_crs_threshold": {
+                            "type": "number",
+                            "description": "Evict memories with CRS below this value (default: 0.2)",
+                            "default": 0.2
+                        },
+                        "older_than_days": {
+                            "type": "integer",
+                            "description": "If set, only evict memories not accessed in this many days"
+                        }
+                    }
+                }
             }
         ]
     })
@@ -604,6 +686,155 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error updating '{concept}': {e}") }], "isError": true })
             }
+        }
+
+        "mcp_engram_summarize" => {
+            let top_n = args["top_n"].as_u64().unwrap_or(10).min(50) as usize;
+            let lock = store.lock().unwrap();
+            let concepts = lock.list();
+            let mut pinned: Vec<(String, f32, String)> = Vec::new();
+            let mut ranked: Vec<(String, f32, String)> = Vec::new();
+
+            for name in &concepts {
+                if let Some(block) = lock.fetch_block(name) {
+                    let crs = block.crs_score;
+                    let raw = String::from_utf8_lossy(&block.payload);
+                    let text = raw.trim_matches('\0');
+                    let preview: String = text.chars().take(120).collect();
+                    let preview = if text.len() > 120 { format!("{}...", preview) } else { preview.to_string() };
+                    if crs >= 1.0 {
+                        pinned.push((name.clone(), crs, preview));
+                    } else {
+                        ranked.push((name.clone(), crs, preview));
+                    }
+                }
+            }
+            drop(lock);
+
+            ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            ranked.truncate(top_n);
+
+            let mut out = String::from("\u{1f4cb} Engram Project Summary\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n");
+            if !pinned.is_empty() {
+                out.push_str(&format!("\n\u{1f4cc} PINNED ({}):\n", pinned.len()));
+                for (i, (name, crs, preview)) in pinned.iter().enumerate() {
+                    out.push_str(&format!("  {}. {} [CRS {:.3}]\n     {}\n\n", i + 1, name, crs, preview));
+                }
+            }
+            if !ranked.is_empty() {
+                out.push_str(&format!("\u{1f9e0} TOP {} BY CRS:\n", ranked.len()));
+                for (i, (name, crs, preview)) in ranked.iter().enumerate() {
+                    out.push_str(&format!("  {}. {} [CRS {:.3}]\n     {}\n\n", i + 1, name, crs, preview));
+                }
+            }
+            if pinned.is_empty() && ranked.is_empty() {
+                out.push_str("No memories stored yet.");
+            }
+            info!("summarize: {} pinned, {} ranked", pinned.len(), ranked.len());
+            json!({ "content": [{ "type": "text", "text": out.trim() }] })
+        }
+
+        "mcp_engram_batch_remember" => {
+            let entries = match args["entries"].as_array() {
+                Some(a) => a.clone(),
+                None => return json!({ "content": [{ "type": "text", "text": "Error: entries must be a JSON array of {concept, text} objects." }], "isError": true }),
+            };
+            let mut succeeded = 0usize;
+            let mut failed = 0usize;
+            for entry in &entries {
+                let concept = entry["concept"].as_str().unwrap_or("").trim().to_string();
+                let text    = entry["text"].as_str().unwrap_or("").trim().to_string();
+                if concept.is_empty() || text.is_empty() { failed += 1; continue; }
+                match store.lock().unwrap().remember(&concept, &text) {
+                    Ok(_)  => succeeded += 1,
+                    Err(_) => failed += 1,
+                }
+            }
+            info!("batch_remember: {} ok, {} failed", succeeded, failed);
+            json!({ "content": [{ "type": "text", "text": format!("\u{2713} Batch ingestion complete: {} stored, {} failed.", succeeded, failed) }] })
+        }
+
+        "mcp_engram_export" => {
+            let min_crs = args["min_crs"].as_f64().unwrap_or(0.0) as f32;
+            let lock = store.lock().unwrap();
+            let concepts = lock.list();
+            let mut exported: Vec<Value> = Vec::new();
+            for name in &concepts {
+                if let Some(block) = lock.fetch_block(name) {
+                    if block.crs_score < min_crs { continue; }
+                    let raw = String::from_utf8_lossy(&block.payload);
+                    let text = raw.trim_matches('\0').to_string();
+                    exported.push(json!({
+                        "concept": name,
+                        "text": text,
+                        "crs": block.crs_score,
+                        "zedos_tag": block.zedos_tag,
+                        "last_accessed": block.last_accessed_timestamp
+                    }));
+                }
+            }
+            drop(lock);
+            let count = exported.len();
+            let json_str = serde_json::to_string_pretty(&exported).unwrap_or_default();
+            info!("export: {} memories", count);
+            json!({ "content": [{ "type": "text", "text": format!("Exported {} memories:\n```json\n{}\n```", count, json_str) }] })
+        }
+
+        "mcp_engram_import" => {
+            let json_str = args["json"].as_str().unwrap_or("").trim().to_string();
+            if json_str.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: json field is required." }], "isError": true });
+            }
+            let entries: Vec<Value> = match serde_json::from_str(&json_str) {
+                Ok(v)  => v,
+                Err(e) => return json!({ "content": [{ "type": "text", "text": format!("Error parsing JSON: {e}") }], "isError": true }),
+            };
+            let mut succeeded = 0usize;
+            let mut failed = 0usize;
+            for entry in &entries {
+                let concept = entry["concept"].as_str().unwrap_or("").trim().to_string();
+                let text    = entry["text"].as_str().unwrap_or("").trim().to_string();
+                if concept.is_empty() || text.is_empty() { failed += 1; continue; }
+                match store.lock().unwrap().remember(&concept, &text) {
+                    Ok(_)  => succeeded += 1,
+                    Err(_) => failed += 1,
+                }
+            }
+            info!("import: {} ok, {} failed", succeeded, failed);
+            json!({ "content": [{ "type": "text", "text": format!("\u{2713} Import complete: {} memories restored, {} failed.", succeeded, failed) }] })
+        }
+
+        "mcp_engram_forget_old" => {
+            let min_crs = args["min_crs_threshold"].as_f64().unwrap_or(0.2) as f32;
+            let older_than_days = args["older_than_days"].as_u64();
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs()).unwrap_or(0);
+
+            let lock = store.lock().unwrap();
+            let concepts = lock.list();
+            let mut to_evict: Vec<String> = Vec::new();
+            for name in &concepts {
+                if let Some(block) = lock.fetch_block(name) {
+                    if block.crs_score >= 1.0 { continue; } // Never evict pinned
+                    let age_ok = older_than_days.map_or(true, |days| {
+                        now_secs.saturating_sub(block.last_accessed_timestamp) >= days * 86400
+                    });
+                    if block.crs_score < min_crs && age_ok {
+                        to_evict.push(name.clone());
+                    }
+                }
+            }
+            drop(lock);
+
+            let total = to_evict.len();
+            let mut evicted = 0usize;
+            for name in &to_evict {
+                if store.lock().unwrap().forget(name).is_ok() { evicted += 1; }
+            }
+            let age_label = older_than_days.map_or(String::new(), |d| format!(", older than {}d", d));
+            info!("forget_old: evicted {}/{} candidates", evicted, total);
+            json!({ "content": [{ "type": "text", "text": format!("\u{2713} Autophagy complete. Evicted {} memories (CRS < {:.2}{}).", evicted, min_crs, age_label) }] })
         }
 
         unknown => json!({
