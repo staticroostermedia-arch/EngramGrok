@@ -352,6 +352,49 @@ fn tool_list() -> Value {
                         }
                     }
                 }
+            },
+            {
+                "name": "mcp_engram_search_by_relation",
+                "description": "Traverse the knowledge graph. Find all concepts related to a seed concept, filtered by optional label and direction.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "The seed concept to query"
+                        },
+                        "label": {
+                            "type": "string",
+                            "description": "Optional: filter by relation label (e.g. 'depends_on', 'implements')"
+                        },
+                        "direction": {
+                            "type": "string",
+                            "description": "'from' (A→?), 'to' (?→A), or 'both' (default: 'from')",
+                            "enum": ["from", "to", "both"],
+                            "default": "from"
+                        }
+                    },
+                    "required": ["concept"]
+                }
+            },
+            {
+                "name": "mcp_engram_visualize",
+                "description": "Render a BFS subgraph from a seed concept as a Mermaid diagram. Shows how concepts are related to each other.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "The seed concept to start the graph from"
+                        },
+                        "depth": {
+                            "type": "integer",
+                            "description": "BFS depth (default: 2, max: 5)",
+                            "default": 2
+                        }
+                    },
+                    "required": ["concept"]
+                }
             }
         ]
     })
@@ -835,6 +878,49 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let age_label = older_than_days.map_or(String::new(), |d| format!(", older than {}d", d));
             info!("forget_old: evicted {}/{} candidates", evicted, total);
             json!({ "content": [{ "type": "text", "text": format!("\u{2713} Autophagy complete. Evicted {} memories (CRS < {:.2}{}).", evicted, min_crs, age_label) }] })
+        }
+
+        "mcp_engram_search_by_relation" => {
+            let concept   = args["concept"].as_str().unwrap_or("").trim().to_string();
+            let label     = args["label"].as_str().map(|s| s.trim().to_string());
+            let direction = args["direction"].as_str().unwrap_or("from").trim().to_string();
+
+            if concept.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: concept is required." }], "isError": true });
+            }
+
+            let results = store.lock().unwrap()
+                .search_relations(&concept, label.as_deref(), &direction);
+
+            if results.is_empty() {
+                let label_str = label.as_deref().unwrap_or("any");
+                return json!({ "content": [{ "type": "text", "text": format!("No '{}' relations found for '{}' (direction: {}).", label_str, concept, direction) }] });
+            }
+
+            let arrow = match direction.as_str() { "to" => "→", _ => "→" };
+            let mut out = format!("🕸️  Relations for '{}' (direction: {}):\n\n", concept, direction);
+            for (lbl, other) in &results {
+                match direction.as_str() {
+                    "to" => out.push_str(&format!("  {} --[{}]--> {}\n", other, lbl, concept)),
+                    _    => out.push_str(&format!("  {} --[{}]--> {}\n", concept, lbl, other)),
+                }
+            }
+            let _ = arrow;
+            info!("search_by_relation '{}' {} {} -> {} results", concept, direction, label.as_deref().unwrap_or("*"), results.len());
+            json!({ "content": [{ "type": "text", "text": out.trim() }] })
+        }
+
+        "mcp_engram_visualize" => {
+            let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
+            let depth   = args["depth"].as_u64().unwrap_or(2).min(5) as usize;
+
+            if concept.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: concept is required." }], "isError": true });
+            }
+
+            let mermaid = store.lock().unwrap().visualize_graph(&concept, depth);
+            info!("visualize '{}' depth {}", concept, depth);
+            json!({ "content": [{ "type": "text", "text": mermaid }] })
         }
 
         unknown => json!({

@@ -97,6 +97,100 @@ impl AccessIndex {
     }
 }
 
+// ── RelationIndex — knowledge graph sidecar ───────────────────────────────────
+//
+// Stores directed relations as a flat Vec<RelationEntry> in
+// `~/.engram/relation_index.json`. Flushed to disk after every write.
+// Provides O(n) forward/reverse/BFS queries — suitable for small graphs.
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct RelationEntry {
+    pub from:  String,
+    pub label: String,
+    pub to:    String,
+}
+
+pub struct RelationIndex {
+    pub entries: Vec<RelationEntry>,
+    path: PathBuf,
+}
+
+impl RelationIndex {
+    pub fn load(engram_root: &PathBuf) -> Self {
+        let path = engram_root.join("relation_index.json");
+        let entries = if path.exists() {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<Vec<RelationEntry>>(&s).ok())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        tracing::info!("RelationIndex loaded: {} edges from {:?}", entries.len(), path);
+        Self { entries, path }
+    }
+
+    /// Add a directed edge, deduplicating and flushing immediately.
+    pub fn add(&mut self, from: &str, label: &str, to: &str) {
+        let dup = self.entries.iter().any(|e| e.from == from && e.label == label && e.to == to);
+        if !dup {
+            self.entries.push(RelationEntry {
+                from: from.to_string(), label: label.to_string(), to: to.to_string(),
+            });
+            self.flush();
+        }
+    }
+
+    /// Query edges. `direction`: "from" | "to" | "both".
+    /// Returns (label, other_concept) pairs.
+    pub fn query(&self, concept: &str, filter_label: Option<&str>, direction: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for e in &self.entries {
+            let label_ok = filter_label.map_or(true, |l| e.label == l);
+            if !label_ok { continue; }
+            match direction {
+                "from" if e.from == concept => out.push((e.label.clone(), e.to.clone())),
+                "to"   if e.to   == concept => out.push((e.label.clone(), e.from.clone())),
+                "both"  => {
+                    if e.from == concept { out.push((e.label.clone(), e.to.clone())); }
+                    if e.to   == concept { out.push((e.label.clone(), e.from.clone())); }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// BFS up to `depth` hops from `seed`. Returns all (from, label, to) edges traversed.
+    pub fn bfs(&self, seed: &str, depth: usize) -> Vec<RelationEntry> {
+        use std::collections::HashSet;
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut frontier = vec![seed.to_string()];
+        let mut result: Vec<RelationEntry> = Vec::new();
+        for _ in 0..depth {
+            if frontier.is_empty() { break; }
+            let mut next: Vec<String> = Vec::new();
+            for concept in &frontier {
+                if !visited.insert(concept.clone()) { continue; }
+                for e in &self.entries {
+                    if &e.from == concept {
+                        result.push(e.clone());
+                        if !visited.contains(&e.to) { next.push(e.to.clone()); }
+                    }
+                }
+            }
+            frontier = next;
+        }
+        result
+    }
+
+    fn flush(&self) {
+        if let Ok(s) = serde_json::to_string_pretty(&self.entries) {
+            let _ = std::fs::write(&self.path, s);
+        }
+    }
+}
+
 // ── Backend enum ─────────────────────────────────────────────────────────────
 
 enum Backend {
@@ -212,6 +306,7 @@ pub struct StoreHandle {
     backend: Backend,
     path: String,
     pub access_index: AccessIndex,
+    pub relation_index: RelationIndex,
     pub daemon: Option<Arc<crate::daemon::DaemonControl>>,
 }
 
@@ -223,6 +318,7 @@ impl StoreHandle {
         let engram_root = PathBuf::from(shellexpand::tilde("~/.engram").into_owned());
         let sheaf_config_path = engram_root.join("sheaf.toml");
         let access_index = AccessIndex::load(&engram_root);
+        let relation_index = RelationIndex::load(&engram_root);
 
         let backend = if sheaf_config_path.exists() {
             match std::fs::read_to_string(&sheaf_config_path)
@@ -276,7 +372,7 @@ impl StoreHandle {
             }
         };
 
-        Self { backend, path: expanded, access_index, daemon: None }
+        Self { backend, path: expanded, access_index, relation_index, daemon: None }
     }
 
     pub fn boot_daemon(store_arc: SharedStore) {
@@ -428,6 +524,8 @@ impl StoreHandle {
 
         let rel_key = format!("rel__{concept_a}__{concept_b}");
         self.store(&rel_key, rel_block)?;
+        // Update the knowledge-graph sidecar
+        self.relation_index.add(concept_a, label, concept_b);
         Ok(format!("✓ Relation stored: {} →[{}]→ {} as '{}'", concept_a, label, concept_b, rel_key))
     }
 
@@ -507,6 +605,28 @@ impl StoreHandle {
 
         self.store(&key, block)?;
         Ok(format!("✓ Session exported as '{}' — {} concepts fingerprinted, CRS=1.0 (pinned)", key, concept_list.len()))
+    }
+
+    /// Query the relation graph index.
+    /// `direction`: "from" (A→?), "to" (?→A), or "both".
+    pub fn search_relations(&self, concept: &str, label: Option<&str>, direction: &str) -> Vec<(String, String)> {
+        self.relation_index.query(concept, label, direction)
+    }
+
+    /// BFS over the relation graph from a seed concept. Returns Mermaid graph LR source.
+    pub fn visualize_graph(&self, seed: &str, depth: usize) -> String {
+        let edges = self.relation_index.bfs(seed, depth);
+        if edges.is_empty() {
+            return format!("No outgoing relations found for '{}'.", seed);
+        }
+        let mut lines = vec!["```mermaid".to_string(), "graph LR".to_string()];
+        for e in &edges {
+            let f = e.from.replace([' ', '-', '/'], "_");
+            let t = e.to.replace([' ', '-', '/'], "_");
+            lines.push(format!("  {}[\"{}\"] -->|{}| {}[\"{}\"]", f, e.from, e.label, t, e.to));
+        }
+        lines.push("```".to_string());
+        lines.join("\n")
     }
 }
 
