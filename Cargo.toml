@@ -14,7 +14,8 @@ authors     = ["Aric Goodman <StaticRoosterMedia@gmail.com>", "Static Rooster Me
 license     = "AGPL-3.0-only"
 repository  = "https://github.com/StaticRoosterMedia/engram"
 homepage    = "https://engram.dev"
-keywords    = ["ai", "memory", "agent", "vsa", "mcp"]
+description = "A responsive local vector database and associative memory framework built for AI agents."
+keywords    = ["ai", "memory", "agent", "vector-db", "mcp"]
 categories  = ["science", "data-structures"]
 
 [workspace.dependencies]
@@ -41,6 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Error handling
 anyhow  = "1"
 thiserror = "1"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
 
 # CLI
 clap        = { version = "4", features = ["derive", "env"] }

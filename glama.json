@@ -1,5 +1,8 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "name": "Engram MCP (Local Vector Database)",
+  "description": "Engram is a robust, local vector database and persistent memory system for AI agents. It gives agents long-term semantic memory that runs entirely on your local machine using the Model Context Protocol.",
+  "keywords": ["vector-db", "memory", "semantic", "local", "mcp"],
   "maintainers": [
     "staticroostermedia-arch"
   ]
