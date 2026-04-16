@@ -7,7 +7,7 @@
 > **Persistent geometric memory for AI agents — 21 MCP tools.**  
 > Patent Pending US19/372,256 — Aric Goodman & Static Rooster Media
 
-Engram gives your AI agent a long-term memory that works like human associative memory — store anything, retrieve by meaning, not keywords. No vector database. No cloud. No API key. Runs entirely on your machine via the Model Context Protocol (MCP).
+Engram gives your AI agent a long-term memory that works like human associative memory — store anything, retrieve by meaning, not keywords. No external vector database. No cloud. No API key. Runs entirely on your machine via the Model Context Protocol (MCP).
 
 ---
 
