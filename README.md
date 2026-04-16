@@ -95,8 +95,10 @@ Engram exposes **21 tools** across 5 capability groups.
 When Engram boots as an MCP server it also launches a **background Agentic Daemon** that manages three autonomous systems:
 
 - **Native OS Watcher** — `inotify`/`fsevents` kernel integration. When `mcp_engram_watch_workspace` is called, the daemon binds to OS file-save events and re-ingests changed files into the manifold instantly.
-- **Tiered Autophagy GC** — Hourly geometric decay pass. Idle memories lose 2% CRS per 24h stale, 5% per 7d stale. Blocks below `0.05 CRS` are permanently evicted. Pinned blocks (`CRS=1.0`) are completely exempt.
 - **Access Index** — In-memory hot metadata layer. Access timestamps are maintained in RAM and flushed to `access_index.bin` every 60 seconds — `O_DIRECT` block rewrites are never triggered by a simple recall query.
+
+> [!NOTE]
+> **Autophagy GC Removed:** We originally included a "Tiered Autophagy GC" that would automatically decay and evict older memories with low Coherence-Reliability Scores (CRS). This has been **disabled and removed**. Engram's core tenet is persistent, reliable memory; automatic silent eviction risks catastrophic knowledge loss and erodes trust. Users must implement their own memory management, decay, or eviction policies within their own agentic loop implementations. We do not take responsibility for wiping your data.
 
 ---
 
