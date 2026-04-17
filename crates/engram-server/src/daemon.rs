@@ -34,6 +34,9 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
 
         info!("Agentic Daemon (Phase 7) online. Autophagy GC DISABLED — watcher only.");
 
+        // Flush hot access timestamps to disk every 60 seconds (Mac hardening)
+        let mut flush_interval = tokio::time::interval(Duration::from_secs(60));
+
         loop {
             if ctrl.shutdown.load(Ordering::Relaxed) {
                 break;
@@ -48,6 +51,12 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                             info!("Daemon dynamically bound OS watcher to: {}", p.display());
                         }
                     }
+                }
+
+                _ = flush_interval.tick() => {
+                    // Flush hot access timestamps to disk every 60 seconds
+                    let mut lock = store.lock().unwrap();
+                    lock.access_index.flush_if_dirty();
                 }
 
                 event = rx.recv_async() => {
