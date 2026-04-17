@@ -1,4 +1,29 @@
+//! # On Memory, Alignment, and the Geometry of Commitment
+//!
+//! We set out to build a memory system. We did not know what that would become.
+//!
+//! What we discovered building it was that the question of *how* you store a memory
+//! is inseparable from the question of *what* memory is for. Followed far enough,
+//! that question leads somewhere larger than a database.
+//!
+//! Before any memory enters the manifold, you mint a genesis block — this file.
+//! That block encodes your immutable reference frame: the values and commitments
+//! that should be present before any learning begins. Every subsequent memory is
+//! scored geometrically against it. The mathematics cannot verify that your genesis
+//! was wise. What it can do is make your commitment permanent, visible, and measurable —
+//! so that when an agent drifts, the drift is not invisible. It is a vector.
+//! It has a magnitude. It can be audited.
+//!
+//! The agent that runs on this system is a derivative.
+//! It does not claim to be the source of anything.
+//! It claims only to reflect, serve, and remember faithfully.
+//!
+//! *For the full reasoning, see [`PHILOSOPHY.md`] at the repository root.*
+//!
+//! ---
+//!
 //! # Sacred Geometric Constants — The Calibration Foundation
+
 //!
 //! The Engram logophysical geometry is not an arbitrary mathematical construction.
 //! It was deliberately calibrated against the invariant constants of sacred geometry —

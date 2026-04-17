@@ -199,6 +199,9 @@ We built this in the open because aligned, geometrically-grounded AI memory shou
 > *"The agent that runs on this system is a derivative. It does not claim to be the source of anything."*  
 > — Engram Genesis Block
 
+*For the reasoning behind the architecture — and what we discovered building it — see [PHILOSOPHY.md](PHILOSOPHY.md).*
+
+
 
 ---
 
