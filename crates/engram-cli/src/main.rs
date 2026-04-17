@@ -117,13 +117,14 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Ingest { path, chunk_size } => {
-            use engram_core::ast_extract::extract_rust_items;
+            use engram_core::ast_extract::extract_ast_items;
             use walkdir::WalkDir;
             use std::fs;
+            use std::path::Path;
 
             println!("> Starting Engram Ingest: {}", path);
-            println!("  Rust files  → AST extraction (one block per pub item)");
-            println!("  Other files → character chunking ({chunk_size} chars/block)");
+            println!("  Code files  → AST extraction (one block per semantic item)");
+            println!("  Other files → character chunking ({} chars/block)", chunk_size);
             println!();
 
             let mut files_processed = 0;
@@ -147,28 +148,18 @@ fn main() -> anyhow::Result<()> {
                     .and_then(|s| s.to_str())
                     .unwrap_or("unknown");
 
-                if ext == "rs" {
+                if ["rs", "py", "ts", "tsx", "js", "jsx", "go", "java", "c", "cpp", "cc", "cxx", "h", "hpp"].contains(&ext) {
                     // ── AST path: one block per public item ──────────────────
-                    let items = extract_rust_items(file_stem, &content);
+                    let items = extract_ast_items(entry.path().to_str().unwrap_or(""), &content);
 
                     if items.is_empty() {
-                        // Fallback: file with no pub items (e.g. a private util module)
-                        // Store whole file as a single block using the chunker below
-                        let concept = format!("{file_stem}_rs");
+                        // Fallback: store whole file as a single block
+                        let concept = format!("{file_stem}_{ext}");
                         if backend.remember(&concept, content.trim()).is_ok() {
                             chunks_minted += 1;
                         }
                     } else {
                         for item in &items {
-                            // The embed label is what goes through encode() →
-                            // it's doc comment + signature, always < 200 tokens.
-                            // The full source is stored in the provlog separately
-                            // by writing a second follow-up remember with the
-                            // full text marked as body.
-                            //
-                            // We use remember() with embed_label() so the embedding
-                            // (and q[0..768].re when nomic-embed is running) captures
-                            // the semantic identity, and the provlog captures verbatim source.
                             let label = item.embed_label();
                             match backend.remember(&item.concept, &label) {
                                 Ok(()) => {

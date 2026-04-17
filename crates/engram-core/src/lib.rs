@@ -41,8 +41,8 @@ pub mod backend;
 pub mod index;
 pub mod genesis;
 
-// AST extraction — requires `features = ["ast"]` in Cargo.toml
-#[cfg(feature = "ast")]
+// AST extraction — requires `features = ["universal-ast"]` in Cargo.toml
+#[cfg(feature = "universal-ast")]
 pub mod ast_extract;
 
 pub use types::{
