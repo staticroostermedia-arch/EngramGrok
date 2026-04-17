@@ -171,7 +171,9 @@ graph LR
 
 **Engram is an open substrate. Take it and make it yours.**
 
-We built Engram to solve a specific problem: giving IDE agents and local LLMs persistent, semantically meaningful memory that runs entirely on your machine. That core mission doesn't move. But the foundation we built to solve it is general-purpose geometry, not an application-specific hack — and we want others to use it.
+The `.LEG` container format, the 8192D FHRR geometry, and the VSA operator library were designed and proven in **CodeLand OS** — a full logophysical operating system built on these primitives. Engram is the extracted, public reference implementation: the same geometry, the same block format, the same operators — packaged for anyone to build on without needing the full CodeLand stack.
+
+We released it as a focused tool for a focused problem: giving IDE agents and local LLMs persistent, semantically meaningful memory that runs entirely on your machine. That core mission doesn't move. But the foundation is general-purpose geometry, not an application-specific hack — and we want others to use it.
 
 ### What the primitives actually give you
 
@@ -205,17 +207,19 @@ We built this in the open because aligned, geometrically-grounded AI memory shou
 > [!WARNING]
 > If you are modifying `engram-core` serialization, strictly adhere to the 256KB block constraint.
 
-Every memory is a **HolographicBlock** (`.leg` file) — exactly 262,144 bytes (256KB), 4096-byte aligned. We did not simplify this struct for the public release because it is the core source of Engram's geometric speed. This is what you get when you build on Engram:
+The `.LEG` format was not designed for Engram. It was designed for **CodeLand OS** — a CUDA-accelerated, VRAM-resident logophysical agent architecture — where block alignment to physical NVMe boundaries and direct DMA to GPU memory are operational requirements, not optimizations. We extracted it unchanged into Engram's public release because simplifying it would have destroyed the properties that make it fast.
 
-- **NVMe `O_DIRECT` Thrusters:** The block is aligned to physical NVMe boundaries. Tensors bypass the OS page-cache entirely and stream via DMA directly from SSD to VRAM. 
-- **The `Logenergetics` Capsule:** Built-in geometric trust computing. The `crs` (Coherence-Reliability Score) field measures whether the memory is mathematically coherent. Developers can use this to build hallucination filters natively at the file-system level, measuring the "heat dissipated" during an LLM's logical deduction.
-- **The `LegFooter` (Merkle Chain):** Every memory block is signed by a 6-part Blake3 cryptographic chain. This allows you to build completely trustless, "blockchain-like" autonomous histories where agent actions can be cryptographically verified against bit-rot before execution.
+Every memory is a **HolographicBlock** (`.leg` file) — exactly 262,144 bytes (256KB), 4096-byte aligned. This is what you inherit when you build on Engram:
 
-### Open-Ended Use Cases for Core Structs
-Each block carries complex tensors that you can repurpose for your own logic structures:
-- **`q[8192]` (Knowledge Tensor):** The 8192-dimensional vector phase embedding. *Use Case:* Storing massive legal case precedents for semantic search.
-- **`p[8192]` (Binding Momentum):** The directional vector. *Use Case:* Synthesizing two memories together recursively to build a dynamic knowledge graph without needing Neo4J or an external graph DB.
-- **ZEDOS Tags:** A single-byte metadata classification (`DECLARATIVE`, `EPISODIC`, `OPERATIONAL`, `PRAXIS`). *Use Case:* Read chunks from disk and instantly discard conversational fluff (`EPISODIC`) to rapidly execute strict procedural code (`OPERATIONAL`).
+- **NVMe `O_DIRECT` Thrusters:** Tensors bypass the OS page-cache entirely and stream via DMA directly from SSD to VRAM. Block alignment is physical, not conventional.
+- **The `Logenergetics` Capsule:** Built-in geometric trust computing. The `crs` (Coherence-Reliability Score) field measures whether the memory is mathematically coherent — a hallucination filter native to the storage layer, no external service required.
+- **The `LegFooter` (Merkle Chain):** Every block is signed by a 6-part BLAKE3 cryptographic chain. Agent action histories are cryptographically verifiable against bit-rot without any external registry.
+
+### What the tensors give you
+Each block carries two complex phase vectors you can use for your own purposes:
+- **`q[8192]` (Knowledge Tensor):** The geometric fingerprint of the encoded concept. Query it, compose it, distill it.
+- **`p[8192]` (Binding Momentum):** The directional vector. Bind two concepts together; the result is a new vector that carries both without collapsing either.
+- **ZEDOS Tags:** One byte classifies every block (`DECLARATIVE`, `EPISODIC`, `OPERATIONAL`, `PRAXIS`, `RELATION`). At query time, filter by type before reading content.
 
 ---
 
