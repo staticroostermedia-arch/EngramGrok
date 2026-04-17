@@ -19,7 +19,7 @@ cuda = ["dep:engram-gpu", "engram-gpu/cuda-kernels"]
 metal = ["dep:engram-gpu"]
 
 [dependencies]
-engram-core  = { path = "../engram-core" }
+engram-core  = { path = "../engram-core", features = ["universal-ast"] }
 engram-gpu   = { path = "../engram-gpu", optional = true }
 
 # Async runtime

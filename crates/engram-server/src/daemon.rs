@@ -77,33 +77,47 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                     && !path.to_string_lossy().contains("/.git/")
                                 {
                                     if let Ok(content) = std::fs::read_to_string(path) {
-                                        let file_name = path
-                                            .file_name()
-                                            .and_then(|s| s.to_str())
-                                            .unwrap_or("unknown");
-                                        let concept_name = format!(
-                                            "{}_daemon",
-                                            file_name.replace('.', "_")
-                                        );
-
-                                        let safe_end = content.len().min(8000);
-                                        let mut end = safe_end;
-                                        while end > 0 && !content.is_char_boundary(end) {
-                                            end -= 1;
-                                        }
-
                                         let mut lock = store.lock().unwrap();
-                                        if let Err(e) = lock.remember(&concept_name, &content[..end]) {
-                                            error!(
-                                                "Daemon failed to auto-sync file {}: {}",
-                                                path.display(),
-                                                e
-                                            );
+
+                                        let items = engram_core::ast_extract::extract_ast_items(path.to_str().unwrap_or(""), &content);
+
+                                        if !items.is_empty() {
+                                            for item in items {
+                                                if let Err(e) = lock.remember(&item.concept, &item.embed_label()) {
+                                                    error!("Daemon failed to auto-sync AST {}: {}", item.concept, e);
+                                                } else {
+                                                    debug!("Daemon: Auto-synced AST {}", item.concept);
+                                                }
+                                            }
                                         } else {
-                                            debug!(
-                                                "Daemon: Auto-synced {}",
-                                                path.display()
+                                            // Fallback chunking
+                                            let file_name = path
+                                                .file_name()
+                                                .and_then(|s| s.to_str())
+                                                .unwrap_or("unknown");
+                                            let concept_name = format!(
+                                                "{}_daemon",
+                                                file_name.replace('.', "_")
                                             );
+
+                                            let safe_end = content.len().min(8000);
+                                            let mut end = safe_end;
+                                            while end > 0 && !content.is_char_boundary(end) {
+                                                end -= 1;
+                                            }
+
+                                            if let Err(e) = lock.remember(&concept_name, &content[..end]) {
+                                                error!(
+                                                    "Daemon failed to auto-sync file {}: {}",
+                                                    path.display(),
+                                                    e
+                                                );
+                                            } else {
+                                                debug!(
+                                                    "Daemon: Auto-synced fallback {}",
+                                                    path.display()
+                                                );
+                                            }
                                         }
                                     }
                                 }
