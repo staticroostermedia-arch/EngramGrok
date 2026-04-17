@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/engram-core",
     "crates/engram-gpu",
-    "crates/engram-server",
     "crates/engram-cli",
 ]
 
