@@ -446,8 +446,10 @@ dependencies = [
  "clap",
  "engram-core",
  "num-complex",
+ "quote",
  "serde_json",
  "shellexpand",
+ "syn 2.0.117",
  "walkdir",
 ]
 
@@ -460,10 +462,12 @@ dependencies = [
  "bytemuck",
  "libc",
  "num-complex",
+ "proc-macro2",
  "rayon",
  "reqwest",
  "serde",
  "serde_json",
+ "syn 2.0.117",
  "thiserror 1.0.69",
  "tracing",
 ]

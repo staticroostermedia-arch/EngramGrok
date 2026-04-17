@@ -20,7 +20,6 @@
 //!     cargo run --bin engram-backfill -- ~/.engram/manifold
 
 use std::path::Path;
-use engram_core::backend::{CpuBackend, VsaBackend};
 use engram_core::storage::{read_block, write_block, read_provlog};
 
 const DEFAULT_EMBED_URL: &str = "http://localhost:8085/v1/embeddings";

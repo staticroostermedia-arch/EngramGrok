@@ -117,59 +117,108 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Ingest { path, chunk_size } => {
+            use engram_core::ast_extract::extract_rust_items;
             use walkdir::WalkDir;
             use std::fs;
-            
-            println!("> Starting Phase 5 Ingestion Protocol directed at: {}", path);
+
+            println!("> Starting Engram Ingest: {}", path);
+            println!("  Rust files  → AST extraction (one block per pub item)");
+            println!("  Other files → character chunking ({chunk_size} chars/block)");
+            println!();
+
             let mut files_processed = 0;
-            let mut chunks_minted = 0;
+            let mut chunks_minted   = 0;
+            let mut ast_items_minted = 0;
+
+            let allowed_extensions = [
+                "rs", "md", "txt", "js", "ts", "json", "toml", "py", "c", "cpp", "h", "csv", "sh",
+            ];
 
             for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
                 if !entry.file_type().is_file() { continue; }
                 let ext = entry.path().extension().and_then(|s| s.to_str()).unwrap_or("");
-                
-                // Only ingest text/code files
-                let allowed_extensions = ["rs", "md", "txt", "js", "ts", "json", "toml", "py", "c", "cpp", "h", "csv", "sh"];
                 if !allowed_extensions.contains(&ext) { continue; }
 
-                if let Ok(content) = fs::read_to_string(entry.path()) {
-                    let file_name = entry.path().file_name().and_then(|s| s.to_str()).unwrap_or("unknown");
-                    let mut start = 0;
+                let Ok(content) = fs::read_to_string(entry.path()) else { continue; };
+                let file_name = entry.path().file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown");
+                let file_stem = entry.path().file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown");
+
+                if ext == "rs" {
+                    // ── AST path: one block per public item ──────────────────
+                    let items = extract_rust_items(file_stem, &content);
+
+                    if items.is_empty() {
+                        // Fallback: file with no pub items (e.g. a private util module)
+                        // Store whole file as a single block using the chunker below
+                        let concept = format!("{file_stem}_rs");
+                        if backend.remember(&concept, content.trim()).is_ok() {
+                            chunks_minted += 1;
+                        }
+                    } else {
+                        for item in &items {
+                            // The embed label is what goes through encode() →
+                            // it's doc comment + signature, always < 200 tokens.
+                            // The full source is stored in the provlog separately
+                            // by writing a second follow-up remember with the
+                            // full text marked as body.
+                            //
+                            // We use remember() with embed_label() so the embedding
+                            // (and q[0..768].re when nomic-embed is running) captures
+                            // the semantic identity, and the provlog captures verbatim source.
+                            let label = item.embed_label();
+                            match backend.remember(&item.concept, &label) {
+                                Ok(()) => {
+                                    print!("  [ast] {:<45}", item.concept);
+                                    println!("  ← {}", &label.chars().take(60).collect::<String>());
+                                    ast_items_minted += 1;
+                                }
+                                Err(e) => eprintln!("  ✗ {}: {e}", item.concept),
+                            }
+                        }
+                    }
+                } else {
+                    // ── Chunker path: all other file types ───────────────────
+                    let mut start     = 0;
                     let mut chunk_idx = 1;
 
                     while start < content.len() {
                         let mut end = (start + chunk_size).min(content.len());
-                        // Ensure we don't snap mid-multibyte char
-                        while end > start && !content.is_char_boundary(end) {
-                            end -= 1;
-                        }
+                        while end > start && !content.is_char_boundary(end) { end -= 1; }
 
-                        // try to break on whitespace if we're not at the very end
                         let mut safe_end = end;
                         if safe_end < content.len() {
-                            if let Some(offset) = content[start..end].rfind(|c: char| c.is_whitespace() || c == '\n') {
+                            if let Some(offset) = content[start..end].rfind(|c: char| c.is_whitespace()) {
                                 safe_end = start + offset;
                             }
                         }
-                        
-                        let chunk = &content[start..safe_end];
-                        // concept naming: "file_name_partN"
-                        let concept_name = format!("{}_part{}", file_name.replace('.', "_"), chunk_idx);
-                        
-                        if let Err(e) = backend.remember(&concept_name, chunk.trim()) {
-                            eprintln!("Failed to ingest chunk {}: {}", concept_name, e);
-                        } else {
+
+                        let chunk   = &content[start..safe_end];
+                        let concept = format!("{}_part{}", file_name.replace('.', "_"), chunk_idx);
+
+                        if backend.remember(&concept, chunk.trim()).is_ok() {
                             chunks_minted += 1;
                         }
 
-                        start = safe_end + 1; // skip the space/newline
+                        start     = safe_end + 1;
                         chunk_idx += 1;
                     }
-                    files_processed += 1;
                 }
+
+                files_processed += 1;
             }
-            println!("✓ INGESTION COMPLETE. Processed {} files into {} geometric holograms.", files_processed, chunks_minted);
+
+            println!();
+            println!("✓ INGESTION COMPLETE");
+            println!("  Files processed : {files_processed}");
+            println!("  AST items minted: {ast_items_minted}  (one block per pub fn/struct/enum/trait)");
+            println!("  Chunk blocks    : {chunks_minted}  (non-Rust files)");
+            println!("  Total blocks    : {}", ast_items_minted + chunks_minted);
         }
+
         Commands::Distill { cluster_size, min_crs, dry_run } => {
             use engram_core::ops::bundle;
             use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS};

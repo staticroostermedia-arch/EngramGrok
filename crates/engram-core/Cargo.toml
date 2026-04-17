@@ -10,6 +10,7 @@ repository.workspace = true
 [features]
 default = []
 rayon-backend = []     # Enable Rayon parallel scan (always available on CPU)
+ast = ["dep:syn", "dep:proc-macro2"]  # Enable syn-based AST extraction for Rust source ingestion
 
 [dependencies]
 
@@ -25,3 +26,6 @@ reqwest      = { workspace = true }
 tracing      = { workspace = true }
 
 libc         = "0.2"   # O_DIRECT flag for direct I/O reads
+# AST extraction — optional, enabled via the `ast` feature
+syn          = { version = "2", features = ["full", "visit"], optional = true }
+proc-macro2  = { version = "1", features = ["span-locations"], optional = true }

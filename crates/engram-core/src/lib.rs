@@ -41,6 +41,10 @@ pub mod backend;
 pub mod index;
 pub mod genesis;
 
+// AST extraction — requires `features = ["ast"]` in Cargo.toml
+#[cfg(feature = "ast")]
+pub mod ast_extract;
+
 pub use types::{
     HolographicBlock, Leg3Pointer, LegFooter, Logenergetics,
     BLOCK_SIZE, DIMENSION,
