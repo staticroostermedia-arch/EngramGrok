@@ -7,8 +7,7 @@ fn main() {
     
     println!("=== SEMANTIC RAY-CASTER RESULTS ===");
     for r in res {
-        let text = backend.read_text(&r.concept).unwrap_or_default().replace("\n", " ");
-        let snippet = if text.len() > 150 { &text[..150] } else { &text };
-        println!("[{}] (resonance={:.3}) -> {}...", r.concept, r.score, snippet);
+        let snippet = if r.provlog.len() > 150 { &r.provlog[..150] } else { &r.provlog };
+        println!("[{}] (resonance={:.3}, crs={:.3}) -> {}...", r.concept, r.score, r.crs, snippet);
     }
 }
