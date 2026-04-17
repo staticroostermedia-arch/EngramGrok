@@ -12,7 +12,10 @@ Engram gives your AI agent a long-term memory that works like human associative 
 
 ## 🚀 Quick Start
 
+By default, Engram uses internal geometric hashing. To enable massive-scale semantic code search, point it to any OpenAI-compatible embeddings endpoint (e.g., local llama.cpp or ONNX):
+
 ```bash
+export ENGRAM_EMBED_URL="http://localhost:8080/v1/embeddings"
 cargo install engram --git https://github.com/staticroostermedia-arch/engram
 ```
 
@@ -59,6 +62,16 @@ engram distill --min-crs 0.74 --cluster-size 20
 # Then clean up episodic debris
 engram forget-old --min-crs-threshold 0.70
 ```
+
+## 🌳 AST-Aware Semantic Distillation
+
+Traditional vector databases ingest code via naive character chunking, splitting functions in half and destroying context. Engram's `ingest` pipeline features a dedicated **AST-extraction layer** (currently supporting Rust via `syn`).
+
+Instead of chunks, Engram mints exactly **one memory block per public semantic item** (functions, structs, enums, traits). 
+- **The Vector (`q` tensor):** Encodes the doc comment + signature (a high-quality semantic label that perfectly fits the 512-token context window of embedding models).
+- **The Provlog:** Carries the raw, full-length source code.
+
+When your agent searches for a concept, the INT8 Poincaré kernel matches the distilled semantic signature, but the memory payload returned to the agent contains the complete source code. 
 
 
 ## 🧰 MCP Tools Reference
@@ -220,9 +233,9 @@ Every memory is a **HolographicBlock** (`.leg` file) — exactly 262,144 bytes (
 
 ### What the tensors give you
 Each block carries two complex phase vectors you can use for your own purposes:
-- **`q[8192]` (Knowledge Tensor):** The geometric fingerprint of the encoded concept. Query it, compose it, distill it.
-  - **`q[0..384].re`** — L2-normalised embedding from the active neural encoder (MiniLM / nomic-embed / any OpenAI-compatible `/v1/embeddings` server). Used by the INT8 Poincaré search kernel.
-  - **`q[384..8192]`** — Logophysical phase accumulation (BLAKE3 XOF spiral). Used for VSA algebra (OP_BIND, OP_ADD) and CRS computation.
+- **`q[8192]` (Knowledge Tensor):** The geometric fingerprint of the encoded concept. 
+  - **Slots `0..768`:** Clean, L2-normalized Neural Embedding (via your `ENGRAM_EMBED_URL` model, e.g. Nomic-embed-v1.5). Powers the ultra-fast WebGPU INT8 Poincaré hyperbolic search layer.
+  - **Slots `768..8192`:** Logophysical phase accumulation (BLAKE3 circular convolution). Powers the VSA geometric math operations (`OP_BIND`, `OP_ADD`) and un-forgeable Coherence-Reliability Scores (CRS).
 - **`p[8192]` (Binding Momentum):** The directional vector. Bind two concepts together; the result is a new vector that carries both without collapsing either.
 - **ZEDOS Tags:** One byte classifies every block (`DECLARATIVE`, `EPISODIC`, `OPERATIONAL`, `PRAXIS`, `RELATION`). At query time, filter by type before reading content.
 
