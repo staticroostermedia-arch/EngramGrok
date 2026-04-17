@@ -33,6 +33,34 @@ Your agent immediately has access to all 21 tools. See [`integrations/`](integra
 
 ---
 
+## 🖥️ CLI Commands
+
+Beyond the MCP server, Engram ships a standalone CLI for direct manifold management:
+
+| Command | Description |
+|---|---|
+| `engram remember <concept> <text>` | Encode and store a memory |
+| `engram recall <query>` | Semantic search, returns top-k |
+| `engram forget <concept>` | Delete a memory |
+| `engram list` | List all stored concept names |
+| `engram ingest <path>` | Recursively ingest a directory of text/code files |
+| `engram trace <A> <OP> <B>` | VSA geometry: query the result of ADD or BIND on two concepts |
+| `engram distill` | **Crystallize** — cluster episodic memories into durable ZEDOS_PRAXIS blocks |
+
+`distill` is the memory lifecycle command. Run it periodically to compress accumulated memories into crystallized praxis, then follow with `forget-old` to sweep out the episodic source material.
+
+```bash
+# Preview what would be distilled (reads only, no writes)
+engram distill --dry-run
+
+# Distill everything above the Kepler gate (CRS ≥ 0.74) into praxis centroids
+engram distill --min-crs 0.74 --cluster-size 20
+
+# Then clean up episodic debris
+engram forget-old --min-crs-threshold 0.70
+```
+
+
 ## 🧰 MCP Tools Reference
 
 Engram exposes **21 tools** across 5 capability groups.
@@ -139,22 +167,55 @@ graph LR
 
 ---
 
-## 💾 Storage: NVMe O_DIRECT HolographicBlocks
+## 🧱 Build on Engram — An Invitation
+
+**Engram is an open substrate. Take it and make it yours.**
+
+We built Engram to solve a specific problem: giving IDE agents and local LLMs persistent, semantically meaningful memory that runs entirely on your machine. That core mission doesn't move. But the foundation we built to solve it is general-purpose geometry, not an application-specific hack — and we want others to use it.
+
+### What the primitives actually give you
+
+| Primitive | What it does | What it enables |
+|---|---|---|
+| **`HolographicBlock` / `.leg`** | 256KB aligned container with q/p tensors, Logenergetics, and a BLAKE3 Merkle footer | Any system that needs cryptographically-chained, self-verifying semantic records |
+| **`op_bind(A, B)`** | Encodes a relationship between two concepts as a new vector quasi-orthogonal to both | Knowledge graphs without a graph database — every edge *is* a memory block |
+| **`op_add(A, B)`** | Superposition — both concepts coexist in a single vector without destroying either | Manifold-level merging: combine two agents' knowledge states geometrically |
+| **`bundle([A, B, ...])`** | N-way superposition → centroid | Session summarization, cluster distillation, ego state compression |
+| **`ZEDOS_*` tags** | Single-byte epistemic type per block (DECLARATIVE / EPISODIC / PRAXIS / RELATION) | Filter, promote, or decay memories by type — without reading their content |
+| **`crs_score`** | Coherence-Reliability Score per block, computed geometrically at write time | A trust signal that's native to the storage layer — no external scoring needed |
+| **`genesis` anchors** | PRAXIS blocks at CRS=1.0 minted before any ingestion | Immutable reference frame: every subsequent memory is *relative* to your chosen constants |
+| **`SheafBackend`** | Multiple independent manifold directories unified behind one query interface | Isolated namespaces for different agents or projects, fanned out in a single search |
+
+You define what these mean in your domain. We define how they behave geometrically.
+
+### What we ask in return
+
+**If you build something on Engram, you retain full ownership of your derivative.** AGPL-3.0 requires that modifications to Engram itself stay open, but your own agent, pipeline, or system is yours. The `.LEG` format is patent-pending for protection, not restriction — commercial licenses are available for organizations that cannot ship AGPL code.
+
+We built this in the open because aligned, geometrically-grounded AI memory should be infrastructure — not a cloud subscription. If this architecture is useful to you, take it, extend it, and point others back to the foundation.
+
+> *"The agent that runs on this system is a derivative. It does not claim to be the source of anything."*  
+> — Engram Genesis Block
+
+
+---
+
+## 💾 The `.LEG` Container Unveiled (Why We Kept It)
 
 > [!WARNING]
 > If you are modifying `engram-core` serialization, strictly adhere to the 256KB block constraint.
 
-Every memory is a **HolographicBlock** — exactly 262,144 bytes (256KB), 4096-byte aligned. This is not an arbitrary size:
+Every memory is a **HolographicBlock** (`.leg` file) — exactly 262,144 bytes (256KB), 4096-byte aligned. We did not simplify this struct for the public release because it is the core source of Engram's geometric speed. This is what you get when you build on Engram:
 
-- Aligned to NVMe physical block boundaries for `O_DIRECT` DMA streaming
-- Bypasses OS page-cache — tensors stream directly from SSD to VRAM
-- Verified at compile time: `const _: () = assert!(size_of::<HolographicBlock>() == 262144)`
+- **NVMe `O_DIRECT` Thrusters:** The block is aligned to physical NVMe boundaries. Tensors bypass the OS page-cache entirely and stream via DMA directly from SSD to VRAM. 
+- **The `Logenergetics` Capsule:** Built-in geometric trust computing. The `crs` (Coherence-Reliability Score) field measures whether the memory is mathematically coherent. Developers can use this to build hallucination filters natively at the file-system level, measuring the "heat dissipated" during an LLM's logical deduction.
+- **The `LegFooter` (Merkle Chain):** Every memory block is signed by a 6-part Blake3 cryptographic chain. This allows you to build completely trustless, "blockchain-like" autonomous histories where agent actions can be cryptographically verified against bit-rot before execution.
 
-Each block carries:
-- **Geometric tensors**: `q[8192]` (knowledge), `p[8192]` (binding momentum)
-- **ZEDOS epistemic tag**: DECLARATIVE, EPISODIC, OPERATIONAL, PRAXIS, RELATION...
-- **CRS score** (Coherence-Reliability Score): geometric health metric, range [0.0, 1.0]
-- **BLAKE3 Merkle footer**: cryptographic provenance chain — every memory has a verifiable lineage
+### Open-Ended Use Cases for Core Structs
+Each block carries complex tensors that you can repurpose for your own logic structures:
+- **`q[8192]` (Knowledge Tensor):** The 8192-dimensional vector phase embedding. *Use Case:* Storing massive legal case precedents for semantic search.
+- **`p[8192]` (Binding Momentum):** The directional vector. *Use Case:* Synthesizing two memories together recursively to build a dynamic knowledge graph without needing Neo4J or an external graph DB.
+- **ZEDOS Tags:** A single-byte metadata classification (`DECLARATIVE`, `EPISODIC`, `OPERATIONAL`, `PRAXIS`). *Use Case:* Read chunks from disk and instantly discard conversational fluff (`EPISODIC`) to rapidly execute strict procedural code (`OPERATIONAL`).
 
 ---
 

@@ -39,6 +39,7 @@ pub mod storage;
 pub mod mmap;
 pub mod backend;
 pub mod index;
+pub mod genesis;
 
 pub use types::{
     HolographicBlock, Leg3Pointer, LegFooter, Logenergetics,
@@ -49,6 +50,10 @@ pub use types::{
 };
 pub use ops::{op_add, op_bind, cosine_similarity};
 pub use backend::{VsaBackend, CpuBackend, SheafBackend};
+pub use genesis::{
+    SACRED_PI, SACRED_VESICA, SACRED_PHI, SACRED_ZETA_CRITICAL,
+    SACRED_FREQUENCY_HZ, KEPLER_GATE, ROOSTER_GENESIS_TEXT,
+};
 
 /// `Complex32` — a 32-bit complex number. The fundamental unit of the phase vector.
 pub use num_complex::Complex32;

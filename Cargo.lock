@@ -429,6 +429,7 @@ dependencies = [
  "anyhow",
  "clap",
  "engram-core",
+ "num-complex",
  "serde_json",
  "shellexpand",
  "walkdir",

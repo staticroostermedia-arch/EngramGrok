@@ -43,6 +43,26 @@ enum Commands {
         #[arg(long, default_value_t = 8000)]
         chunk_size: usize,
     },
+    /// Distill episodic memories into crystallized praxis blocks.
+    ///
+    /// Groups stored memories into clusters by CRS score, computes the geometric
+    /// centroid of each cluster via bundle superposition, and mints the result
+    /// as a ZEDOS_PRAXIS block pinned at CRS=1.0.
+    ///
+    /// Run this periodically to compress accumulated episodic noise into
+    /// durable learned patterns. Use `forget-old` afterward to clean up
+    /// the raw episodic blocks that have now been distilled.
+    Distill {
+        /// Memories per centroid cluster (default: 20)
+        #[arg(long, default_value_t = 20)]
+        cluster_size: usize,
+        /// Skip memories with CRS below this threshold (default: 0.50)
+        #[arg(long, default_value_t = 0.50)]
+        min_crs: f32,
+        /// Preview what would be minted without writing anything
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
     /// Perform logophysical geometry calculations over memory vectors
     Trace {
         /// First concept name or quote
@@ -150,6 +170,122 @@ fn main() -> anyhow::Result<()> {
             }
             println!("✓ INGESTION COMPLETE. Processed {} files into {} geometric holograms.", files_processed, chunks_minted);
         }
+        Commands::Distill { cluster_size, min_crs, dry_run } => {
+            use engram_core::ops::bundle;
+            use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS};
+            use engram_core::genesis::KEPLER_GATE;
+            use num_complex::Complex32;
+
+            println!("🔬 Engram Distill — Manifold Crystallization");
+            println!("   Store    : {store_path}");
+            println!("   Cluster  : {} memories per centroid", cluster_size);
+            println!("   Min CRS  : {:.2}", min_crs);
+            if dry_run { println!("   Mode     : DRY RUN (nothing will be written)"); }
+            println!();
+
+            let concepts = backend.list();
+            let total = concepts.len();
+            if total == 0 {
+                println!("No memories found in {store_path}.");
+                return Ok(());
+            }
+
+            // Collect concepts with CRS ≥ min_crs, sorted by CRS descending
+            let mut eligible: Vec<(String, f32, [Complex32; 8192])> = concepts
+                .iter()
+                .filter_map(|name| {
+                    let block = backend.fetch_block(name)?;
+                    let crs = block.crs_score;
+                    if crs < min_crs { return None; }
+                    Some((name.clone(), crs, block.q))
+                })
+                .collect();
+
+            eligible.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            let skipped = total - eligible.len();
+            println!("   {}/{} memories qualify (≥ CRS {:.2}), {} skipped",
+                eligible.len(), total, min_crs, skipped);
+
+            if eligible.is_empty() {
+                println!("Nothing to distill — lower --min-crs or ingest more memories first.");
+                return Ok(());
+            }
+
+            let clusters: Vec<&[(String, f32, [Complex32; 8192])]> =
+                eligible.chunks(cluster_size).collect();
+
+            println!("   {} clusters → {} praxis blocks", clusters.len(), clusters.len());
+            println!();
+
+            let mut minted = 0usize;
+            for (idx, cluster) in clusters.iter().enumerate() {
+                if cluster.len() < 2 {
+                    println!("  [cluster {:03}] Only {} member — skipping (need ≥ 2).", idx, cluster.len());
+                    continue;
+                }
+
+                // Compute centroid via bundle superposition
+                let refs: Vec<&[Complex32; 8192]> = cluster.iter().map(|(_, _, q)| q).collect();
+                let centroid = bundle(&refs);
+
+                let avg_crs: f32 = cluster.iter().map(|(_, c, _)| c).sum::<f32>() / cluster.len() as f32;
+                let members_preview: String = cluster.iter()
+                    .take(3)
+                    .map(|(name, _, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let concept_name = format!("praxis_distill_cluster_{:03}", idx);
+                let label = format!(
+                    "DISTILLED PRAXIS — cluster {idx} of {} members (avg CRS {avg_crs:.3})\n\
+                     Source concepts: {members_preview}{}\n\
+                     Kepler gate: {:.2} | Riemann AI bound: 0.50",
+                    cluster.len(),
+                    if cluster.len() > 3 { format!(" +{} more", cluster.len() - 3) } else { String::new() },
+                    KEPLER_GATE,
+                );
+
+                println!(
+                    "  [cluster {:03}] {} members, avg CRS {:.3} → {}",
+                    idx, cluster.len(), avg_crs, concept_name
+                );
+
+                if !dry_run {
+                    let mut block = Leg3Pointer::mint();
+                    block.magic = *b"LEG3";
+                    block.schema_ver = 3;
+                    block.content_type = ZEDOS_PRAXIS;
+                    block.zedos_tag   = ZEDOS_PRAXIS;
+                    block.spin_state  = 1;  // Axiomatic
+                    block.tensor_rank = 1;
+                    block.crs_score   = 1.0;  // Praxis blocks are crystallized — always CRS=1.0
+                    block.energetics.crs = 1.0;
+                    block.energetics.heat_dissipated = 5.47e-4;
+                    block.q = centroid;
+                    // Payload: human-readable label
+                    let label_bytes = label.as_bytes();
+                    let copy_len = label_bytes.len().min(block.payload.len());
+                    block.payload[..copy_len].copy_from_slice(&label_bytes[..copy_len]);
+
+                    match backend.store(&concept_name, block) {
+                        Ok(())  => { minted += 1; }
+                        Err(e) => { eprintln!("  ✗ Failed to mint {concept_name}: {e}"); }
+                    }
+                } else {
+                    minted += 1; // Count for dry-run report
+                }
+            }
+
+            println!();
+            if dry_run {
+                println!("✓ Dry run complete — {} praxis blocks would be minted.", minted);
+            } else {
+                println!("✓ Distillation complete — {} praxis blocks minted at CRS=1.0.", minted);
+                println!("  Run `engram forget-old --min-crs-threshold 0.70` to clean up the episodic source blocks.");
+            }
+        }
+
         Commands::Trace { term_a, op, term_b, k } => {
             use engram_core::ops::{op_add, op_bind};
             let q_a = backend.fetch(&term_a).unwrap_or_else(|| Box::new(backend.encode(&term_a).q));

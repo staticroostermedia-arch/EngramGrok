@@ -112,17 +112,47 @@ The `relate` tool stores relation blocks but there is no inverted index for quer
 
 ---
 
-## Phase 6: CLI Enhancements
+## Phase 6: CLI Enhancements ✅
 
-Once the MCP tools are wired, expose them as CLI subcommands too:
-- `engram-cli stats` — print manifold health
-- `engram-cli export > backup.json` — dump to stdout
-- `engram-cli import backup.json` — restore from file
-- `engram-cli visualize <concept>` — print Mermaid graph to stdout
+All core CLI subcommands shipped:
+- [x] `engram distill` — cluster manifold memories into ZEDOS_PRAXIS centroids via `bundle()` superposition
+- [ ] `engram stats` — print manifold health to stdout
+- [ ] `engram export > backup.json` — dump to stdout
+- [ ] `engram import backup.json` — restore from file
+- [ ] `engram visualize <concept>` — print Mermaid graph to stdout
 
 ---
 
-## Implementation Order (Recommended)
+## Phase 5D: Session Hooks 🟡 NEXT
+
+Integrates Engram into the agent session lifecycle. Two new MCP tools:
+
+- [ ] **`mcp_engram_session_start`**
+  - Loads manifold digest (summarize internally)
+  - Computes session anchor: OP_ADD superposition of top-5 recently accessed blocks
+  - Writes `SESSION_START::timestamp` as ZEDOS_EPISODIC (naturally decays)
+  - Returns full digest so agent rehydrates in one call — no manual recall loop
+
+- [ ] **`mcp_engram_session_end`** `summary: String`
+  - Stores agent-written session summary as ZEDOS_PRAXIS at CRS=0.80
+  - CRS promotion sweep: bump all blocks accessed this session by `+0.05 × access_count`
+  - Computes session centroid: `bundle(all accessed q-vectors)` → written as `SESSION_CENTROID::timestamp`
+  - Session centroid becomes the seed for the *next* session_start
+  - Decays the session_start block from this session (now stale)
+
+---
+
+## Phase 7: Ouroboros AST Pipeline 🔴 TODO
+
+Port CodeLand's tree-sitter → phase-vector pipeline as a standalone `engram-ast` crate.
+Gives Engram **native code structure awareness** — the AST topology is encoded geometrically,
+not as raw text. `mcp_engram_watch_workspace` would automatically use it for `.rs`, `.py`, `.ts` files.
+
+- [ ] `engram-ast` crate: tree-sitter → 8192D phase vector encoder per language
+- [ ] Wire into `mcp_engram_watch_workspace` as opt-in backend (`--ast-mode`)
+- [ ] `engram-cli ingest --ast` flag to AST-encode a directory instead of chunking by character
+
+---
 
 | Priority | Feature | Effort | Impact |
 |---|---|---|---|
@@ -144,8 +174,10 @@ Once the MCP tools are wired, expose them as CLI subcommands too:
 
 ## Versioning
 
-- Current: `v0.1.0` (tag after Phase 5A ships)
-- Phase 5A complete → `v0.2.0`
-- Phase 5B complete → `v0.3.0`
-- Phase 5C complete → `v0.4.0`
-- Phase 5D complete → `v1.0.0` (stable API)
+- `v0.1.0` — Initial release
+- `v0.2.0` — Phase 5A: stats, recall_recent, namespace, update tools
+- `v0.3.0` — Phase 5B: summarize, batch_remember, export, import, forget_old tools
+- `v0.4.0` — Phase 5C: relation index, search_by_relation, visualize tools
+- `v0.5.0` — Phase 6: `engram distill` CLI command ← **current**
+- `v0.6.0` — Phase 5D: session_start / session_end MCP tools
+- `v1.0.0` — Phase 7: Ouroboros AST pipeline (stable API)
