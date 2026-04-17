@@ -132,7 +132,7 @@ fn main() -> anyhow::Result<()> {
             let mut ast_items_minted = 0;
 
             let allowed_extensions = [
-                "rs", "md", "txt", "js", "ts", "json", "toml", "py", "c", "cpp", "h", "csv", "sh",
+                "rs", "md", "txt", "js", "ts", "jsx", "tsx", "json", "toml", "py", "c", "cpp", "cc", "cxx", "h", "hpp", "csv", "sh", "go", "java"
             ];
 
             for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
