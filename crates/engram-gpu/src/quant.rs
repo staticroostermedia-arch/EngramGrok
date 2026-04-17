@@ -48,7 +48,7 @@ pub fn cosine_similarity_quantized(q: &[Complex32; 8192], packed: &[u8]) -> f32 
         let q_re = q[i].re;
         let q_im = q[i].im;
 
-        dot += q_re * p_re + q_im * p_im;
+        dot += q_re * p_re + q_im * q_im;
         norm_q += q_re * q_re + q_im * q_im;
         norm_p += p_re * p_re + p_im * p_im;
     }
@@ -58,3 +58,57 @@ pub fn cosine_similarity_quantized(q: &[Complex32; 8192], packed: &[u8]) -> f32 
     }
     dot / (norm_q.sqrt() * norm_p.sqrt())
 }
+
+// ── INT8 Poincaré Quantization (Randall / Command Center, April 2026) ─────────
+//
+// Scheme: symmetric affine quantization, zero-point = 0, scale = 127.0.
+// Source: 384-dim f32 from the first 384 `.re` components of the 8192-D block
+//         (slots where MiniLM all-MiniLM-L6-v2 ONNX output is stored).
+// The WGSL shader dequantizes in-place: f32 = i8 / 127.0.
+
+/// Pack 384 signed i8 values into 96 u32 values (little-endian, 4 bytes per u32).
+///
+/// This is the exact GPU upload format expected by `int8_raytracer.wgsl` binding 0/1.
+///
+/// From Randall's `embeddings.rs` (ported verbatim):
+/// ```text
+/// b0 = byte 0 of u32 (bits 0-7)
+/// b1 = byte 1 of u32 (bits 8-15)
+/// b2 = byte 2 of u32 (bits 16-23)
+/// b3 = byte 3 of u32 (bits 24-31)
+/// ```
+pub fn pack_int8_to_u32(quantized: &[i8; 384]) -> [u32; 96] {
+    let mut packed = [0u32; 96];
+    for i in 0..96 {
+        let b0 =  (quantized[i * 4    ] as u8) as u32;
+        let b1 = ((quantized[i * 4 + 1] as u8) as u32) << 8;
+        let b2 = ((quantized[i * 4 + 2] as u8) as u32) << 16;
+        let b3 = ((quantized[i * 4 + 3] as u8) as u32) << 24;
+        packed[i] = b0 | b1 | b2 | b3;
+    }
+    packed
+}
+
+/// Quantize the first 384 real components of an 8192-D Complex32 block to INT8.
+///
+/// Returns the raw `[i8; 384]`, the GPU-packed `[u32; 96]`, and the L2 norm
+/// of the quantized vector (for optional diagnostic use).
+///
+/// Scheme (from Randall's `embeddings.rs:77-88`):
+/// - `q_int8[i] = (centroid[i].re * 127.0).round().clamp(-128, 127) as i8`
+/// - The `.re` slots 0..384 contain the L2-normalised MiniLM embedding.
+/// - The remaining 7808 dimensions are ignored by the INT8 path.
+pub fn quantize_centroid_int8(centroid: &[Complex32; 8192]) -> ([i8; 384], [u32; 96], f32) {
+    let mut q_int8  = [0i8; 384];
+    let mut norm_sq = 0.0f32;
+
+    for i in 0..384 {
+        let val = (centroid[i].re * 127.0).round().clamp(-128.0, 127.0) as i8;
+        q_int8[i] = val;
+        norm_sq   += (val as f32) * (val as f32);
+    }
+
+    let q_packed = pack_int8_to_u32(&q_int8);
+    (q_int8, q_packed, norm_sq.sqrt())
+}
+

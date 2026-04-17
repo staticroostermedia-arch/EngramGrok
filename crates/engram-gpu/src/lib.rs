@@ -11,6 +11,11 @@
 //!   │     ├── engram_cosine_batch              (Hermitian cosine × N)
 //!   │     └── engram_bvh_traverse              (slab traversal)
 //!   └── CpuBackend fallback (for machines without CUDA)
+//!
+//! WgpuBackend (feature = "wgpu-backend")
+//!   ├── CpuBackend          — encode / store / forget / list
+//!   ├── wgpu::ComputePipeline — INT8 Poincaré hyperbolic search
+//!   └── Vec<PackedBlock>   — INT8 host-RAM mirror of every .leg block
 //! ```
 //!
 //! The BVH is built once at startup and rebuilt incrementally as new blocks arrive.
@@ -24,3 +29,10 @@ pub use bvh::{BvhManifold, Float3, LBVHNode};
 pub use backend::CudaBackend;
 pub use metal_backend::MetalBackend;
 pub mod quant;
+
+/// WebGPU INT8 Poincaré backend — available when `wgpu-backend` feature is enabled.
+#[cfg(feature = "wgpu-backend")]
+pub mod wgpu_backend;
+#[cfg(feature = "wgpu-backend")]
+pub use wgpu_backend::WgpuBackend;
+

@@ -16,31 +16,44 @@ use crate::ops::normalize;
 use crate::storage::write_provlog;
 use num_complex::Complex32;
 
-/// Attempt to fetch a Neural Embedding from the local Transductive Suture (llama-server)
+/// Fetch a dense embedding vector from the configured embedding server.
+///
+/// Tries the `ENGRAM_EMBED_URL` environment variable first (e.g. an ONNX
+/// MiniLM server), then falls back to the llama-server at port 8085.
+///
+/// Returns a L2-normalised `Vec<f32>` of any dimension, or `None` on failure.
 fn fetch_neural_embedding(text: &str) -> Option<Vec<f32>> {
     use serde_json::json;
-    
+
+    // Allow override: ENGRAM_EMBED_URL=http://localhost:8086/v1/embeddings
+    let url = std::env::var("ENGRAM_EMBED_URL")
+        .unwrap_or_else(|_| "http://localhost:8085/v1/embeddings".to_string());
+
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_millis(500))
         .build()
         .ok()?;
-        
+
     let body = json!({
         "input": text,
-        "model": "local" // llama-server ignores model but expects the key
+        "model": "local"
     });
-    
-    let res: serde_json::Value = client.post("http://localhost:8085/v1/embeddings")
+
+    let res: serde_json::Value = client.post(&url)
         .json(&body)
         .send()
         .ok()?
         .json()
         .ok()?;
-        
+
     let emb = res["data"][0]["embedding"].as_array()?;
     let vec: Vec<f32> = emb.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
     if vec.is_empty() { return None; }
-    Some(vec)
+
+    // L2-normalise so values land inside the Poincaré ball (||v|| ≤ 1)
+    let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm < 1e-9 { return None; }
+    Some(vec.into_iter().map(|x| x / norm).collect())
 }
 
 /// Encode free-form text into a `HolographicBlock` using Hybrid HRR + Neural Strategy.
@@ -75,17 +88,22 @@ pub fn from_text(text: &str) -> Leg3Pointer {
         }
     }
 
-    // Semantic Aura (Method B) - Deep Neural Integration via llama-server fallback
+    // Semantic Aura (Method B) — Neural embedding into dedicated slots.
+    //
+    // Strategy: place the neural vector CLEANLY into q[0..N].re where N is the
+    // embedding dimension (384 for MiniLM, up to 4096 for Gemma, etc.).
+    // This keeps slots 0..N free of hash contamination so the INT8 Poincaré
+    // kernel (which reads q[0..384].re) sees clean L2-normalised values.
+    //
+    // slots N..8192 keep the pure logophysical hash accumulation.
     if let Some(neural_vec) = fetch_neural_embedding(text) {
-        let neural_len = neural_vec.len();
-        // Bind the neural geometry directly into the logophysical structure
-        for i in 0..DIMENSION {
-            let n_val = neural_vec[i % neural_len];
-            let neural_phase = Complex32::new(n_val.cos(), n_val.sin());
-            // Binding (Multiply) structural token accumulation by Neural Semantic concept
-            // and apply a 5x superposition weight so the Aura heavily guides similarity
-            q[i] = (q[i] * neural_phase) + (Complex32::new(n_val * 5.0, 0.0));
+        let neural_len = neural_vec.len().min(DIMENSION);
+        // Write neural values into the first N real slots (overwrite hash)
+        for i in 0..neural_len {
+            q[i].re = neural_vec[i];
+            q[i].im = 0.0;  // clean imaginary — no hash contamination
         }
+        // Slots neural_len..8192 keep the logophysical hash (already in q[])
     }
 
     // Phase 4: Normalize to unit hypersphere

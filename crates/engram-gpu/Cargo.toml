@@ -1,6 +1,6 @@
 [package]
 name        = "engram-gpu"
-description = "CUDA GPU backend for Engram — LBVH O(log N) K-NN + parallel cosine kernels"
+description = "GPU backends for Engram — CUDA LBVH O(log N) K-NN + WebGPU INT8 Poincaré hyperbolic search"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,11 +8,13 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default  = []
+default      = []
 # Enable CUDA kernel compilation via nvcc in build.rs
 cuda-kernels = []
 # Enable ROCm/HIP kernel compilation via hipcc in build.rs
 rocm-kernels = []
+# Enable WebGPU (wgpu) INT8 Poincaré search backend — cross-platform, no CUDA required
+wgpu-backend = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dependencies]
 engram-core  = { path = "../engram-core", default-features = false }
@@ -22,6 +24,10 @@ tracing      = { workspace = true }
 shellexpand  = { workspace = true }
 libc         = { workspace = true }
 rayon        = { workspace = true }
+# wgpu-backend feature deps (optional — zero overhead when feature is off)
+wgpu     = { version = "22", optional = true }
+pollster = { version = "0.3", optional = true }   # sync executor for wgpu init/readback
+bytemuck = { version = "1",   optional = true }   # safe &[u32] ↔ &[u8] casts for GPU buffers
 
 [build-dependencies]
 # cc is used to compile the CUDA kernels when cuda-kernels feature is enabled

@@ -21,6 +21,24 @@ pub struct Memory {
     pub provlog: String,
 }
 
+/// Distance metric and quantization mode for nearest-neighbour search.
+///
+/// Pass to [`VsaBackend::query_with_mode`] to select the search strategy.
+/// Backends that do not implement a given mode fall back to [`SearchMode::Cosine`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SearchMode {
+    /// Flat cosine similarity in full f32 precision (default, all backends).
+    #[default]
+    Cosine,
+    /// Poincaré ball hyperbolic distance in f32 precision.
+    /// More accurate than cosine for hierarchical / phylogenetic concept spaces.
+    Poincare,
+    /// INT8-quantised Poincaré distance via WebGPU compute shader.
+    /// 170× fewer bytes per block; requires the `wgpu-backend` feature on `engram-gpu`.
+    Int8Poincare,
+}
+
+
 /// Swappable VSA compute backend.
 ///
 /// # Implementing a backend
@@ -47,6 +65,19 @@ pub trait VsaBackend: Send + Sync {
 
     /// Find the k most similar memories to a query vector.
     fn query(&self, query: &[Complex32; 8192], k: usize) -> Vec<Memory>;
+
+    /// Find the k most similar memories using an explicit search strategy.
+    ///
+    /// The default implementation ignores `mode` and calls [`Self::query`] (cosine).
+    /// Override in backends that support Poincaré or INT8 modes.
+    fn query_with_mode(
+        &self,
+        query: &[Complex32; 8192],
+        k: usize,
+        _mode: SearchMode,
+    ) -> Vec<Memory> {
+        self.query(query, k)
+    }
 
     /// Store a block under a concept name.
     fn store(&self, concept: &str, block: Leg3Pointer) -> Result<()>;

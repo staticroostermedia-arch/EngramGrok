@@ -221,6 +221,8 @@ Every memory is a **HolographicBlock** (`.leg` file) — exactly 262,144 bytes (
 ### What the tensors give you
 Each block carries two complex phase vectors you can use for your own purposes:
 - **`q[8192]` (Knowledge Tensor):** The geometric fingerprint of the encoded concept. Query it, compose it, distill it.
+  - **`q[0..384].re`** — L2-normalised embedding from the active neural encoder (MiniLM / nomic-embed / any OpenAI-compatible `/v1/embeddings` server). Used by the INT8 Poincaré search kernel.
+  - **`q[384..8192]`** — Logophysical phase accumulation (BLAKE3 XOF spiral). Used for VSA algebra (OP_BIND, OP_ADD) and CRS computation.
 - **`p[8192]` (Binding Momentum):** The directional vector. Bind two concepts together; the result is a new vector that carries both without collapsing either.
 - **ZEDOS Tags:** One byte classifies every block (`DECLARATIVE`, `EPISODIC`, `OPERATIONAL`, `PRAXIS`, `RELATION`). At query time, filter by type before reading content.
 
@@ -303,6 +305,7 @@ mcp_engram_set_namespace("personal")
 | CUDA (NVIDIA) | `cuda-kernels` | ✅ | BVH O(log N) index, NVMe→VRAM parallel DMA |
 | ROCm (AMD) | `rocm-kernels` | ✅ | Wavefront HIP execution |
 | Metal (Apple) | `metal` | ✅ | MSL dynamic runtime compilation via metal-rs |
+| **WebGPU (cross-platform)** | **`wgpu-backend`** | ✅ | INT8 Poincaré hyperbolic search · 170× VRAM reduction · RTX/AMD/Apple/Intel · no CUDA required |
 
 ---
 
