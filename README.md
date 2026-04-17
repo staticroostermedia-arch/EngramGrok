@@ -65,9 +65,11 @@ engram forget-old --min-crs-threshold 0.70
 
 ## 🌳 AST-Aware Semantic Distillation
 
-Traditional vector databases ingest code via naive character chunking, splitting functions in half and destroying context. Engram's `ingest` pipeline features a dedicated **AST-extraction layer** (currently supporting Rust via `syn`).
+Traditional vector databases ingest code via naive character chunking, splitting functions in half and destroying context. Engram's `ingest` pipeline features a universal **AST-extraction layer** powered natively by **Tree-Sitter**.
 
-Instead of chunks, Engram mints exactly **one memory block per public semantic item** (functions, structs, enums, traits). 
+It natively parses **Rust, Python, TypeScript, JavaScript, Go, Java, C, and C++**.
+Instead of chunks, Engram mints exactly **one memory block per public semantic item** (functions, structs, classes, methods, enums, interfaces) across all supported languages. Unrecognized languages gracefully fall back to 8,000-character block chunking.
+
 - **The Vector (`q` tensor):** Encodes the doc comment + signature (a high-quality semantic label that perfectly fits the 512-token context window of embedding models).
 - **The Provlog:** Carries the raw, full-length source code.
 
@@ -125,7 +127,7 @@ Engram exposes **21 tools** across 5 capability groups.
 
 | Tool | Description |
 |---|---|
-| `mcp_engram_watch_workspace` | Tell the daemon to watch a directory; re-ingests files on save |
+| `mcp_engram_watch_workspace` | Tell the daemon to watch a directory; automatically extracts and re-ingests file-saves through the Tree-Sitter AST pipeline |
 | `mcp_engram_context_for_file` | Surface top-5 relevant memories for a file path (proactive loading) |
 | `mcp_engram_remember_solution` | Store an error→solution pair at CRS=1.0 — crystallized learning |
 

@@ -24,13 +24,12 @@ Do not use `grep_search` or `ripgrep` for abstract feature questions. Ripgrep fi
 ## 5. Automatic State Watching
 When you initialize a new session inside an IDE bound to Engram MCP, your immediate first priority is to bind the daemon's OS file-listener to the current physical workspace. Call the JSON tool `mcp_engram_watch_workspace("/path/to/folder")`. This isolates your context so you inherently and dynamically follow whatever code files change across the current session.
 
-## 6. Matrix Project Management (The CRS Lock)
-Take note that the background Tiered Decay Autophagy Garbage Collector is *always* active sweeping over the manifold. Ephemeral state vectors gracefully decay over time:
-- **> 24 hours stale**: Lose 2% utility per GC cycle.
-- **> 7 days stale**: Enter aggressive Autophagy, losing 5% utility per pass.
-- **Eviction**: If utility drops below `0.05`, the memory is permanently wiped from NVMe.
+**Note on AST Chunking:** The background daemon leverages a universal **Tree-Sitter AST extractor**. Whenever a tracked `.py, .ts, .rs, .go, .java, .c, or .cpp` file is saved, the daemon perfectly isolates every class, struct, function, and interface into its own `.leg` memory block. Do not manually pre-chunk code for Engram; save the file to disk and let the `watch_workspace` daemon extract the geometric boundaries.
 
-When you construct explicit Project Roadmaps, `task.md` lists, or core architectural schemas, you **MUST MUST MUST** pin those files. Use the JSON tool `mcp_engram_pin("task_board")` or `mcp_engram_remember_solution(...)`. Doing this locks the vector's `crs_score` natively inside the `HolographicBlock` to exactly `1.0`. The background autophagy treats 1.0 vectors as *immortal*. Without pinning, your architecture designs will rot out of memory!
+## 6. Matrix Project Management (The CRS Lock)
+Take note that the background Tiered Decay Autophagy Garbage Collector has been **disabled and removed**. All explicitly ingested `.leg` memory vectors are strictly permanent unless you manually invoke `mcp_engram_forget`.
+
+When you construct explicit Project Roadmaps, `task.md` lists, or core architectural schemas, you should still **pin** those files. Use the JSON tool `mcp_engram_pin("task_board")` or `mcp_engram_remember_solution(...)`. Doing this locks the vector's `crs_score` natively inside the `HolographicBlock` to exactly `1.0`. This ensures that your critical architectural invariants rank at the absolute top of the geometry tensor during broad query resolutions, bypassing standard semantic distance metrics.
 
 ## 7. Proactive Tool Integration (Coming Soon)
 To maximize context efficiency without overflowing your token window, Engram is onboarding topological IDE tools:
