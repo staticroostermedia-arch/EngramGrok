@@ -20,6 +20,10 @@
 #include <cuComplex.h>
 #include <math.h>
 #include <stdint.h>
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+
+namespace cg = cooperative_groups;
 
 #define DIM        8192
 #define K_DIM      3
@@ -68,13 +72,11 @@ engram_project_8k_to_3d(const cuComplex *__restrict__ tensor,
         lz += mag * gaussian_sample(sz1, sz2) * JL_SCALE;
     }
 
-    // Warp reduction
-    #pragma unroll
-    for (int off = WARP_SIZE / 2; off > 0; off /= 2) {
-        lx += __shfl_down_sync(0xFFFFFFFF, lx, off);
-        ly += __shfl_down_sync(0xFFFFFFFF, ly, off);
-        lz += __shfl_down_sync(0xFFFFFFFF, lz, off);
-    }
+    // Warp reduction using Cooperative Groups
+    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(cg::this_thread_block());
+    lx = cg::reduce(warp, lx, cg::plus<float>());
+    ly = cg::reduce(warp, ly, cg::plus<float>());
+    lz = cg::reduce(warp, lz, cg::plus<float>());
 
     __shared__ float smx[8], smy[8], smz[8];
     int warpId = tid / WARP_SIZE, laneId = tid % WARP_SIZE;
@@ -86,12 +88,9 @@ engram_project_8k_to_3d(const cuComplex *__restrict__ tensor,
         lx = (laneId < nw) ? smx[laneId] : 0.0f;
         ly = (laneId < nw) ? smy[laneId] : 0.0f;
         lz = (laneId < nw) ? smz[laneId] : 0.0f;
-        #pragma unroll
-        for (int off = WARP_SIZE / 2; off > 0; off /= 2) {
-            lx += __shfl_down_sync(0xFFFFFFFF, lx, off);
-            ly += __shfl_down_sync(0xFFFFFFFF, ly, off);
-            lz += __shfl_down_sync(0xFFFFFFFF, lz, off);
-        }
+        lx = cg::reduce(warp, lx, cg::plus<float>());
+        ly = cg::reduce(warp, ly, cg::plus<float>());
+        lz = cg::reduce(warp, lz, cg::plus<float>());
         if (tid == 0) point_out[blockIdx.x] = make_float3(lx, ly, lz);
     }
 }
@@ -120,12 +119,10 @@ engram_cosine_batch(const cuComplex *__restrict__ query,    // [DIM]
         lnb  += c.x * c.x + c.y * c.y;
     }
 
-    #pragma unroll
-    for (int off = WARP_SIZE / 2; off > 0; off /= 2) {
-        ldot += __shfl_down_sync(0xFFFFFFFF, ldot, off);
-        lna  += __shfl_down_sync(0xFFFFFFFF, lna,  off);
-        lnb  += __shfl_down_sync(0xFFFFFFFF, lnb,  off);
-    }
+    cg::thread_block_tile<32> warp_tile = cg::tiled_partition<32>(cg::this_thread_block());
+    ldot = cg::reduce(warp_tile, ldot, cg::plus<float>());
+    lna  = cg::reduce(warp_tile, lna, cg::plus<float>());
+    lnb  = cg::reduce(warp_tile, lnb, cg::plus<float>());
 
     int warp = tid / WARP_SIZE, lane = tid % WARP_SIZE;
     if (lane == 0) { s_dot[warp] = ldot; s_na[warp] = lna; s_nb[warp] = lnb; }
@@ -136,12 +133,9 @@ engram_cosine_batch(const cuComplex *__restrict__ query,    // [DIM]
         ldot = (lane < nw) ? s_dot[lane] : 0.0f;
         lna  = (lane < nw) ? s_na[lane]  : 0.0f;
         lnb  = (lane < nw) ? s_nb[lane]  : 0.0f;
-        #pragma unroll
-        for (int off = WARP_SIZE / 2; off > 0; off /= 2) {
-            ldot += __shfl_down_sync(0xFFFFFFFF, ldot, off);
-            lna  += __shfl_down_sync(0xFFFFFFFF, lna,  off);
-            lnb  += __shfl_down_sync(0xFFFFFFFF, lnb,  off);
-        }
+        ldot = cg::reduce(warp_tile, ldot, cg::plus<float>());
+        lna  = cg::reduce(warp_tile, lna, cg::plus<float>());
+        lnb  = cg::reduce(warp_tile, lnb, cg::plus<float>());
         if (tid == 0) {
             float denom = sqrtf(lna) * sqrtf(lnb);
             scores[blockIdx.x] = (denom > 1e-8f) ? (ldot / denom) : 0.0f;
