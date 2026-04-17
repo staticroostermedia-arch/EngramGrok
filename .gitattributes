@@ -1,0 +1,13 @@
+# Tell GitHub Linguist to ignore non-Rust files from language stats.
+# Engram is a Rust library — HTML/JS/Python tooling is excluded from the stats bar.
+
+# Standalone dashboard UI — documentation, not library code
+dashboard.html linguist-documentation=true
+
+# Any future HTML/JS tooling or examples
+*.html linguist-documentation=true
+*.js   linguist-documentation=true
+*.py   linguist-documentation=true
+
+# Jupyter notebooks are tooling/examples, not source
+*.ipynb linguist-documentation=true
