@@ -13,12 +13,27 @@ use anyhow::Result;
 pub struct Memory {
     /// The concept identifier (e.g. "krebs_cycle")
     pub concept: String,
-    /// Cosine similarity to the query vector [−1.0, 1.0]
+    /// Composite weighted score (cosine × crs_weight × stability × depth_bonus)
     pub score: f32,
     /// The CRS (Coherence-Reliability Score) of the stored block [0.0, 1.0]
     pub crs: f32,
     /// The ProvLog text stored in the block's payload field
     pub provlog: String,
+    // ── Physics fields (Phase 8 loop closure) ────────────────────────────────
+    /// Lyapunov drift velocity from last update — 0.0=stable, 1.0=major shift
+    pub drift_velocity: f32,
+    /// How many times this concept has been reinforced via update()
+    pub superposition_depth: u32,
+    /// ZEDOS epistemic tag (0xD=declarative, 0xA=episodic, 0x50=praxis, etc.)
+    pub zedos_tag: u8,
+    /// Epistemic affirm weight from last session_end (0.0–1.0)
+    pub alpha_a: f32,
+    /// Epistemic deny weight from last session_end (0.0–1.0)
+    pub alpha_d: f32,
+    /// Spatial bounding box min [row, col, 0.0] — file coordinates of AST node
+    pub aabb_min: [f32; 3],
+    /// Spatial bounding box max [row, col, 0.0] — file coordinates of AST node
+    pub aabb_max: [f32; 3],
 }
 
 /// Distance metric and quantization mode for nearest-neighbour search.
@@ -151,14 +166,44 @@ impl VsaBackend for CpuBackend {
                 if path.extension().and_then(|e| e.to_str()) != Some("leg") { return None; }
                 let concept = path.file_stem()?.to_str()?.to_string();
                 let block = crate::storage::read_block(&path).ok()?;
-                let score = cosine_similarity(query, &block.q);
+
+                // ── Phase 2: Physics-Weighted Composite Scoring ─────────────────
+                let base_sim = cosine_similarity(query, &block.q);
+
+                // CRS weight: high-coherence blocks rank higher (0.85–1.0 range)
+                let crs_weight = 0.85 + (block.crs_score * 0.15);
+
+                // Stability penalty: high drift = concept changed drastically = less reliable
+                // dv is in [0,1]. Cap penalty at 10% so even volatile blocks still surface.
+                let stability = 1.0 - (block.energetics.dv * 0.10);
+
+                // Superposition bonus: concepts reinforced many times are more trustworthy
+                // Cap at 10 updates; 0.5% per reinforcement = max 5% bonus
+                let depth_bonus = 1.0 + (block.superposition_count.min(10) as f32 * 0.005);
+
+                let score = (base_sim * crs_weight * stability * depth_bonus).clamp(-1.0, 1.0);
+                // ────────────────────────────────────────────────────────────────
+
                 let crs = block.crs_score;
                 let provlog = String::from_utf8_lossy(&block.payload)
                     .trim_matches('\0')
                     .chars()
                     .take(512)
                     .collect();
-                Some(Memory { concept, score, crs, provlog })
+
+                Some(Memory {
+                    concept,
+                    score,
+                    crs,
+                    provlog,
+                    drift_velocity: block.energetics.dv,
+                    superposition_depth: block.superposition_count,
+                    zedos_tag: block.zedos_tag,
+                    alpha_a: block.energetics.alpha_a,
+                    alpha_d: block.energetics.alpha_d,
+                    aabb_min: block.aabb_min,
+                    aabb_max: block.aabb_max,
+                })
             })
             .collect();
 

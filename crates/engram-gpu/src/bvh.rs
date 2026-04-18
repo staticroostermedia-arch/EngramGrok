@@ -291,6 +291,13 @@ impl BvhManifold {
                 score: c.score,
                 crs: c.crs,
                 provlog,
+                drift_velocity: block.energetics.dv,
+                superposition_depth: block.superposition_count,
+                zedos_tag: block.zedos_tag,
+                alpha_a: block.energetics.alpha_a,
+                alpha_d: block.energetics.alpha_d,
+                aabb_min: block.aabb_min,
+                aabb_max: block.aabb_max,
             })
         }).collect();
 

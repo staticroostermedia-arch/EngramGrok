@@ -107,6 +107,10 @@ fn tool_list() -> Value {
                             "type": "integer",
                             "description": "Number of results to return (default: 5, max: 20)",
                             "default": 5
+                        },
+                        "zedos_filter": {
+                            "type": "string",
+                            "description": "Optional: filter by memory type. One of: 'declarative', 'episodic', 'operational', 'praxis', 'relation'. Leave unset for all types."
                         }
                     },
                     "required": ["query"]
@@ -441,6 +445,54 @@ fn tool_list() -> Value {
                     },
                     "required": ["concept"]
                 }
+            },
+            {
+                "name": "mcp_engram_recall_in_file",
+                "description": "Spatial recall: find all AST concepts defined within a specific line range of a file. Queries the aabb_min/max bounding box coordinates stored when the daemon ingested the workspace.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file_stem": {
+                            "type": "string",
+                            "description": "The file stem to match (e.g. 'store' for store.rs, 'daemon' for daemon.rs)"
+                        },
+                        "start_line": {
+                            "type": "integer",
+                            "description": "First line of the range (0-indexed, inclusive). Default: 0",
+                            "default": 0
+                        },
+                        "end_line": {
+                            "type": "integer",
+                            "description": "Last line of the range (0-indexed, inclusive). Default: 999999",
+                            "default": 999999
+                        },
+                        "k": {
+                            "type": "integer",
+                            "description": "Max results to return (default: 20)",
+                            "default": 20
+                        }
+                    },
+                    "required": ["file_stem"]
+                }
+            },
+            {
+                "name": "mcp_engram_query_with_momentum",
+                "description": "Momentum-assisted recall: blends semantic similarity (q tensor, 80%) with conceptual trajectory (p tensor, 20%). Finds memories that are actively evolving toward your query, not just matching it right now.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Natural language query"
+                        },
+                        "k": {
+                            "type": "integer",
+                            "description": "Number of results to return (default: 5, max: 20)",
+                            "default": 5
+                        }
+                    },
+                    "required": ["query"]
+                }
             }
         ]
     })
@@ -480,6 +532,17 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
         "recall" => {
             let query = args["query"].as_str().unwrap_or("").trim().to_string();
             let k = args["k"].as_u64().unwrap_or(5).min(20) as usize;
+            let zedos_filter = args["zedos_filter"].as_str().map(|s| s.trim().to_lowercase());
+
+            // Phase 5: resolve optional ZEDOS tag filter
+            let tag_filter: Option<u8> = zedos_filter.as_deref().and_then(|f| match f {
+                "declarative"  => Some(engram_core::types::ZEDOS_DECLARATIVE),
+                "episodic"     => Some(engram_core::types::ZEDOS_EPISODIC),
+                "operational"  => Some(engram_core::types::ZEDOS_OPERATIONAL),
+                "praxis"       => Some(engram_core::types::ZEDOS_PRAXIS),
+                "relation"     => Some(engram_core::types::ZEDOS_RELATION),
+                _ => None,
+            });
 
             if query.is_empty() {
                 return json!({
@@ -488,7 +551,14 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 });
             }
 
-            let results = store.lock().unwrap().recall(&query, k);
+            let mut results = store.lock().unwrap().recall(&query, k * 3); // over-fetch before filter
+
+            // Apply ZEDOS tag filter if specified
+            if let Some(tag) = tag_filter {
+                results.retain(|m| m.zedos_tag == tag);
+            }
+            results.truncate(k);
+
             if results.is_empty() {
                 return json!({
                     "content": [{ "type": "text", "text": "No memories found." }]
@@ -497,9 +567,23 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
             let mut output = format!("Found {} memories:\n\n", results.len());
             for (i, mem) in results.iter().enumerate() {
+                let tag_name = match mem.zedos_tag {
+                    0xD  => "DECLARATIVE",
+                    0xA  => "EPISODIC",
+                    0x52 => "OPERATIONAL",
+                    0x50 => "PRAXIS",
+                    0xE1 => "RELATION",
+                    _    => "UNKNOWN",
+                };
+                let spatial = if mem.aabb_max[0] > 0.0 {
+                    format!(" | lines {:.0}–{:.0}", mem.aabb_min[0], mem.aabb_max[0])
+                } else {
+                    String::new()
+                };
                 output.push_str(&format!(
-                    "**[{}] {}** (similarity: {:.3}, crs: {:.3})\n{}\n\n",
+                    "**[{}] {}** (score: {:.3}, crs: {:.3}, dv: {:.3}, depth: {}, tag: {}{})\n{}\n\n",
                     i + 1, mem.concept, mem.score, mem.crs,
+                    mem.drift_velocity, mem.superposition_depth, tag_name, spatial,
                     if mem.provlog.is_empty() { "(no text content)" } else { mem.provlog.as_str() }
                 ));
             }
@@ -1045,6 +1129,86 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     "isError": true
                 }),
             }
+        }
+
+        "mcp_engram_recall_in_file" => {
+            // Phase 4: Spatial AABB query — find concepts within a file line range
+            let file_stem = args["file_stem"].as_str().unwrap_or("").trim().to_lowercase();
+            let start_line = args["start_line"].as_f64().unwrap_or(0.0) as f32;
+            let end_line   = args["end_line"].as_f64().unwrap_or(999999.0) as f32;
+            let k = args["k"].as_u64().unwrap_or(20).min(50) as usize;
+
+            if file_stem.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: file_stem is required." }], "isError": true });
+            }
+
+            let lock = store.lock().unwrap();
+            let all_concepts = lock.list();
+
+            let mut results: Vec<(String, f32, f32)> = all_concepts.into_iter()
+                .filter_map(|concept| {
+                    // Match concepts belonging to this file stem
+                    if !concept.starts_with(&file_stem) { return None; }
+                    let block = lock.fetch_block(&concept)?;
+                    let row_min = block.aabb_min[0];
+                    let row_max = block.aabb_max[0];
+                    // Only include if AABB is set (row_max > 0) and intersects range
+                    if row_max <= 0.0 { return None; }
+                    if row_max < start_line || row_min > end_line { return None; }
+                    Some((concept, row_min, row_max))
+                })
+                .collect();
+
+            results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            results.truncate(k);
+
+            if results.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": format!("No AST concepts found in '{}' within lines {}-{}", file_stem, start_line, end_line) }] });
+            }
+
+            let mut output = format!("Found {} concepts in '{}':\n\n", results.len(), file_stem);
+            for (concept, row_min, row_max) in &results {
+                output.push_str(&format!("  · {} (lines {:.0}–{:.0})\n", concept, row_min, row_max));
+            }
+            json!({ "content": [{ "type": "text", "text": output.trim() }] })
+        }
+
+        "mcp_engram_query_with_momentum" => {
+            // Phase 3: Momentum-assisted recall — blend q (80%) + p (20%) scores
+            let query = args["query"].as_str().unwrap_or("").trim().to_string();
+            let k = args["k"].as_u64().unwrap_or(5).min(20) as usize;
+
+            if query.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: query is required." }], "isError": true });
+            }
+
+            let lock = store.lock().unwrap();
+            let query_block = lock.encode(&query);
+            let all_concepts = lock.list();
+
+            let mut scored: Vec<(String, f32, f32)> = all_concepts.into_iter()
+                .filter_map(|concept| {
+                    let block = lock.fetch_block(&concept)?;
+                    let q_score = engram_core::ops::cosine_similarity(&query_block.q, &block.q);
+                    let p_score = engram_core::ops::cosine_similarity(&query_block.q, &block.p);
+                    // Blend: 80% position (where it is now) + 20% momentum (where it's heading)
+                    let score = (0.80 * q_score + 0.20 * p_score).clamp(-1.0, 1.0);
+                    Some((concept, score, block.energetics.dv))
+                })
+                .collect();
+
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            scored.truncate(k);
+
+            if scored.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "No memories found." }] });
+            }
+
+            let mut output = format!("Momentum-weighted results for '{}':\n\n", query);
+            for (i, (concept, score, dv)) in scored.iter().enumerate() {
+                output.push_str(&format!("**[{}] {}** (momentum score: {:.3}, drift: {:.3})\n", i + 1, concept, score, dv));
+            }
+            json!({ "content": [{ "type": "text", "text": output.trim() }] })
         }
 
         unknown => json!({
