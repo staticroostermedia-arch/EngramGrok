@@ -36,3 +36,8 @@ To maximize context efficiency without overflowing your token window, Engram is 
 - **`mcp_engram_context_for_file`**: Use this immediately upon opening a new project file to fetch the 3 most relevant architectural invariants bound to that exact filename. 
 - **`mcp_engram_relate`**: Instead of relying purely on spatial cosine distance, use this tool to geometrically `OP_BIND` two concepts together (e.g., `DependsOn(Auth_Module, Token_Lib)`).
 - **`mcp_engram_remember_solution`**: Crystallizes bug fixes permanently. Use this after fixing deep compilation errors; the error-solution pair is injected with `CRS = 1.0` so subsequent agents never regress on the same codebase flaw.
+
+## 8. Session End Protocol
+When the user says 'we are done for the day' or 'commit this feature', you must perform the Memory Lifecycle:
+1. Call `mcp_engram_session_end` to compute the ADR thermodynamics.
+2. Remind the user to run `engram-cli distill` in their terminal to crystallize episodic blocks into `ZEDOS_PRAXIS` centroids.

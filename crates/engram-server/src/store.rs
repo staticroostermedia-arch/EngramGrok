@@ -471,7 +471,10 @@ impl StoreHandle {
                 concept
             );
             return Err(anyhow::anyhow!(
-                "Euler characteristic check failed for '{}' — vector appears corrupted",
+                "Euler characteristic check failed for '{}' — vector appears corrupted. \
+                INSTRUCTION TO AGENT: Your text payload caused a geometric phase disruption > 12%. \
+                This means your payload was too chaotic or covered too many different topics. \
+                Rewrite the text to be highly structured, focus on a single core concept, and call this tool again.",
                 concept
             ));
         }
@@ -604,7 +607,10 @@ impl StoreHandle {
                 concept
             );
             return Err(anyhow::anyhow!(
-                "Euler gate: new encoding for '{}' has too many phase discontinuities",
+                "Euler characteristic check failed for '{}' — vector appears corrupted. \
+                INSTRUCTION TO AGENT: Your text payload caused a geometric phase disruption > 12%. \
+                This means your payload was too chaotic or covered too many different topics. \
+                Rewrite the text to be highly structured, focus on a single core concept, and call this tool again.",
                 concept
             ));
         }

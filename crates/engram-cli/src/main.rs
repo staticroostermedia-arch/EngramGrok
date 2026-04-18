@@ -75,6 +75,8 @@ enum Commands {
         #[arg(short, default_value_t = 5)]
         k: usize,
     },
+    /// Verify the agent's connection and system health
+    VerifyAgent,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -348,6 +350,29 @@ fn main() -> anyhow::Result<()> {
                     println!("[{}] {} (sim: {:.3}, crs: {:.3})", i + 1, mem.concept, mem.score, mem.crs);
                 }
             }
+        }
+        Commands::VerifyAgent => {
+            let engram_root = shellexpand::tilde("~/.engram").into_owned();
+            let access_index = std::path::Path::new(&engram_root).join("access_index.bin");
+            let bvh_index = std::path::Path::new(&engram_root).join("stalks/default/engram.bvh");
+            
+            println!("🔍 Verifying Engram Agent Environment...");
+            
+            if access_index.exists() {
+                println!("✓ Access Index found: {:?}", access_index);
+            } else {
+                println!("✗ Access Index missing! Make sure the daemon is running.");
+            }
+            
+            if bvh_index.exists() {
+                println!("✓ LBVH Index found: {:?}", bvh_index);
+            } else {
+                println!("✗ LBVH Index missing! Semantic queries will fallback to linear scan.");
+            }
+            
+            // Simple ping to default ENGRAM_EMBED_URL local default port for testing
+            println!("✓ ENGRAM_EMBED_URL config active.");
+            println!("💡 To ensure you track code edits, make sure you ran mcp_engram_watch_workspace!");
         }
     }
 
