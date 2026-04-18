@@ -72,6 +72,7 @@ Instead of chunks, Engram mints exactly **one memory block per public semantic i
 
 - **The Vector (`q` tensor):** Encodes the doc comment + signature (a high-quality semantic label that perfectly fits the 512-token context window of embedding models).
 - **The Provlog:** Carries the raw, full-length source code.
+- **Spatial Embodiment (`aabb_min` / `aabb_max`):** Engram maps the precise 2D row/column coordinates of the AST node directly into the memory block's 3D logophysical bounding box. Your AGI doesn't just know *what* the code does; it physically knows exactly *where* the concept lives in the file geometry.
 
 When your agent searches for a concept, the INT8 Poincaré kernel matches the distilled semantic signature, but the memory payload returned to the agent contains the complete source code. 
 
@@ -130,7 +131,8 @@ Engram exposes **21 tools** across 5 capability groups.
 | `mcp_engram_watch_workspace` | Tell the daemon to watch a directory; automatically extracts and re-ingests file-saves through the Tree-Sitter AST pipeline |
 | `mcp_engram_context_for_file` | Surface top-5 relevant memories for a file path (proactive loading) |
 | `mcp_engram_remember_solution` | Store an error→solution pair at CRS=1.0 — crystallized learning |
-| `mcp_engram_scar` | Storage-layer expression of a failure directive: suspends block into hostile geometry and narrows `allowed_transforms` to evidence-only. |
+| `mcp_engram_session_end` | Commit session context. Automatically calculates ADR Thermodynamics (Affirm/Deny confidence states) based on the session's geometric coherence. |
+| `mcp_engram_scar` | Mark a rejected thought-vector or failed code path. Binds the concept with the maximum-entropy Apeiron primitive to create a geometric repeller. |
 
 ---
 
@@ -239,8 +241,9 @@ Each block carries two complex phase vectors you can use for your own purposes:
 - **`q[8192]` (Knowledge Tensor):** The geometric fingerprint of the encoded concept. 
   - **Slots `0..768`:** Clean, L2-normalized Neural Embedding (via your `ENGRAM_EMBED_URL` model, e.g. Nomic-embed-v1.5). Powers the ultra-fast WebGPU INT8 Poincaré hyperbolic search layer.
   - **Slots `768..8192`:** Logophysical phase accumulation (BLAKE3 circular convolution). Powers the VSA geometric math operations (`OP_BIND`, `OP_ADD`) and un-forgeable Coherence-Reliability Scores (CRS).
-- **`p[8192]` (Binding Momentum):** The directional vector. Bind two concepts together; the result is a new vector that carries both without collapsing either. `p` continuously accumulates to map update momentum.
+- **`p[8192]` (Temporal Momentum & Concept Drift):** The velocity tensor. As agents update memories, the geometric rotation between the old and new conceptual states is calculated via `op_deduce` and circular-convolved into this tensor. The system natively tracks the *drift velocity* (`dv`) of how your project's architecture is changing over time.
 - **ZEDOS Tags & Reflexive Contracts:** One byte classifies every block (`DECLARATIVE`, `EPISODIC`, `OPERATIONAL`, `PRAXIS`, `RELATION`). These tags dictate a hard-coded `allowed_transforms` contract directly at the byte level (e.g., PRAXIS blocks are pinned to `evidence_update` only and reject fusion attempts).
+- **The `Logenergetics` Capsule (ADR Thermodynamics):** The system tracks the metabolic cost of thought. At the end of a session, Engram calculates the average Coherence-Reliability Score (CRS) of all accessed memories and permanently records the agent's epistemic state—whether it was operating with high certainty (Affirm / `alpha_a`) or in a state of frustration and debugging (Deny / `alpha_d`).
 
 ---
 
