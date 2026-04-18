@@ -120,7 +120,6 @@ fn main() -> anyhow::Result<()> {
             use engram_core::ast_extract::extract_ast_items;
             use walkdir::WalkDir;
             use std::fs;
-            use std::path::Path;
 
             println!("> Starting Engram Ingest: {}", path);
             println!("  Code files  → AST extraction (one block per semantic item)");

@@ -252,16 +252,6 @@ enum Backend {
 }
 
 impl Backend {
-    fn remember(&self, concept: &str, text: &str) -> Result<()> {
-        match self {
-            #[cfg(feature = "cuda")]
-            Backend::Gpu(b) => b.remember(concept, text),
-            #[cfg(feature = "metal")]
-            Backend::Metal(b) => b.remember(concept, text),
-            Backend::Single(b) => b.remember(concept, text),
-            Backend::Sheaf(b) => b.remember(concept, text),
-        }
-    }
     fn recall(&self, q: &str, k: usize) -> Vec<Memory> {
         match self {
             #[cfg(feature = "cuda")]
