@@ -34,6 +34,8 @@ Add to your MCP config and restart your IDE:
 
 Your agent immediately has access to all 21 tools. See [`integrations/`](integrations/) for IDE-specific configs.
 
+> 📖 **New here?** Read the **[First Run Guide](FIRST_RUN.md)** — it walks you through verifying every feature works, activating the file watcher daemon (the step everyone misses), and seeding your manifold with your codebase.
+
 ---
 
 ## 🖥️ CLI Commands
