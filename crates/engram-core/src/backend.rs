@@ -118,19 +118,42 @@ pub trait VsaBackend: Send + Sync {
 
 // ── CPU Backend (always compiled) ────────────────────────────────────────────
 
-/// Pure-CPU backend using Rayon parallel iterators.
+/// Pure-CPU backend with optional LBVH index for O(log N) NVMe-efficient queries.
 ///
-/// Performs an exact linear scan over all blocks in the manifold directory.
-/// At < 50,000 blocks this is imperceptibly fast. For larger manifolds,
-/// prefer the CUDA backend which uses an O(log N) BVH index.
+/// When an LBVH index is present (`engram build-index` has been run), query()
+/// projects the query to 3-D, traverses the lightweight tree to find the top
+/// `KNN_FILTER_CANDIDATES` (128) candidates in O(log N), then reads only those
+/// `.leg` files from NVMe via O_DIRECT and applies the physics composite scorer.
+///
+/// When no index exists, falls back to the exact linear scan using Rayon
+/// parallel iterators over all `.leg` files in the manifold directory.
+/// At < 50,000 blocks the O_DIRECT linear scan is imperceptibly fast;
+/// the NVMe bus saturates at ~7 GB/s so 10K blocks (2.5 GB) reads in < 0.4s.
 pub struct CpuBackend {
     /// Directory containing `.leg` block files.
     pub manifold_dir: std::path::PathBuf,
+    /// Optional LBVH index for O(log N) candidate pre-filtering.
+    pub bvh: Option<crate::index::BvhIndex>,
 }
 
 impl CpuBackend {
+    /// Create a backend without an LBVH index (linear scan mode).
     pub fn new(manifold_dir: impl Into<std::path::PathBuf>) -> Self {
-        Self { manifold_dir: manifold_dir.into() }
+        Self { manifold_dir: manifold_dir.into(), bvh: None }
+    }
+
+    /// Create a backend and attempt to load the LBVH index from the default
+    /// path inside manifold_dir. Falls back to linear scan if no index exists.
+    pub fn with_index(manifold_dir: impl Into<std::path::PathBuf>) -> Self {
+        let dir: std::path::PathBuf = manifold_dir.into();
+        let idx_path = crate::index::default_index_path(&dir);
+        let bvh = crate::index::BvhIndex::load(&idx_path).ok();
+        if bvh.is_some() {
+            tracing::info!("[BVH] Loaded LBVH index — O(log N) candidate pre-filter active");
+        } else {
+            tracing::debug!("[BVH] No index found — using O_DIRECT linear scan");
+        }
+        Self { manifold_dir: dir, bvh }
     }
 }
 
@@ -152,6 +175,27 @@ impl VsaBackend for CpuBackend {
     }
 
     fn query(&self, query: &[Complex32; 8192], k: usize) -> Vec<Memory> {
+        // ── BVH fast path: O(log N) 3-D pre-filter then targeted NVMe reads ────
+        if let Some(ref bvh) = self.bvh {
+            if bvh.is_ready() {
+                // Get up to KNN_FILTER_CANDIDATES (128) concept names from the tree
+                let candidates = bvh.search(query, crate::index::KNN_FILTER_CANDIDATES);
+                let mut scored: Vec<Memory> = candidates
+                    .iter()
+                    .filter_map(|concept| {
+                        let path = self.manifold_dir.join(format!("{}.leg", concept));
+                        let block = crate::storage::read_block(&path).ok()?;
+                        Some(score_block(concept.clone(), query, *block))
+                    })
+                    .collect();
+                scored.sort_by(|a, b|
+                    b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+                scored.truncate(k);
+                return scored;
+            }
+        }
+
+        // ── Linear scan fallback: exact O(N) search (used when no index) ──────
         use rayon::prelude::*;
         use std::fs;
 
@@ -166,44 +210,7 @@ impl VsaBackend for CpuBackend {
                 if path.extension().and_then(|e| e.to_str()) != Some("leg") { return None; }
                 let concept = path.file_stem()?.to_str()?.to_string();
                 let block = crate::storage::read_block(&path).ok()?;
-
-                // ── Phase 2: Physics-Weighted Composite Scoring ─────────────────
-                let base_sim = cosine_similarity(query, &block.q);
-
-                // CRS weight: high-coherence blocks rank higher (0.85–1.0 range)
-                let crs_weight = 0.85 + (block.crs_score * 0.15);
-
-                // Stability penalty: high drift = concept changed drastically = less reliable
-                // dv is in [0,1]. Cap penalty at 10% so even volatile blocks still surface.
-                let stability = 1.0 - (block.energetics.dv * 0.10);
-
-                // Superposition bonus: concepts reinforced many times are more trustworthy
-                // Cap at 10 updates; 0.5% per reinforcement = max 5% bonus
-                let depth_bonus = 1.0 + (block.superposition_count.min(10) as f32 * 0.005);
-
-                let score = (base_sim * crs_weight * stability * depth_bonus).clamp(-1.0, 1.0);
-                // ────────────────────────────────────────────────────────────────
-
-                let crs = block.crs_score;
-                let provlog = String::from_utf8_lossy(&block.payload)
-                    .trim_matches('\0')
-                    .chars()
-                    .take(512)
-                    .collect();
-
-                Some(Memory {
-                    concept,
-                    score,
-                    crs,
-                    provlog,
-                    drift_velocity: block.energetics.dv,
-                    superposition_depth: block.superposition_count,
-                    zedos_tag: block.zedos_tag,
-                    alpha_a: block.energetics.alpha_a,
-                    alpha_d: block.energetics.alpha_d,
-                    aabb_min: block.aabb_min,
-                    aabb_max: block.aabb_max,
-                })
+                Some(score_block(concept, query, *block))
             })
             .collect();
 
@@ -339,5 +346,33 @@ impl VsaBackend for SheafBackend {
                 stalk.list().into_iter().map(move |c| format!("{}::{}", name, c))
             })
             .collect()
+    }
+}
+
+// ── Shared scoring helper ─────────────────────────────────────────────────────
+
+/// Compute the physics-weighted composite score for a single block and return
+/// a fully populated `Memory`. Used by both the HNSW fast path and the linear scan.
+fn score_block(
+    concept: String,
+    query: &[Complex32; 8192],
+    block: crate::types::HolographicBlock,
+) -> Memory {
+    let base_sim = cosine_similarity(query, &block.q);
+    let crs_weight = 0.85 + (block.crs_score * 0.15);
+    let stability   = 1.0 - (block.energetics.dv * 0.10);
+    let depth_bonus = 1.0 + (block.superposition_count.min(10) as f32 * 0.005);
+    let score = (base_sim * crs_weight * stability * depth_bonus).clamp(-1.0, 1.0);
+    let provlog = String::from_utf8_lossy(&block.payload)
+        .trim_matches('\0').chars().take(512).collect();
+    Memory {
+        concept, score, crs: block.crs_score, provlog,
+        drift_velocity: block.energetics.dv,
+        superposition_depth: block.superposition_count,
+        zedos_tag: block.zedos_tag,
+        alpha_a: block.energetics.alpha_a,
+        alpha_d: block.energetics.alpha_d,
+        aabb_min: block.aabb_min,
+        aabb_max: block.aabb_max,
     }
 }

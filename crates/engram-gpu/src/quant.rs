@@ -48,7 +48,7 @@ pub fn cosine_similarity_quantized(q: &[Complex32; 8192], packed: &[u8]) -> f32 
         let q_re = q[i].re;
         let q_im = q[i].im;
 
-        dot += q_re * p_re + q_im * q_im;
+        dot += q_re * p_re + q_im * p_im; // dot(q, p) in complex inner product
         norm_q += q_re * q_re + q_im * q_im;
         norm_p += p_re * p_re + p_im * p_im;
     }

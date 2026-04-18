@@ -10,6 +10,7 @@ repository.workspace = true
 [features]
 default = []
 rayon-backend = []     # Enable Rayon parallel scan (always available on CPU)
+bvh = []               # Enable O(log N) LBVH index (CPU, no GPU required)
 universal-ast = [
     "dep:tree-sitter",
     "dep:tree-sitter-rust",
@@ -35,7 +36,6 @@ thiserror    = { workspace = true }
 reqwest      = { workspace = true }
 tracing      = { workspace = true }
 streaming-iterator = "0.1"
-
 
 libc         = "0.2"   # O_DIRECT flag for direct I/O reads
 
