@@ -12,6 +12,14 @@
 //! Solution: `AccessIndex` — an in-memory `HashMap<String, u64>` that maps concept name
 //! → last_accessed UNIX timestamp. It is updated instantly on every recall and flushed
 //! to `~/.engram/access_index.bin` every 60 seconds by the Autophagy daemon.
+//!
+//! # Reflexive Contract
+//!
+//! Every block minted via `remember()` receives a ZEDOS-tag-appropriate
+//! `allowed_transforms` string. `update()` checks the contract via
+//! `enforce_contract_soft()` (logs, never blocks) and accumulates binding
+//! momentum in the `p` tensor. `scar()` narrows the contract to `evidence_update`
+//! only — the storage-layer expression of `InjectScar { magnitude }` from the M-NOL.
 
 use engram_core::backend::{CpuBackend, Memory, VsaBackend, SheafBackend};
 #[cfg(feature = "cuda")]
@@ -191,6 +199,45 @@ impl RelationIndex {
             let _ = std::fs::write(&self.path, s);
         }
     }
+}
+
+// ── Reflexive Contract Assignment ────────────────────────────────────────────
+//
+// Maps ZEDOS tag → permitted transform string, stored in `allowed_transforms[0..64]`.
+// Called at remember() time. This is the Engram equivalent of CodeLand's
+// `assign_schema_transforms()` in `monad_forge/src/mint.rs`.
+//
+// | Tag         | Contract              | Meaning                            |
+// |-------------|-----------------------|------------------------------------|
+// | DECLARATIVE | evidence_update,op_add| Facts enriched, geometry preserved |
+// | EPISODIC    | evidence_update,rollb | Session memory correctable         |
+// | PRAXIS      | evidence_update       | Crystallized: update only          |
+// | RELATION    | op_bind,rollback      | Relational bonds rebound-able      |
+// | OPERATIONAL | evidence_update,rollb | Code memory correctable            |
+// | 0xFF / pin  | 0xFF                  | Full authority, genesis-tier       |
+fn assign_reflexive_contract(block: &mut engram_core::types::Leg3Pointer) {
+    use engram_core::types::{
+        ZEDOS_PRAXIS, ZEDOS_RELATION, ZEDOS_EPISODIC, ZEDOS_DECLARATIVE,
+    };
+    // Pinned genesis-tier: full authority
+    if block.crs_score >= 1.0 {
+        let full = b"0xFF";
+        block.allowed_transforms[..full.len()].copy_from_slice(full);
+        for b in block.allowed_transforms[full.len()..].iter_mut() { *b = 0; }
+        return;
+    }
+
+    let contract: &[u8] = match block.zedos_tag {
+        t if t == ZEDOS_PRAXIS       => b"evidence_update",
+        t if t == ZEDOS_RELATION     => b"op_bind,rollback",
+        t if t == ZEDOS_EPISODIC     => b"evidence_update,rollback",
+        t if t == ZEDOS_DECLARATIVE  => b"evidence_update,op_add",
+        _                            => b"evidence_update,rollback", // OPERATIONAL default
+    };
+
+    let len = contract.len().min(64);
+    block.allowed_transforms[..len].copy_from_slice(&contract[..len]);
+    for b in block.allowed_transforms[len..].iter_mut() { *b = 0; }
 }
 
 // ── Backend enum ─────────────────────────────────────────────────────────────
@@ -423,7 +470,19 @@ impl StoreHandle {
     pub fn set_active_stalk(&self, name: &str) -> bool { self.backend.set_active_stalk(name) }
 
     pub fn remember(&mut self, concept: &str, text: &str) -> Result<()> {
-        let r = self.backend.remember(concept, text);
+        // Encode via backend (sets spin_state=0x01, energetics floor in encode.rs)
+        let mut block = self.backend.encode(text);
+
+        // ── Assign reflexive contract by ZEDOS tag ────────────────────────────
+        assign_reflexive_contract(&mut block);
+
+        // ── Set coherence_time (enables epoch_scalar / recency weighting) ─────
+        block.coherence_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let r = self.backend.store(concept, block);
         if r.is_ok() { self.access_index.touch(concept); }
         r
     }
@@ -511,21 +570,146 @@ impl StoreHandle {
     }
 
     /// Merge new text into an existing concept via op_add (superposition).
-    /// Increments superposition_count to track merge depth.
+    ///
+    /// Enforces the reflexive contract (soft — logs, never blocks agent UX).
+    /// Accumulates binding momentum in the `p` tensor (OP_BIND soft-accumulate).
+    /// Increments `superposition_count` and advances energetics.
     pub fn update(&mut self, concept: &str, new_text: &str) -> Result<String> {
         let mut block = self.fetch_block(concept)
             .ok_or_else(|| anyhow::anyhow!("Concept '{}' not found — use remember() to create it first", concept))?;
 
+        // ── Reflexive Contract (soft enforcement) ─────────────────────────────
+        // Check if 'evidence_update' is permitted. Log violation but never block.
+        let contract = std::str::from_utf8(&block.allowed_transforms).unwrap_or("");
+        let transform_allowed = contract.contains("evidence_update")
+            || contract.contains("0xFF")
+            || contract.trim_matches('\0').is_empty(); // unset = permissive
+        if !transform_allowed {
+            tracing::warn!(
+                "[CONTRACT VIOLATION] '{}' does not permit 'evidence_update'. \
+                 Contract: {:?}. Proceeding (soft mode).",
+                concept, contract.trim_matches('\0')
+            );
+        }
+
+        let old_crs = block.crs_score;
         let new_block = self.encode(new_text);
+
+        // ── OP_ADD: Superpose new encoding onto existing q ────────────────────
         let merged_q = op_add(&block.q, &new_block.q);
         block.q = merged_q;
+
+        // ── OP_BIND soft-accumulate: momentum p tracks binding history ────────
+        // Each update adds a soft (0.1-weight) binding of new q into p.
+        // p is renormalized to prevent magnitude runaway.
+        for i in 0..8192 {
+            block.p[i].re += new_block.q[i].re * 0.1;
+            block.p[i].im += new_block.q[i].im * 0.1;
+        }
+        let p_norm: f32 = block.p.iter().map(|c| c.re * c.re + c.im * c.im).sum::<f32>().sqrt();
+        if p_norm > 1e-8 {
+            for c in block.p.iter_mut() { c.re /= p_norm; c.im /= p_norm; }
+        }
+
+        // ── Superposition counter ─────────────────────────────────────────────
         let new_count = block.superposition_count.saturating_add(1);
         block.superposition_count = new_count;
-        block.energetics.ts = std::time::SystemTime::now()
+
+        // ── Energetics advancement ────────────────────────────────────────────
+        let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+        block.energetics.ts   = now_secs;
+        block.energetics.step = block.energetics.step.saturating_add(1);
+        // Each update pays the minimum action quantum (thermodynamic proof-of-work)
+        block.energetics.heat_dissipated += 5.47e-4;
+        // Lyapunov drift velocity: |ΔCRS| per update step
+        block.energetics.dv   = (new_block.crs_score - old_crs).abs();
+        block.energetics.crs  = block.crs_score;
+        // Advance Merkle chain to record this transformation
+        let q_hash = blake3::hash(unsafe {
+            std::slice::from_raw_parts(
+                block.q.as_ptr() as *const u8,
+                8192 * std::mem::size_of::<engram_core::Complex32>(),
+            )
+        });
+        block.footer.sig_1 = block.footer.sig_0;
+        block.footer.sig_0.copy_from_slice(q_hash.as_bytes());
 
         self.store(concept, block)?;
-        Ok(format!("✓ '{}' updated via op_add — superposition depth: {}", concept, new_count))
+        Ok(format!(
+            "✓ '{}' updated via op_add — superposition depth: {}{}",
+            concept, new_count,
+            if !transform_allowed { " [CONTRACT WARNING: see log]" } else { "" }
+        ))
+    }
+
+    /// **Scar a concept** — the storage-layer expression of M-NOL `InjectScar`.
+    ///
+    /// Narrows `allowed_transforms` to `"evidence_update"` only, preventing future
+    /// OP_BIND geometric rewrites. Records the scar magnitude as `energetics.dv`
+    /// (Lyapunov drift velocity). Applies a CRS penalty: `crs -= magnitude * 0.1`
+    /// floored at 0.40 (below autophagy threshold but preserving the geometry).
+    ///
+    /// Genesis blocks (CRS=1.0 pinned) are protected — scars bounce off them.
+    ///
+    /// Called by `mcp_engram_scar` (public MCP tool, security: stdio/localhost-bounded).
+    /// Also called by CodeLand's consciousness loop when it emits `InjectScar`
+    /// and routes it through the Engram MCP bridge.
+    pub fn scar(&mut self, concept: &str, magnitude: f32) -> Result<String> {
+        let mut block = self.fetch_block(concept)
+            .ok_or_else(|| anyhow::anyhow!("Concept '{}' not found", concept))?;
+
+        // Genesis block protection — cannot be scarred
+        if block.crs_score >= 1.0 {
+            tracing::warn!(
+                "[SCAR BOUNCED] '{}' is a genesis-tier block (CRS=1.0). Scar rejected.",
+                concept
+            );
+            return Ok(format!(
+                "⚡ Scar bounced — '{}' is a genesis-tier immortal block (CRS=1.0). Geometry protected.",
+                concept
+            ));
+        }
+
+        let magnitude = magnitude.clamp(0.0, 1.0);
+
+        // ── Narrow the reflexive contract ─────────────────────────────────────
+        // op_suspend geometry: the block is bound to the Apeiron (maximum entropy region).
+        // allowed_transforms narrows to evidence_update only — no OP_BIND, no fuse/fork.
+        let scar_contract = b"evidence_update";
+        block.allowed_transforms[..scar_contract.len()].copy_from_slice(scar_contract);
+        // Zero the rest to prevent spurious permissions from old data
+        for b in block.allowed_transforms[scar_contract.len()..].iter_mut() { *b = 0; }
+
+        // ── op_suspend the q-vector into the hostile region ───────────────────
+        // Binding with the Apeiron primitive maps the vector into a "Known Unknown" —
+        // future K-NN traversals will see it as geometrically distant from valid concepts.
+        let suspended_q = engram_core::ops::op_suspend(&block.q);
+        block.q = suspended_q;
+
+        // ── Record thermodynamic cost of the scar ─────────────────────────────
+        block.energetics.dv  = magnitude; // Lyapunov velocity = magnitude of contradiction
+        block.crs_score      = (block.crs_score - magnitude * 0.1).max(0.40);
+        let new_crs          = block.crs_score;
+        block.energetics.crs = block.crs_score;
+        block.energetics.heat_dissipated += 5.47e-4; // Scar pays action quantum
+
+        // ── Advance Merkle chain (records scar event as a cryptographic fact) ─
+        let scar_hash = blake3::hash(&magnitude.to_le_bytes());
+        block.footer.sig_2 = block.footer.sig_1;
+        block.footer.sig_1 = block.footer.sig_0;
+        block.footer.sig_0.copy_from_slice(scar_hash.as_bytes());
+
+        self.store(concept, block)?;
+        tracing::warn!(
+            "[M-NOL SCAR] '{}' burned | mag={:.3} | crs→{:.3} | transforms→evidence_update only",
+            concept, magnitude, new_crs
+        );
+        Ok(format!(
+            "🔥 Scar applied to '{}' | magnitude={:.3} | allowed_transforms→evidence_update | \
+             CRS penalty={:.3} | Block suspended into hostile topological region (op_suspend).",
+            concept, magnitude, magnitude * 0.1
+        ))
     }
 
     /// Bind two concepts via op_bind and store the relation as a new ZEDOS_RELATION block.

@@ -411,6 +411,25 @@ fn tool_list() -> Value {
                         }
                     }
                 }
+            },
+            {
+                "name": "mcp_engram_scar",
+                "description": "Apply a geometric scar to a concept. Scars are the storage-layer expression of the M-NOL \"InjectScar\" directive — they mark a memory region as topologically hostile by: (1) suspending the q-vector into the Apeiron (max-entropy) region via op_suspend, (2) narrowing allowed_transforms to 'evidence_update' only (preventing OP_BIND rewrites), and (3) recording the scar magnitude as energetics.dv (Lyapunov drift velocity). Genesis blocks (CRS=1.0) are immune. Security is natively bounded by stdio/localhost protocol.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "The concept name to scar (e.g. 'failed_approach_x')"
+                        },
+                        "magnitude": {
+                            "type": "number",
+                            "description": "Scar magnitude [0.0, 1.0]. Higher = larger CRS penalty and stronger topological deflection. Defaults to 0.15 (M-NOL default for contradiction axis spikes).",
+                            "default": 0.15
+                        }
+                    },
+                    "required": ["concept"]
+                }
             }
         ]
     })
@@ -941,6 +960,33 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     }
                 }
                 _ => json!({ "content": [{ "type": "text", "text": "Unknown action. Use 'status' or 'reseed'." }], "isError": true })
+            }
+        }
+
+        "mcp_engram_scar" => {
+            let concept   = args["concept"].as_str().unwrap_or("").trim().to_string();
+            let magnitude = args["magnitude"].as_f64().unwrap_or(0.15) as f32;
+
+            if concept.is_empty() {
+                return json!({
+                    "content": [{ "type": "text", "text": "Error: concept is required." }],
+                    "isError": true
+                });
+            }
+
+            // Strip sheaf prefix if present
+            let raw_concept = concept.split_once("::").map_or(concept.as_str(), |(_, r)| r).to_string();
+
+            let result = store.lock().unwrap().scar(&raw_concept, magnitude);
+            match result {
+                Ok(msg) => {
+                    warn!("[M-NOL SCAR] concept='{}' magnitude={:.3}", raw_concept, magnitude);
+                    json!({ "content": [{ "type": "text", "text": msg }] })
+                }
+                Err(e) => json!({
+                    "content": [{ "type": "text", "text": format!("Scar failed: {e}") }],
+                    "isError": true
+                }),
             }
         }
 

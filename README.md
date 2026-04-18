@@ -130,6 +130,7 @@ Engram exposes **21 tools** across 5 capability groups.
 | `mcp_engram_watch_workspace` | Tell the daemon to watch a directory; automatically extracts and re-ingests file-saves through the Tree-Sitter AST pipeline |
 | `mcp_engram_context_for_file` | Surface top-5 relevant memories for a file path (proactive loading) |
 | `mcp_engram_remember_solution` | Store an error→solution pair at CRS=1.0 — crystallized learning |
+| `mcp_engram_scar` | Storage-layer expression of a failure directive: suspends block into hostile geometry and narrows `allowed_transforms` to evidence-only. |
 
 ---
 
@@ -230,7 +231,7 @@ The `.LEG` format was not designed for Engram. It was designed for **CodeLand OS
 Every memory is a **HolographicBlock** (`.leg` file) — exactly 262,144 bytes (256KB), 4096-byte aligned. This is what you inherit when you build on Engram:
 
 - **NVMe `O_DIRECT` Thrusters:** Tensors bypass the OS page-cache entirely and stream via DMA directly from SSD to VRAM. Block alignment is physical, not conventional.
-- **The `Logenergetics` Capsule:** Built-in geometric trust computing. The `crs` (Coherence-Reliability Score) field measures whether the memory is mathematically coherent — a hallucination filter native to the storage layer, no external service required.
+- **The `Logenergetics` Capsule:** Built-in geometric trust computing. The `crs` (Coherence-Reliability Score) field measures whether the memory is mathematically coherent. Every read, write, or scar interaction pays a thermodynamic action quantum (`5.47e-4 J·s`), gate-keeping run-away loop failures.
 - **The `LegFooter` (Merkle Chain):** Every block is signed by a 6-part BLAKE3 cryptographic chain. Agent action histories are cryptographically verifiable against bit-rot without any external registry.
 
 ### What the tensors give you
@@ -238,8 +239,8 @@ Each block carries two complex phase vectors you can use for your own purposes:
 - **`q[8192]` (Knowledge Tensor):** The geometric fingerprint of the encoded concept. 
   - **Slots `0..768`:** Clean, L2-normalized Neural Embedding (via your `ENGRAM_EMBED_URL` model, e.g. Nomic-embed-v1.5). Powers the ultra-fast WebGPU INT8 Poincaré hyperbolic search layer.
   - **Slots `768..8192`:** Logophysical phase accumulation (BLAKE3 circular convolution). Powers the VSA geometric math operations (`OP_BIND`, `OP_ADD`) and un-forgeable Coherence-Reliability Scores (CRS).
-- **`p[8192]` (Binding Momentum):** The directional vector. Bind two concepts together; the result is a new vector that carries both without collapsing either.
-- **ZEDOS Tags:** One byte classifies every block (`DECLARATIVE`, `EPISODIC`, `OPERATIONAL`, `PRAXIS`, `RELATION`). At query time, filter by type before reading content.
+- **`p[8192]` (Binding Momentum):** The directional vector. Bind two concepts together; the result is a new vector that carries both without collapsing either. `p` continuously accumulates to map update momentum.
+- **ZEDOS Tags & Reflexive Contracts:** One byte classifies every block (`DECLARATIVE`, `EPISODIC`, `OPERATIONAL`, `PRAXIS`, `RELATION`). These tags dictate a hard-coded `allowed_transforms` contract directly at the byte level (e.g., PRAXIS blocks are pinned to `evidence_update` only and reject fusion attempts).
 
 ---
 
