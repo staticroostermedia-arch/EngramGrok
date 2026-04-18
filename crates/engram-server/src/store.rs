@@ -463,6 +463,19 @@ impl StoreHandle {
         // Encode via backend (sets spin_state=0x01, energetics floor in encode.rs)
         let mut block = self.backend.encode(text);
 
+        // ── Euler characteristic gate — reject topologically corrupted vectors ─
+        if !engram_core::ops::check_euler_characteristic(&block.q) {
+            tracing::warn!(
+                "[EULER GATE] '{}' rejected — q-vector has too many phase discontinuities. \
+                 Possible embedding server failure. Block not written.",
+                concept
+            );
+            return Err(anyhow::anyhow!(
+                "Euler characteristic check failed for '{}' — vector appears corrupted",
+                concept
+            ));
+        }
+
         // ── Assign reflexive contract by ZEDOS tag ────────────────────────────
         assign_reflexive_contract(&mut block);
 
@@ -584,17 +597,52 @@ impl StoreHandle {
 
         let new_block = self.encode(new_text);
 
-        // --- PHASE 8.1: TEMPORAL MOMENTUM ---
-        // 1. Measure the semantic delta (The Rotation)
+        // ── Euler characteristic gate — reject corrupted new encoding ─────────
+        if !engram_core::ops::check_euler_characteristic(&new_block.q) {
+            tracing::warn!(
+                "[EULER GATE] update for '{}' rejected — new q-vector corrupted. Block unchanged.",
+                concept
+            );
+            return Err(anyhow::anyhow!(
+                "Euler gate: new encoding for '{}' has too many phase discontinuities",
+                concept
+            ));
+        }
+
+        // ── Phase 8.1: Temporal Momentum ──────────────────────────────────────
+        // 1. Measure semantic gradient magnitude (surprise signal)
+        let gradient_mag = 1.0 - engram_core::ops::cosine_similarity(&block.q, &new_block.q);
+
+        // 2. Compute p-tensor drift magnitude before update (for drift_mag signal)
+        let p_old = block.p;
         let drift_vector = op_deduce(&block.q, &new_block.q);
-        
-        // 2. Accumulate Momentum (Bind the drift into the p tensor)
         block.p = op_bind(&block.p, &drift_vector);
-        
-        // 3. Record Drift Velocity (dv) inside Logenergetics
-        let similarity = engram_core::ops::cosine_similarity(&block.q, &new_block.q);
-        block.energetics.dv = 1.0 - similarity; // High velocity if concept changed drastically
-        // ------------------------------------
+        let drift_mag = {
+            let mut d = 0.0f32;
+            for i in 0..8192 {
+                let dp_re = block.p[i].re - p_old[i].re;
+                let dp_im = block.p[i].im - p_old[i].im;
+                d += dp_re * dp_re + dp_im * dp_im;
+            }
+            (d / 8192.0).sqrt().clamp(0.0, 1.0)
+        };
+
+        // 3. Lyapunov Stability Tracker — replaces `dv = 1.0 - similarity`
+        let mut tracker = engram_core::ops::StabilityTracker::from_energetics(
+            block.energetics.alpha_a,
+            block.energetics.alpha_d,
+            block.energetics.alpha_r,
+        );
+        let (dv, h_out, h_in) = tracker.update(gradient_mag, drift_mag);
+
+        // Write updated Dirichlet weights and Lyapunov fields back to energetics
+        block.energetics.alpha_a = tracker.alpha_a;
+        block.energetics.alpha_d = tracker.alpha_d;
+        block.energetics.alpha_r = tracker.alpha_r;
+        block.energetics.dv      = dv;    // Lyapunov drift velocity ∈[0,1]
+        block.energetics.h_out   = h_out; // Φ(v) — current Lyapunov energy
+        block.energetics.h_in    = h_in;  // dL — convergence signal (−=converging)
+        // ─────────────────────────────────────────────────────────────────────
 
         // ── OP_ADD: Superpose new encoding onto existing q ────────────────────
         let merged_q = op_add(&block.q, &new_block.q);
@@ -607,11 +655,11 @@ impl StoreHandle {
         block.energetics.ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
         block.energetics.step = block.energetics.step.saturating_add(1);
-        
+
         // Each update pays the minimum action quantum (thermodynamic proof-of-work)
         block.energetics.heat_dissipated += 5.47e-4;
         block.energetics.crs  = block.crs_score;
-        
+
         // Advance Merkle chain to record this transformation
         let q_hash = blake3::hash(unsafe {
             std::slice::from_raw_parts(
@@ -624,8 +672,8 @@ impl StoreHandle {
 
         self.store(concept, block)?;
         Ok(format!(
-            "✓ '{}' updated via op_add — superposition depth: {} | drift velocity: {:.3}{}",
-            concept, new_count, 1.0 - similarity,
+            "✓ '{}' updated via op_add — superpositions: {} | dv: {:.3} | Φ: {:.4} | dL: {:.4}{}",
+            concept, new_count, dv, h_out, h_in,
             if !transform_allowed { " [CONTRACT WARNING: see log]" } else { "" }
         ))
     }

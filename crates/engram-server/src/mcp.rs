@@ -111,6 +111,10 @@ fn tool_list() -> Value {
                         "zedos_filter": {
                             "type": "string",
                             "description": "Optional: filter by memory type. One of: 'declarative', 'episodic', 'operational', 'praxis', 'relation'. Leave unset for all types."
+                        },
+                        "time_decay": {
+                            "type": "number",
+                            "description": "Optional: target memories from approximately N days ago by rotating the query vector temporally. Positive = past (e.g. 30.0 = match memories from 30 days ago). Leave unset for time-neutral search."
                         }
                     },
                     "required": ["query"]
@@ -533,6 +537,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let query = args["query"].as_str().unwrap_or("").trim().to_string();
             let k = args["k"].as_u64().unwrap_or(5).min(20) as usize;
             let zedos_filter = args["zedos_filter"].as_str().map(|s| s.trim().to_lowercase());
+            let time_decay = args["time_decay"].as_f64().map(|d| d as f32);
 
             // Phase 5: resolve optional ZEDOS tag filter
             let tag_filter: Option<u8> = zedos_filter.as_deref().and_then(|f| match f {
@@ -551,7 +556,17 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 });
             }
 
-            let mut results = store.lock().unwrap().recall(&query, k * 3); // over-fetch before filter
+            let mut results = {
+                let mut s = store.lock().unwrap();
+                if let Some(age_days) = time_decay {
+                    // Temporal phase path: encode, rotate query vector, search by vector
+                    let mut block = s.encode(&query);
+                    engram_core::ops::apply_temporal_phase(&mut block.q, age_days);
+                    s.query(&block.q, k * 3)
+                } else {
+                    s.recall(&query, k * 3) // over-fetch before filter
+                }
+            };
 
             // Apply ZEDOS tag filter if specified
             if let Some(tag) = tag_filter {
@@ -565,7 +580,9 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 });
             }
 
-            let mut output = format!("Found {} memories:\n\n", results.len());
+            let time_note = time_decay.map(|d| format!(" [temporal window: ~{:.0}d ago]", d))
+                .unwrap_or_default();
+            let mut output = format!("Found {} memories{}:\n\n", results.len(), time_note);
             for (i, mem) in results.iter().enumerate() {
                 let tag_name = match mem.zedos_tag {
                     0xD  => "DECLARATIVE",

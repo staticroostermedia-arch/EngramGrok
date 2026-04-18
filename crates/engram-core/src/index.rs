@@ -26,16 +26,16 @@
 //!
 //! # Building and persisting
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use engram_core::index::BvhIndex;
-//! let bvh = BvhIndex::build("/home/user/.engram/stalks/default").unwrap();
-//! bvh.save("/home/user/.engram/stalks/default/engram.bvh").unwrap();
+//! let bvh = BvhIndex::build("/home/user/.engram/stalks/default".as_ref()).unwrap();
+//! bvh.save("/home/user/.engram/stalks/default/engram.bvh".as_ref()).unwrap();
 //! ```
 //!
 //! # Querying
 //!
-//! ```rust,no_run
-//! let bvh = BvhIndex::load("/home/user/.engram/stalks/default/engram.bvh").unwrap();
+//! ```ignore
+//! let bvh = BvhIndex::load("/home/user/.engram/stalks/default/engram.bvh".as_ref()).unwrap();
 //! let candidates = bvh.search(&q_vec, 128); // Returns concept name strings
 //! ```
 

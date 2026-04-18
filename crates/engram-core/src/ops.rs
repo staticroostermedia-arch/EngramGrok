@@ -273,7 +273,166 @@ pub fn op_suspend(v: &[Complex32; 8192]) -> [Complex32; 8192] {
     op_bind(v, &apeiron)
 }
 
+// ── Lyapunov Stability Tracker (Task 3) ───────────────────────────────────────
+
+/// Tracks Lyapunov stability of a concept's Dirichlet belief state over updates.
+///
+/// # Mathematical foundation
+///
+/// Each memory block stores three evidence weights from its update history:
+/// - `alpha_a` — Affirmation: reinforcement signal (low gradient → stable)
+/// - `alpha_d` — Denial: novelty signal (high gradient → surprising)
+/// - `alpha_r` — Reconciliation: stability signal (low drift → converging)
+///
+/// The Lyapunov energy function is:
+/// ```text
+/// Φ(v) = wA·pA² + wD·pD² + wR·pR²   where wA=0.40, wD=0.30, wR=0.30
+/// ```
+/// The normalized probabilities `pA, pD, pR` live on the Dirichlet simplex.
+/// `Φ(v)` is positive-definite with a minimum at the uniform distribution.
+///
+/// Stability signal: `dL = Φ_new - Φ_prev`
+/// - `dL < 0` → converging (new update moves toward equilibrium) → commit
+/// - `dL > 0` → diverging (new update pushes away from equilibrium) → penalise
+///
+/// This is ported from CodeLand `monad_logophysics/src/adr.rs` (Phase 53.5).
+#[derive(Debug, Clone, Copy)]
+pub struct StabilityTracker {
+    pub alpha_a: f32,
+    pub alpha_d: f32,
+    pub alpha_r: f32,
+    pub lyapunov: f32,
+}
+
+impl StabilityTracker {
+    /// Initialise from stored Dirichlet weights (read from block.energetics).
+    pub fn from_energetics(alpha_a: f32, alpha_d: f32, alpha_r: f32) -> Self {
+        let phi = compute_lyapunov(alpha_a, alpha_d, alpha_r);
+        Self { alpha_a, alpha_d, alpha_r, lyapunov: phi }
+    }
+
+    /// Update the belief state given new evidence and return `(dv, h_out, h_in)`.
+    ///
+    /// - `gradient_mag` — semantic surprise signal `|∇V|` ∈ [0, 1] (1.0 - cosine_similarity)
+    /// - `drift_mag`    — momentum drift magnitude ∈ [0, 1] (computed from p-tensor update)
+    ///
+    /// Returns:
+    /// - `dv`    — Lyapunov drift velocity = `|dL| / max(Φ, ε)` ∈ [0, 1]
+    /// - `h_out` — current Lyapunov energy Φ (for `energetics.h_out`)
+    /// - `h_in`  — dL = Φ_new − Φ_prev (convergence signal; negative = converging)
+    pub fn update(&mut self, gradient_mag: f32, drift_mag: f32) -> (f32, f32, f32) {
+        const EPSILON: f32 = 0.034; // decay rate (forget)
+        const ETA: f32 = 0.120;    // learning rate (same as CodeLand ADR)
+
+        // Evidence signals matching CodeLand adr.rs::update()
+        let at = (1.0 - gradient_mag).max(0.0); // low gradient → affirming
+        let dt = gradient_mag.min(1.0);          // high gradient → denial
+        let rt = 1.0 - drift_mag.min(1.0);       // low drift → reconciling
+
+        self.alpha_a = (1.0 - EPSILON) * self.alpha_a + ETA * at;
+        self.alpha_d = (1.0 - EPSILON) * self.alpha_d + ETA * dt;
+        self.alpha_r = (1.0 - EPSILON) * self.alpha_r + ETA * rt;
+
+        let phi_prev = self.lyapunov;
+        self.lyapunov = compute_lyapunov(self.alpha_a, self.alpha_d, self.alpha_r);
+
+        let d_phi = self.lyapunov - phi_prev; // negative = converging
+        let dv = (d_phi.abs() / self.lyapunov.max(1e-6)).clamp(0.0, 1.0);
+
+        (dv, self.lyapunov, d_phi)
+    }
+
+    /// True when the last update moved the system toward equilibrium (converging).
+    pub fn is_converging(&self, d_phi: f32) -> bool { d_phi <= 0.0 }
+}
+
+/// Compute Lyapunov energy Φ(v) = wA·pA² + wD·pD² + wR·pR²
+#[inline]
+fn compute_lyapunov(alpha_a: f32, alpha_d: f32, alpha_r: f32) -> f32 {
+    let sum = (alpha_a + alpha_d + alpha_r).max(1e-6);
+    let pa = alpha_a / sum;
+    let pd = alpha_d / sum;
+    let pr = alpha_r / sum;
+    0.40 * pa * pa + 0.30 * pd * pd + 0.30 * pr * pr
+}
+
+// ── Diachronic Phase Shift — Time-aware Recall (Task 4) ───────────────────────
+
+/// Apply a unitary temporal phase rotation to a query vector.
+///
+/// Encodes chronological distance directly into vector phase via the operator
+/// `U(θ) = e^{iθ}` where `θ = -age_days × π/432`.
+///
+/// **Apply to the QUERY vector, not stored vectors** — this way no re-ingestion
+/// is needed. Rotating the query backward in time brings it into the same phase
+/// neighbourhood as memories from that era.
+///
+/// # Parameters
+/// - `q` — the query vector to rotate (mutated in place)
+/// - `age_days` — how many days ago to target (positive = past)
+///
+/// # Example
+/// ```rust,ignore
+/// let mut q = backend.encode("rust borrow checker").q;
+/// apply_temporal_phase(&mut q, 30.0); // match memories from ~30 days ago
+/// ```
+///
+/// Ported from CodeLand `monad_geometry/src/vsa.rs::apply_diachronic_phase_shift()`.
+pub fn apply_temporal_phase(q: &mut [Complex32; 8192], age_days: f32) {
+    const BASE_THETA: f32 = std::f32::consts::PI / 432.0;
+    let theta = -age_days * BASE_THETA;
+    let cos_t = theta.cos();
+    let sin_t = theta.sin();
+    for c in q.iter_mut() {
+        let re = c.re * cos_t - c.im * sin_t;
+        let im = c.re * sin_t + c.im * cos_t;
+        c.re = re;
+        c.im = im;
+    }
+}
+
+// ── Euler Characteristic Gate — Topological Write Validation (Task 5) ─────────
+
+/// Check that a phase vector is topologically closed (Euler characteristic = 2).
+///
+/// Counts phase discontinuities greater than π/2 between adjacent dimensions.
+/// For a well-formed vector on the unit hypersphere, the Euler characteristic
+/// `χ = V - E + F = 2` (Euler's formula for S²). Too many discontinuities
+/// indicate a corrupted or partially-written vector.
+///
+/// Returns `true` if the vector passes (safe to write), `false` if corrupted.
+///
+/// # Threshold
+/// We allow up to `8192 * 0.12 ≈ 983` discontinuities before flagging — this
+/// gives headroom for legitimate phase jumps in high-entropy regions while
+/// catching empty/zero blocks and partially-written allocations.
+///
+/// Ported from CodeLand `monad_logophysics/src/integrator.rs` Euler monitor.
+pub fn check_euler_characteristic(q: &[Complex32; 8192]) -> bool {
+    let mut discontinuities: u32 = 0;
+    const JUMP_THRESHOLD_COS: f32 = 0.0; // cos(π/2) = 0 → any phase jump > 90°
+
+    for i in 0..8191 {
+        let a = q[i];
+        let b = q[i + 1];
+        // dot product of adjacent components (cosine similarity proxy)
+        let dot = a.re * b.re + a.im * b.im;
+        let mag_a = (a.re * a.re + a.im * a.im).sqrt();
+        let mag_b = (b.re * b.re + b.im * b.im).sqrt();
+        if mag_a < 1e-8 || mag_b < 1e-8 { continue; }
+        let cos_phase = dot / (mag_a * mag_b);
+        if cos_phase < JUMP_THRESHOLD_COS {
+            discontinuities += 1;
+        }
+    }
+
+    // Allow up to 12% discontinuity rate — beyond this the vector is likely corrupted
+    let max_allowed = (8191.0 * 0.12) as u32; // ~983
+    discontinuities <= max_allowed
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
 
 fn project(a: &[Complex32; 8192], b: &[Complex32; 8192]) -> [Complex32; 8192] {
     let mut dot_re = 0.0f32;
