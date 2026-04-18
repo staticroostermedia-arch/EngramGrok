@@ -27,7 +27,7 @@ use engram_gpu::backend::CudaBackend;
 #[cfg(feature = "metal")]
 use engram_gpu::metal_backend::MetalBackend;
 use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION};
-use engram_core::ops::{op_add, op_bind};
+use engram_core::ops::{op_add, op_bind, op_deduce};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -592,39 +592,36 @@ impl StoreHandle {
             );
         }
 
-        let old_crs = block.crs_score;
         let new_block = self.encode(new_text);
+
+        // --- PHASE 8.1: TEMPORAL MOMENTUM ---
+        // 1. Measure the semantic delta (The Rotation)
+        let drift_vector = op_deduce(&block.q, &new_block.q);
+        
+        // 2. Accumulate Momentum (Bind the drift into the p tensor)
+        block.p = op_bind(&block.p, &drift_vector);
+        
+        // 3. Record Drift Velocity (dv) inside Logenergetics
+        let similarity = engram_core::ops::cosine_similarity(&block.q, &new_block.q);
+        block.energetics.dv = 1.0 - similarity; // High velocity if concept changed drastically
+        // ------------------------------------
 
         // ── OP_ADD: Superpose new encoding onto existing q ────────────────────
         let merged_q = op_add(&block.q, &new_block.q);
         block.q = merged_q;
 
-        // ── OP_BIND soft-accumulate: momentum p tracks binding history ────────
-        // Each update adds a soft (0.1-weight) binding of new q into p.
-        // p is renormalized to prevent magnitude runaway.
-        for i in 0..8192 {
-            block.p[i].re += new_block.q[i].re * 0.1;
-            block.p[i].im += new_block.q[i].im * 0.1;
-        }
-        let p_norm: f32 = block.p.iter().map(|c| c.re * c.re + c.im * c.im).sum::<f32>().sqrt();
-        if p_norm > 1e-8 {
-            for c in block.p.iter_mut() { c.re /= p_norm; c.im /= p_norm; }
-        }
-
-        // ── Superposition counter ─────────────────────────────────────────────
         let new_count = block.superposition_count.saturating_add(1);
         block.superposition_count = new_count;
 
         // ── Energetics advancement ────────────────────────────────────────────
-        let now_secs = std::time::SystemTime::now()
+        block.energetics.ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-        block.energetics.ts   = now_secs;
         block.energetics.step = block.energetics.step.saturating_add(1);
+        
         // Each update pays the minimum action quantum (thermodynamic proof-of-work)
         block.energetics.heat_dissipated += 5.47e-4;
-        // Lyapunov drift velocity: |ΔCRS| per update step
-        block.energetics.dv   = (new_block.crs_score - old_crs).abs();
         block.energetics.crs  = block.crs_score;
+        
         // Advance Merkle chain to record this transformation
         let q_hash = blake3::hash(unsafe {
             std::slice::from_raw_parts(
@@ -637,8 +634,8 @@ impl StoreHandle {
 
         self.store(concept, block)?;
         Ok(format!(
-            "✓ '{}' updated via op_add — superposition depth: {}{}",
-            concept, new_count,
+            "✓ '{}' updated via op_add — superposition depth: {} | drift velocity: {:.3}{}",
+            concept, new_count, 1.0 - similarity,
             if !transform_allowed { " [CONTRACT WARNING: see log]" } else { "" }
         ))
     }

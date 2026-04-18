@@ -83,7 +83,16 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
 
                                         if !items.is_empty() {
                                             for item in items {
-                                                if let Err(e) = lock.remember(&item.concept, &item.embed_label()) {
+                                                let mut block = lock.encode(&item.embed_label());
+
+                                                // Map 2D file coordinates into the 3D logophysical bounding box
+                                                block.aabb_min = [item.start_pos.0 as f32, item.start_pos.1 as f32, 0.0];
+                                                block.aabb_max = [item.end_pos.0 as f32,   item.end_pos.1 as f32,   0.0];
+
+                                                // Store full unbroken source in Provlog
+                                                engram_core::storage::write_provlog(&mut block, &item.full_source);
+
+                                                if let Err(e) = lock.store(&item.concept, block) {
                                                     error!("Daemon failed to auto-sync AST {}: {}", item.concept, e);
                                                 } else {
                                                     debug!("Daemon: Auto-synced AST {}", item.concept);

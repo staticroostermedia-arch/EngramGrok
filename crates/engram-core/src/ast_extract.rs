@@ -48,6 +48,9 @@ pub struct AstItem {
     pub signature: String,
     pub full_source: String,
     pub concept: String,
+    // --- PHASE 8.2: EMBODIMENT ---
+    pub start_pos: (usize, usize),
+    pub end_pos: (usize, usize),
 }
 
 impl AstItem {
@@ -246,6 +249,11 @@ pub fn extract_ast_items(file_path: &str, source: &str) -> Vec<AstItem> {
             if !name.is_empty() {
                 let start = node.start_byte();
                 let end = node.end_byte();
+                
+                // Extract 2D coordinates for the AABB mapping
+                let start_pos = (node.start_position().row, node.start_position().column);
+                let end_pos = (node.end_position().row, node.end_position().column);
+
                 let full_source = std::str::from_utf8(&source_bytes[start..end]).unwrap_or("").to_string();
 
                 // Signature is roughly the first line or two of the node
@@ -271,6 +279,8 @@ pub fn extract_ast_items(file_path: &str, source: &str) -> Vec<AstItem> {
                     signature,
                     full_source,
                     concept,
+                    start_pos,
+                    end_pos,
                 });
             }
         }

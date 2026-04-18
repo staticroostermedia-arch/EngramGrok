@@ -149,6 +149,17 @@ fn tool_list() -> Value {
                 }
             },
             {
+                "name": "mcp_engram_session_end",
+                "description": "Commit session to long-term memory. Stores summary and calculates ADR Thermodynamics (Confidence/Frustration).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "summary": { "type": "string", "description": "Agent's summary of the session" }
+                    },
+                    "required": ["summary"]
+                }
+            },
+            {
                 "name": "mcp_engram_pin",
                 "description": "Lock a project management concept into the manifold so the Autophagy Daemon never decays it.",
                 "inputSchema": {
@@ -543,6 +554,52 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             })
         }
 
+        "mcp_engram_session_end" => {
+            let summary = args["summary"].as_str().unwrap_or("").trim().to_string();
+            if summary.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: summary required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            
+            // Calculate average CRS of concepts touched this session
+            let recent_accesses = lock.access_index.recent(50);
+            let mut total_crs = 0.0;
+            let mut count = 0;
+            
+            for (concept, _) in &recent_accesses {
+                if let Some(b) = lock.fetch_block(concept) {
+                    total_crs += b.crs_score;
+                    count += 1;
+                }
+            }
+            let avg_crs = if count > 0 { total_crs / count as f32 } else { 0.5 };
+
+            // --- PHASE 8.3: ADR THERMODYNAMICS ---
+            let mut session_block = lock.encode(&summary);
+            session_block.zedos_tag = engram_core::types::ZEDOS_PRAXIS;
+
+            if avg_crs > 0.85 {
+                session_block.energetics.alpha_a = 0.8; // Affirm (High Confidence)
+                session_block.energetics.alpha_d = 0.1;
+            } else {
+                session_block.energetics.alpha_a = 0.2;
+                session_block.energetics.alpha_d = 0.7; // Deny (Frustration/Debugging)
+            }
+            session_block.energetics.heat_dissipated += 5.47e-4 * count as f32; 
+            session_block.crs_score = 0.80; // Standard PRAXIS baseline
+
+            let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            let key = format!("session_end_{}", timestamp);
+            
+            let alpha_a = session_block.energetics.alpha_a;
+            let alpha_d = session_block.energetics.alpha_d;
+            
+            match lock.store(&key, session_block) {
+                Ok(_) => json!({ "content": [{ "type": "text", "text": format!("✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})", avg_crs, alpha_a, alpha_d) }] }),
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            }
+        }
         "mcp_engram_pin" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
             let mut lock = store.lock().unwrap();
