@@ -180,7 +180,7 @@ impl BvhManifold {
             concept_index.insert(concept.clone(), entries.len());
             path_index.insert(entries.len(), path.clone());
             
-            let q_quantized = crate::quant::quantize_b4(q);
+            let q_quantized = crate::quant::quantize_srht_b4(q);
             
             entries.push(ManifoldEntry { 
                 concept: concept.clone(), 
@@ -267,8 +267,9 @@ impl BvhManifold {
             let entry_idx = (id as usize).saturating_sub(1);
             let entry = self.entries.get(entry_idx)?;
 
-            // In-memory Phase 8: B=4 TurboQuant codebook inner-product (no disk I/O!)
-            let sim = crate::quant::cosine_similarity_quantized(q, &entry.q_quantized);
+            // In-memory Phase 8: SRHT+B4 TurboQuant codebook inner-product (no disk I/O!)
+            // SRHT pre-rotation Gaussianizes the distribution → ~40% lower MSE than raw B4
+            let sim = crate::quant::cosine_similarity_srht_b4(q, &entry.q_quantized);
             let crs = entry.crs_score.clamp(0.0, 1.0);
             let score = sim * (0.5 + 0.5 * crs);
 

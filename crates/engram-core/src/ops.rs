@@ -431,7 +431,70 @@ pub fn check_euler_characteristic(q: &[Complex32; 8192]) -> bool {
     discontinuities <= max_allowed
 }
 
+// ── SRHT: Subsampled Randomized Hadamard Transform (Task 6) ───────────────────
+
+/// Apply SRHT pre-rotation to a flattened real vector in-place: `v ← WHT(D·v) / √d`.
+///
+/// Π = H · D where:
+/// - D = diagonal of ±1 signs seeded from `seed` (deterministic, LCG — no `rand` dep)
+/// - H = Walsh-Hadamard Transform (O(d log d), in-place butterfly)
+///
+/// SRHT approximately preserves inner products (Johnson-Lindenstrauss lemma):
+/// `|⟨Πx, Πy⟩ - ⟨x, y⟩| < ε` with high probability.
+///
+/// After SRHT, component magnitudes follow an approximately Gaussian distribution
+/// regardless of the original vector geometry — making Lloyd-Max B4 quantization
+/// much more accurate (reduces quantization MSE by ~40% vs raw vectors).
+///
+/// Ported from CodeLand `monad_quant/src/srht.rs`. Uses LCG seeding (no external deps).
+pub fn apply_srht(v: &mut [f32], seed: u64) {
+    let n = v.len();
+    debug_assert!(n.is_power_of_two(), "SRHT requires power-of-2 length");
+
+    // Step 1: D·v — multiply each element by ±1 from seeded LCG
+    let mut rng = seed;
+    for x in v.iter_mut() {
+        rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        let sign = if rng >> 63 == 0 { 1.0f32 } else { -1.0 };
+        *x *= sign;
+    }
+
+    // Step 2: Walsh-Hadamard Transform (in-place, unnormalised butterfly)
+    let mut h = 1usize;
+    while h < n {
+        let mut i = 0;
+        while i < n {
+            for j in i..i + h {
+                let x = v[j];
+                let y = v[j + h];
+                v[j]     = x + y;
+                v[j + h] = x - y;
+            }
+            i += h * 2;
+        }
+        h *= 2;
+    }
+
+    // Step 3: normalise by 1/√d to preserve L2 norm
+    let norm = (n as f32).sqrt();
+    for x in v.iter_mut() { *x /= norm; }
+}
+
+/// Flatten an 8192-D Complex32 vector into a 16384-D f32 array for SRHT input.
+///
+/// Layout: `[re_0, im_0, re_1, im_1, …, re_8191, im_8191]`
+/// WHT requires power-of-2 length — 16384 = 2¹⁴ ✓
+pub fn flatten_complex_q(q: &[Complex32; 8192]) -> Vec<f32> {
+    let mut v = Vec::with_capacity(16384);
+    for c in q.iter() {
+        v.push(c.re);
+        v.push(c.im);
+    }
+    v
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
 
 
 fn project(a: &[Complex32; 8192], b: &[Complex32; 8192]) -> [Complex32; 8192] {

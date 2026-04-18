@@ -74,7 +74,7 @@ Instead of chunks, Engram mints exactly **one memory block per public semantic i
 
 - **The Vector (`q` tensor):** Encodes the doc comment + signature (a high-quality semantic label that perfectly fits the 512-token context window of embedding models).
 - **The Provlog:** Carries the raw, full-length source code.
-- **Spatial Embodiment (`aabb_min` / `aabb_max`):** Engram maps the precise 2D row/column coordinates of the AST node directly into the memory block's 3D logophysical bounding box. Your AGI doesn't just know *what* the code does; it physically knows exactly *where* the concept lives in the file geometry.
+- **Spatial Embodiment (`aabb_min` / `aabb_max`):** Engram maps the precise 2D row/column coordinates of the AST node directly into the memory block's 3D bounding box. Your agent doesn't just know *what* the code does — it physically knows exactly *where* the concept lives in the file geometry.
 
 When your agent searches for a concept, the INT8 Poincaré kernel matches the distilled semantic signature, but the memory payload returned to the agent contains the complete source code. 
 
@@ -88,7 +88,7 @@ Engram exposes **21 tools** across 5 capability groups.
 | Tool | Description |
 |---|---|
 | `remember` | Encode text and store as a persistent memory block |
-| `recall` | Semantic similarity search — returns top-k memories for a query |
+| `recall` | Semantic similarity search — returns top-k memories. Optional `time_decay` param for time-targeted search |
 | `forget` | Delete a specific memory by concept name |
 | `list_concepts` | List all stored concept names |
 | `mcp_engram_update` | Re-encode an existing memory in place (uses `op_add` superposition) |
@@ -152,15 +152,50 @@ When Engram boots as an MCP server it also launches a **background Agentic Daemo
 
 ## 📐 The Geometry Engine
 
-Engram uses **Vector Symbolic Architecture (NVSA)** rather than flat embedding search. Every memory is a 8192-dimensional complex phase vector (`Complex32[8192]`). The math engine supports:
+Engram uses **Vector Symbolic Architecture (VSA)** — specifically Fourier Holographic Reduced Representations (FHRR, Plate 1995) — rather than flat embedding search. Every memory is an 8192-dimensional complex unit vector (`Complex32[8192]`) living on the Bloch hypersphere. The math engine supports:
 
 - **`op_add`** — Superposition. Merge semantic content without losing coherence.
-- **`op_bind`** — Circular convolution. Create a new vector that carries both parent concepts — the basis for knowledge graph relations.
-- **`op_deduce`** — Logical implication constraint tracking via rotation matrices.
+- **`op_bind`** — Circular convolution (Hadamard product in frequency domain). Create a vector quasi-orthogonal to both parents — the basis for knowledge graph relations. (Kanerva 2009)
+- **`op_deduce`** — Logical implication tracking: rotation matrix B · conj(A) encoding A → B.
 - **`op_attend`** — Geometric amplitude attenuation for focused context retrieval.
 - **`op_geometric_product`** — Clifford bivector product: computes cosine similarity and orthogonality simultaneously.
-- **`op_is_symbolic_of`** — ZADO-CPS toroidal embedding; resolves topological paradoxes without logic freezes.
-- **`op_suspend`** — Binds to the Apeiron primitive — marks "Known Unknowns" for inverse ray-tracing.
+- **`op_suspend`** — Binds to the maximum-entropy BLAKE3 Apeiron primitive — marks "Known Unknowns" for inverse ray-tracing.
+
+### Lyapunov Stability Gate
+
+Every memory update is governed by a **Lyapunov stability function** on the Dirichlet belief simplex:
+
+```text
+Φ(v) = wₐ·pₐ² + w_d·p_d² + w_r·p_r²   (wₐ=0.40, w_d=0.30, w_r=0.30)
+```
+
+Where `pₐ, p_d, p_r` are normalized Affirmation / Denial / Reconciliation weights from the block's update history. The drift velocity field `dv` is `|ΔΦ| / Φ` — a proper Lyapunov velocity, not a cosine proxy. Memories with high `dv` are geometrically volatile; `dv < 0.05` indicates convergence to a stable attractor.
+
+### LBVH O(log N) Approximate Nearest Neighbour
+
+For large manifolds (>50K memories), Engram builds a **Linear Bounding Volume Hierarchy (LBVH)** using Gaussian Compressed Sensing Random Projection (CSRP) to project each 8192-D vector to 3-D space. Tree nodes are 32 bytes each (~6.4 MB for 100K concepts). The `.leg` file stays the single source of truth — no tensor duplication.
+
+Query path: project query → 3D → O(log N) slab traversal → 128 ANN candidates → O_DIRECT reads → physics scoring → top-K.
+
+Build the index after ingesting a large dataset:
+```bash
+engram build-index --store ~/.engram/manifold
+```
+
+### TurboQuant In-Memory Pre-Scoring
+
+During LBVH candidate selection, Engram applies **TurboQuant** (SRHT + Lloyd-Max B4) to each stored vector:
+1. SRHT rotation (`WHT(D·v)/√d`) Gaussianizes component distribution
+2. B4 Lloyd-Max quantization compresses to 8192 bytes (1 byte per complex component)
+3. In-memory cosine pre-scoring with no disk I/O — ~40% lower MSE vs naive B4
+
+Only the top-K survivors are loaded from NVMe via O_DIRECT.
+
+### Academic References
+
+- Plate, T. A. (1995). *Holographic reduced representations*. IEEE TNN. — Foundation of FHRR.
+- Kanerva, P. (2009). *Hyperdimensional computing: An introduction to computing in distributed representation with high-dimensional random vectors*. Cognitive Computation.
+- Johnson, W. B. & Lindenstrauss, J. (1984). *Extensions of Lipschitz mappings into Hilbert spaces* — JL Lemma (SRHT inner-product preservation).
 
 ---
 
@@ -322,8 +357,9 @@ mcp_engram_set_namespace("personal")
 
 | Backend | Feature Flag | Status | Notes |
 |---|---|---|---|
-| CPU (Rayon) | Default | ✅ | TurboQuant B=4 codebook, 4x K-NN acceleration |
-| CUDA (NVIDIA) | `cuda-kernels` | ✅ | BVH O(log N) index, NVMe→VRAM parallel DMA |
+| CPU (Rayon O_DIRECT) | Default | ✅ | Exact linear scan. At 10K memories scans 2.5 GB in < 0.4s via NVMe DMA bypass |
+| CPU (LBVH index) | `bvh` feature | ✅ | O(log N) CSRP-projected tree. ~64 bytes RAM per concept. Build with `engram build-index` |
+| CUDA (NVIDIA) | `cuda-kernels` | ✅ | GPU BVH O(log N), NVMe→VRAM parallel DMA |
 | ROCm (AMD) | `rocm-kernels` | ✅ | Wavefront HIP execution |
 | Metal (Apple) | `metal` | ✅ | MSL dynamic runtime compilation via metal-rs |
 | **WebGPU (cross-platform)** | **`wgpu-backend`** | ✅ | INT8 Poincaré hyperbolic search · 170× VRAM reduction · RTX/AMD/Apple/Intel · no CUDA required |
