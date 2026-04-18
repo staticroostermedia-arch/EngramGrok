@@ -8,3 +8,4 @@ data/manifold/
 
 .DS_Store
 IMPLEMENTATION-PLAN.md
+.venv/
