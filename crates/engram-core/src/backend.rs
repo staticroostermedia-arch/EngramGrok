@@ -185,7 +185,7 @@ impl VsaBackend for CpuBackend {
                     .filter_map(|concept| {
                         let path = self.manifold_dir.join(format!("{}.leg", concept));
                         let block = crate::storage::read_block(&path).ok()?;
-                        Some(score_block(concept.clone(), query, *block))
+                        Some(score_block(concept.clone(), query, &*block))
                     })
                     .collect();
                 scored.sort_by(|a, b|
@@ -210,7 +210,7 @@ impl VsaBackend for CpuBackend {
                 if path.extension().and_then(|e| e.to_str()) != Some("leg") { return None; }
                 let concept = path.file_stem()?.to_str()?.to_string();
                 let block = crate::storage::read_block(&path).ok()?;
-                Some(score_block(concept, query, *block))
+                Some(score_block(concept, query, &*block))
             })
             .collect();
 
@@ -356,7 +356,7 @@ impl VsaBackend for SheafBackend {
 fn score_block(
     concept: String,
     query: &[Complex32; 8192],
-    block: crate::types::HolographicBlock,
+    block: &crate::types::HolographicBlock,
 ) -> Memory {
     let base_sim = cosine_similarity(query, &block.q);
     let crs_weight = 0.85 + (block.crs_score * 0.15);
