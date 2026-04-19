@@ -22,10 +22,13 @@
 //! only — the storage-layer expression of `InjectScar { magnitude }` from the M-NOL.
 
 use engram_core::backend::{CpuBackend, Memory, VsaBackend, SheafBackend};
-#[cfg(feature = "cuda")]
+// GPU backends — conditionally included based on auto-detected hardware (see engram-gpu/build.rs)
+#[cfg(engram_backend_cuda)]
 use engram_gpu::backend::CudaBackend;
-#[cfg(feature = "metal")]
+#[cfg(engram_backend_metal)]
 use engram_gpu::metal_backend::MetalBackend;
+#[cfg(engram_backend_wgpu)]
+use engram_gpu::wgpu_backend::WgpuBackend;
 use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION};
 use engram_core::ops::{op_add, op_bind, op_deduce};
 use std::collections::HashMap;
@@ -243,10 +246,12 @@ fn assign_reflexive_contract(block: &mut engram_core::types::Leg3Pointer) {
 // ── Backend enum ─────────────────────────────────────────────────────────────
 
 enum Backend {
-    #[cfg(feature = "cuda")]
+    #[cfg(engram_backend_cuda)]
     Gpu(CudaBackend),
-    #[cfg(feature = "metal")]
+    #[cfg(engram_backend_metal)]
     Metal(MetalBackend),
+    #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+    Wgpu(WgpuBackend),
     Single(CpuBackend),
     Sheaf(SheafBackend),
 }
@@ -254,19 +259,21 @@ enum Backend {
 impl Backend {
     fn recall(&self, q: &str, k: usize) -> Vec<Memory> {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.recall(q, k),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.recall(q, k),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.recall(q, k),
             Backend::Single(b) => b.recall(q, k),
             Backend::Sheaf(b) => b.recall(q, k),
         }
     }
     fn forget(&self, concept: &str) -> Result<()> {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.forget(concept),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.forget(concept),
             Backend::Single(b) => b.forget(concept),
             Backend::Sheaf(b) => b.forget(concept),
@@ -274,9 +281,9 @@ impl Backend {
     }
     fn list(&self) -> Vec<String> {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.list(),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.list(),
             Backend::Single(b) => b.list(),
             Backend::Sheaf(b) => b.list(),
@@ -284,9 +291,9 @@ impl Backend {
     }
     fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.fetch_block(concept),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.fetch_block(concept),
             Backend::Single(b) => b.fetch_block(concept),
             Backend::Sheaf(b) => b.fetch_block(concept),
@@ -294,9 +301,9 @@ impl Backend {
     }
     fn fetch(&self, concept: &str) -> Option<Box<[engram_core::Complex32; 8192]>> {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.fetch(concept),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.fetch(concept),
             Backend::Single(b) => b.fetch(concept),
             Backend::Sheaf(b) => b.fetch(concept),
@@ -304,9 +311,9 @@ impl Backend {
     }
     fn encode(&self, text: &str) -> Leg3Pointer {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.encode(text),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.encode(text),
             Backend::Single(b) => b.encode(text),
             Backend::Sheaf(b) => b.encode(text),
@@ -314,9 +321,9 @@ impl Backend {
     }
     fn query(&self, q: &[engram_core::Complex32; 8192], k: usize) -> Vec<Memory> {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.query(q, k),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.query(q, k),
             Backend::Single(b) => b.query(q, k),
             Backend::Sheaf(b) => b.query(q, k),
@@ -324,9 +331,9 @@ impl Backend {
     }
     fn store(&self, concept: &str, block: Leg3Pointer) -> Result<()> {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.store(concept, block),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.store(concept, block),
             Backend::Single(b) => b.store(concept, block),
             Backend::Sheaf(b) => b.store(concept, block),
@@ -334,9 +341,9 @@ impl Backend {
     }
     fn set_active_stalk(&self, name: &str) -> bool {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(_) => false,
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(_) => false,
             Backend::Single(_) => false,
             Backend::Sheaf(b) => b.set_active_stalk(name),
@@ -344,9 +351,9 @@ impl Backend {
     }
     fn stalk_names(&self) -> Vec<String> {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(_) => vec!["default".to_string()],
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(_) => vec!["default".to_string()],
             Backend::Single(_) => vec!["default".to_string()],
             Backend::Sheaf(b) => b.stalk_names().into_iter().map(|s| s.to_string()).collect(),
@@ -354,9 +361,9 @@ impl Backend {
     }
     fn active_stalk_name(&self) -> String {
         match self {
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             Backend::Gpu(_) => "default".to_string(),
-            #[cfg(feature = "metal")]
+            #[cfg(engram_backend_metal)]
             Backend::Metal(_) => "default".to_string(),
             Backend::Single(_) => "default".to_string(),
             Backend::Sheaf(b) => b.active_stalk_name().to_string(),
@@ -395,7 +402,7 @@ impl StoreHandle {
                         (s.name.clone(), PathBuf::from(shellexpand::tilde(&s.path).into_owned()))
                     }).collect();
 
-                    #[cfg(feature = "cuda")]
+                    #[cfg(engram_backend_cuda)]
                     let sheaf = {
                         tracing::info!("engram-gpu: Sheaf × CudaBackend — {} stalks with BVH K-NN", config.stalks.len());
                         let boxed_stalks: Vec<(String, Box<dyn engram_core::backend::VsaBackend + Send + Sync>)> = stalks
@@ -426,7 +433,7 @@ impl StoreHandle {
             }
         } else {
             // Use GPU-accelerated backend when compiled with appropriate features
-            #[cfg(feature = "cuda")]
+            #[cfg(engram_backend_cuda)]
             {
                 tracing::info!("engram-gpu: CudaBackend selected (BVH + CUDA cosine kernels)");
                 Backend::Gpu(CudaBackend::new(&expanded))

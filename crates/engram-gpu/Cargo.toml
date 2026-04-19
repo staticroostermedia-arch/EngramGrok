@@ -9,12 +9,10 @@ repository.workspace = true
 
 [features]
 default      = []
-# Enable CUDA kernel compilation via nvcc in build.rs
-cuda-kernels = []
-# Enable ROCm/HIP kernel compilation via hipcc in build.rs
-rocm-kernels = []
-# Enable WebGPU (wgpu) INT8 Poincaré search backend — cross-platform, no CUDA required
-wgpu-backend = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
+# These legacy flags are still accepted but auto-detection via build.rs is the
+# preferred path — just `cargo install engram-server` and the best backend is chosen.
+cuda-kernels = []   # kept for explicit override: --features cuda-kernels
+rocm-kernels = []   # kept for explicit override: --features rocm-kernels
 
 [dependencies]
 engram-core  = { path = "../engram-core", default-features = false }
@@ -24,10 +22,11 @@ tracing      = { workspace = true }
 shellexpand  = { workspace = true }
 libc         = { workspace = true }
 rayon        = { workspace = true }
-# wgpu-backend feature deps (optional — zero overhead when feature is off)
-wgpu     = { version = "22", optional = true }
-pollster = { version = "0.3", optional = true }   # sync executor for wgpu init/readback
-bytemuck = { version = "1",   optional = true }   # safe &[u32] ↔ &[u8] casts for GPU buffers
+# wgpu is always compiled — it's the cross-platform fallback for any GPU without CUDA/ROCm/Metal.
+# On machines with CUDA or ROCm, the GPU kernel path is preferred at runtime.
+wgpu     = "22"
+pollster = "0.3"   # sync executor for wgpu init/readback
+bytemuck = "1"     # safe &[u32] ↔ &[u8] casts for GPU buffers
 
 [build-dependencies]
 # cc is used to compile the CUDA kernels when cuda-kernels feature is enabled

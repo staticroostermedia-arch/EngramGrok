@@ -13,14 +13,16 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Enable GPU-accelerated BVH K-NN backend + CUDA cosine kernels
-cuda = ["dep:engram-gpu", "engram-gpu/cuda-kernels"]
-# Enable Metal GPU backend for Apple Silicon (macOS)
-metal = ["dep:engram-gpu"]
+# Legacy override flags — seldom needed since build.rs auto-detects the best backend.
+# Use these only to force a specific backend on a multi-GPU machine:
+cuda  = ["engram-gpu/cuda-kernels"]   # force CUDA even if ROCm is also present
+rocm  = ["engram-gpu/rocm-kernels"]   # force ROCm even if CUDA is also present
+metal = []                             # macOS Metal: auto-detected by build.rs; kept for compat
 
 [dependencies]
 engram-core  = { path = "../engram-core", features = ["universal-ast"] }
-engram-gpu   = { path = "../engram-gpu", optional = true }
+# engram-gpu is always included — build.rs auto-selects CUDA/ROCm/Metal/WebGPU/CPU
+engram-gpu   = { path = "../engram-gpu" }
 
 # Async runtime
 tokio        = { workspace = true }
