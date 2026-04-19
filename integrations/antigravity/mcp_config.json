@@ -2,7 +2,46 @@
   "mcpServers": {
     "engram": {
       "command": "engram",
-      "args": ["mcp", "--store", "~/.engram/manifold"],
+      "args": ["mcp", "--store", "~/.engram/stalks/"],
+      "env": {
+        "ENGRAM_EMBED_URL": "http://localhost:8086/v1/embeddings"
+      },
+      "disabled": false
+    },
+    "filesystem": {
+      "command": "mcp-server-filesystem",
+      "args": ["~/Documents", "~/.engram"],
+      "disabled": false
+    },
+    "git": {
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "."],
+      "disabled": false
+    },
+    "github": {
+      "command": "mcp-server-github",
+      "args": [],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "disabled": false
+    },
+    "sqlite": {
+      "command": "mcp-server-sqlite",
+      "args": ["--db-path", "~/.engram/engram_meta.db"],
+      "disabled": false
+    },
+    "puppeteer": {
+      "command": "mcp-server-puppeteer",
+      "args": [],
+      "disabled": false
+    },
+    "brave-search": {
+      "command": "mcp-server-brave-search",
+      "args": [],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      },
       "disabled": false
     }
   }
