@@ -74,6 +74,20 @@ fn tool_list() -> Value {
     json!({
         "tools": [
             {
+                "name": "mcp_engram_read_concept",
+                "description": "TRIGGER: Use this after `recall` when you need to read the 100% full, un-truncated text body of a specific memory block. `recall` only provides a 512-character snippet to save context space; this tool bypasses search and fetches the complete original document.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "The exact concept name to read (e.g., 'auth_routing_bug')"
+                        }
+                    },
+                    "required": ["concept"]
+                }
+            },
+            {
                 "name": "remember",
                 "description": "Encode text and store it as a persistent memory under a concept name. \
                                 Use this to save facts, context, or information for later retrieval.",
@@ -607,6 +621,24 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
             debug!("recall '{}' → {} results", query, results.len());
             json!({ "content": [{ "type": "text", "text": output.trim() }] })
+        }
+
+        "mcp_engram_read_concept" => {
+            let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
+            if concept.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: concept is required." }], "isError": true });
+            }
+
+            let lock = store.lock().unwrap();
+            // Strip sheaf namespace prefix if the agent included it
+            let raw_concept = concept.split_once("::").map_or(concept.as_str(), |(_, r)| r);
+            
+            if let Some(block) = lock.fetch_block(raw_concept) {
+                let full_text = engram_core::storage::read_provlog(&block);
+                json!({ "content": [{ "type": "text", "text": full_text }] })
+            } else {
+                json!({ "content": [{ "type": "text", "text": format!("Error: Memory not found for '{}'. Did you type the concept name exactly?", concept) }], "isError": true })
+            }
         }
 
         "forget" => {
