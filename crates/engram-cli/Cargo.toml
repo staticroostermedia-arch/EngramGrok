@@ -17,5 +17,6 @@ clap        = { workspace = true }
 serde_json  = { workspace = true }
 anyhow       = { workspace = true }
 shellexpand  = { workspace = true }
+reqwest      = { workspace = true }
 num-complex  = { workspace = true }
 walkdir = "2.5.0"

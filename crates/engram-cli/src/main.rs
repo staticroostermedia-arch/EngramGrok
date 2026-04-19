@@ -369,10 +369,40 @@ fn main() -> anyhow::Result<()> {
             } else {
                 println!("✗ LBVH Index missing! Semantic queries will fallback to linear scan.");
             }
-            
-            // Simple ping to default ENGRAM_EMBED_URL local default port for testing
-            println!("✓ ENGRAM_EMBED_URL config active.");
-            println!("💡 To ensure you track code edits, make sure you ran mcp_engram_watch_workspace!");
+
+            // ── Embedding server liveness probe ──────────────────────────────
+            let embed_url = std::env::var("ENGRAM_EMBED_URL")
+                .unwrap_or_else(|_| "http://localhost:8086/v1/embeddings".to_string());
+
+            let probe_body = serde_json::json!({"input": "test", "model": "local"});
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_millis(1500))
+                .build();
+
+            match client {
+                Ok(c) => {
+                    match c.post(&embed_url).json(&probe_body).send() {
+                        Ok(resp) if resp.status().is_success() => {
+                            println!("✓ Embedding server live: {embed_url}");
+                            println!("  → remember() calls will produce valid vectors (Euler gate: PASS)");
+                        }
+                        Ok(resp) => {
+                            println!("✗ Embedding server at {embed_url} returned HTTP {}", resp.status());
+                            println!("  → remember() calls will FAIL the Euler gate (BLAKE3-only vectors are chaotic)");
+                            println!("  → Fix: ensure nomic-embed llama-server is running on port 8086");
+                        }
+                        Err(e) => {
+                            println!("✗ Embedding server UNREACHABLE at {embed_url}: {e}");
+                            println!("  → remember() calls will FAIL the Euler gate");
+                            println!("  → Fix: start llama-server with nomic-embed model on port 8086");
+                            println!("  → OR: set ENGRAM_EMBED_URL to the correct URL in your shell and IDE env");
+                        }
+                    }
+                }
+                Err(e) => println!("✗ HTTP client build failed: {e}"),
+            }
+
+            println!("💡 To track code edits, run mcp_engram_watch_workspace on first agent turn.");
         }
     }
 

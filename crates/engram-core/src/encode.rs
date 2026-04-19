@@ -18,19 +18,25 @@ use num_complex::Complex32;
 
 /// Fetch a dense embedding vector from the configured embedding server.
 ///
-/// Tries the `ENGRAM_EMBED_URL` environment variable first (e.g. an ONNX
-/// MiniLM server), then falls back to the llama-server at port 8085.
+/// Tries the `ENGRAM_EMBED_URL` environment variable first (e.g. nomic-embed
+/// served by llama-server on port 8086), then falls back to port 8086 default.
+///
+/// **IMPORTANT FOR AGENTS:** If this returns None, the Euler gate WILL reject the
+/// resulting vector because BLAKE3-only vectors have chaotic phase distributions.
+/// Ensure ENGRAM_EMBED_URL=http://localhost:8086/v1/embeddings is set in the
+/// environment of whichever process is calling remember().
 ///
 /// Returns a L2-normalised `Vec<f32>` of any dimension, or `None` on failure.
 fn fetch_neural_embedding(text: &str) -> Option<Vec<f32>> {
     use serde_json::json;
 
-    // Allow override: ENGRAM_EMBED_URL=http://localhost:8086/v1/embeddings
+    // Default is port 8086 (nomic-embed via llama-server).
+    // Override with ENGRAM_EMBED_URL env var.
     let url = std::env::var("ENGRAM_EMBED_URL")
-        .unwrap_or_else(|_| "http://localhost:8085/v1/embeddings".to_string());
+        .unwrap_or_else(|_| "http://localhost:8086/v1/embeddings".to_string());
 
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_millis(500))
+        .timeout(std::time::Duration::from_millis(2000))  // 2s — handles cold starts
         .build()
         .ok()?;
 
@@ -42,6 +48,12 @@ fn fetch_neural_embedding(text: &str) -> Option<Vec<f32>> {
     let res: serde_json::Value = client.post(&url)
         .json(&body)
         .send()
+        .map_err(|e| {
+            eprintln!("[ENGRAM WARN] Embedding server unreachable at {url}: {e}");
+            eprintln!("[ENGRAM WARN] Falling back to BLAKE3-only encoding.");
+            eprintln!("[ENGRAM WARN] Euler gate WILL reject this vector. Set ENGRAM_EMBED_URL.");
+            e
+        })
         .ok()?
         .json()
         .ok()?;

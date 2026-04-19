@@ -611,6 +611,7 @@ dependencies = [
  "clap",
  "engram-core",
  "num-complex",
+ "reqwest",
  "serde_json",
  "shellexpand",
  "walkdir",
