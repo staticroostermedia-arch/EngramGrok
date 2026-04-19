@@ -35,37 +35,59 @@ fn fetch_neural_embedding(text: &str) -> Option<Vec<f32>> {
     let url = std::env::var("ENGRAM_EMBED_URL")
         .unwrap_or_else(|_| "http://localhost:8086/v1/embeddings".to_string());
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_millis(2000))  // 2s — handles cold starts
-        .build()
-        .ok()?;
+    let text_owned = text.to_string();
+    let url_clone  = url.clone();
 
-    let body = json!({
-        "input": text,
-        "model": "local"
+    // ── CRITICAL: Spawn a dedicated OS thread for the blocking HTTP call ──────
+    //
+    // reqwest::blocking panics if called while a Tokio runtime is active on
+    // the current thread (e.g. the MCP server's background daemon spawns a
+    // Tokio runtime at boot). The panic propagates as an Err through the
+    // blocking client builder's .build().ok()? and silently falls back to
+    // BLAKE3-only encoding — which always fails the Euler gate.
+    //
+    // Spawning a fresh OS thread guarantees no Tokio context is present,
+    // making reqwest::blocking safe to use without panicking.
+    let result = std::thread::spawn(move || -> Option<Vec<f32>> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_millis(3000))  // 3s — handles cold starts
+            .build()
+            .ok()?;
+
+        let body = json!({
+            "input": text_owned,
+            "model": "local"
+        });
+
+        let res: serde_json::Value = client.post(&url_clone)
+            .json(&body)
+            .send()
+            .map_err(|e| {
+                eprintln!("[ENGRAM WARN] Embedding server unreachable at {url_clone}: {e}");
+                eprintln!("[ENGRAM WARN] Falling back to BLAKE3-only encoding.");
+                eprintln!("[ENGRAM WARN] Euler gate WILL reject this vector. Set ENGRAM_EMBED_URL.");
+                e
+            })
+            .ok()?
+            .json()
+            .ok()?;
+
+        let emb = res["data"][0]["embedding"].as_array()?;
+        let vec: Vec<f32> = emb.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+        if vec.is_empty() { return None; }
+
+        // L2-normalise so values land inside the Poincaré ball (||v|| ≤ 1)
+        let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm < 1e-9 { return None; }
+        Some(vec.into_iter().map(|x| x / norm).collect())
+    })
+    .join()
+    .unwrap_or_else(|e| {
+        eprintln!("[ENGRAM WARN] Embedding thread panicked: {:?}", e);
+        None
     });
 
-    let res: serde_json::Value = client.post(&url)
-        .json(&body)
-        .send()
-        .map_err(|e| {
-            eprintln!("[ENGRAM WARN] Embedding server unreachable at {url}: {e}");
-            eprintln!("[ENGRAM WARN] Falling back to BLAKE3-only encoding.");
-            eprintln!("[ENGRAM WARN] Euler gate WILL reject this vector. Set ENGRAM_EMBED_URL.");
-            e
-        })
-        .ok()?
-        .json()
-        .ok()?;
-
-    let emb = res["data"][0]["embedding"].as_array()?;
-    let vec: Vec<f32> = emb.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
-    if vec.is_empty() { return None; }
-
-    // L2-normalise so values land inside the Poincaré ball (||v|| ≤ 1)
-    let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm < 1e-9 { return None; }
-    Some(vec.into_iter().map(|x| x / norm).collect())
+    result
 }
 
 /// Encode free-form text into a `HolographicBlock` using Hybrid HRR + Neural Strategy.

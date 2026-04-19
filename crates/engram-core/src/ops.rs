@@ -391,44 +391,46 @@ pub fn apply_temporal_phase(q: &mut [Complex32; 8192], age_days: f32) {
     }
 }
 
-// ── Euler Characteristic Gate — Topological Write Validation (Task 5) ─────────
+// ── Vector Validity Gate — Write Protection ────────────────────────────────────
 
-/// Check that a phase vector is topologically closed (Euler characteristic = 2).
+/// Check that a phase vector is a valid, non-degenerate normalized vector.
 ///
-/// Counts phase discontinuities greater than π/2 between adjacent dimensions.
-/// For a well-formed vector on the unit hypersphere, the Euler characteristic
-/// `χ = V - E + F = 2` (Euler's formula for S²). Too many discontinuities
-/// indicate a corrupted or partially-written vector.
+/// The original Euler characteristic / phase-discontinuity check was calibrated
+/// purely for BLAKE3 phase vectors. The hybrid encoding strategy (neural
+/// embedding in `q[0..N].re` with `im=0`, plus logophysical hash accumulation
+/// in `q[N..8192]`) has a fundamentally different phase distribution — the
+/// BLAKE3 hash zone alone produces ~48% adjacent phase jumps > π/2 by design
+/// (uniformly random phases). Every valid hybrid vector failed the old gate.
+///
+/// The gate's actual purpose is to reject three real failure cases:
+/// 1. **All-zero vectors** — `from_text` failed before encoding any content.
+/// 2. **NaN/Inf contamination** — a corrupted write or arithmetic overflow.
+/// 3. **BLAKE3-only fallback** — embedding server failed AND normalization
+///    didn't complete, leaving a chaotic un-normalized accumulation.
+///
+/// All three are correctly caught by checking that the vector's L2-norm is
+/// close to 1.0, since `normalize()` always produces unit vectors (or the
+/// identity fallback for near-zero input).
 ///
 /// Returns `true` if the vector passes (safe to write), `false` if corrupted.
 ///
-/// # Threshold
-/// We allow up to `8192 * 0.12 ≈ 983` discontinuities before flagging — this
-/// gives headroom for legitimate phase jumps in high-entropy regions while
-/// catching empty/zero blocks and partially-written allocations.
-///
-/// Ported from CodeLand `monad_logophysics/src/integrator.rs` Euler monitor.
+/// Ported concept from CodeLand `monad_logophysics/src/integrator.rs`.
 pub fn check_euler_characteristic(q: &[Complex32; 8192]) -> bool {
-    let mut discontinuities: u32 = 0;
-    const JUMP_THRESHOLD_COS: f32 = 0.0; // cos(π/2) = 0 → any phase jump > 90°
+    // Check for NaN/Inf contamination first — these are unrecoverable.
+    let has_bad_values = q.iter().any(|c| c.re.is_nan() || c.re.is_infinite()
+                                       || c.im.is_nan() || c.im.is_infinite());
+    if has_bad_values { return false; }
 
-    for i in 0..8191 {
-        let a = q[i];
-        let b = q[i + 1];
-        // dot product of adjacent components (cosine similarity proxy)
-        let dot = a.re * b.re + a.im * b.im;
-        let mag_a = (a.re * a.re + a.im * a.im).sqrt();
-        let mag_b = (b.re * b.re + b.im * b.im).sqrt();
-        if mag_a < 1e-8 || mag_b < 1e-8 { continue; }
-        let cos_phase = dot / (mag_a * mag_b);
-        if cos_phase < JUMP_THRESHOLD_COS {
-            discontinuities += 1;
-        }
-    }
+    // Compute L2-norm. A valid normalized vector must have ||q|| ≈ 1.0.
+    // All-zero vectors have norm = 0. Un-normalized BLAKE3 accumulations
+    // (embedding fallback) have norm >> 1 (sum of many unit-magnitude vectors).
+    let sq_sum: f32 = q.iter().map(|c| c.re * c.re + c.im * c.im).sum();
+    let l2 = sq_sum.sqrt();
 
-    // Allow up to 12% discontinuity rate — beyond this the vector is likely corrupted
-    let max_allowed = (8191.0 * 0.12) as u32; // ~983
-    discontinuities <= max_allowed
+    // Accept anything within 5% of the unit sphere.
+    // normalize() guarantees exactly 1.0 for valid encodes.
+    // The 5% slack handles f32 rounding across 8192 dimensions (expected error ~1e-4).
+    l2 > 0.95 && l2 < 1.05
 }
 
 // ── SRHT: Subsampled Randomized Hadamard Transform (Task 6) ───────────────────
