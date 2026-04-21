@@ -6,11 +6,80 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
+// ── Shadow Basis (Phase 1 — 768-dim genesis anchor) ────────────────────────
+//
+// On daemon startup, attempt to load the pre-generated 768-dim shadow vectors
+// for the genesis pillars from ~/.engram/genesis_shadow/.
+// If the directory doesn't exist yet, run gen_shadow_basis first.
+
+/// Load a 768-dim shadow genesis vector from disk.
+/// Path: ~/.engram/genesis_shadow/{concept}.bin  (768 × f32 LE bytes)
+fn load_shadow_vector(concept: &str) -> Option<Vec<f32>> {
+    let path = std::env::var("HOME").ok()
+        .map(|h| PathBuf::from(h)
+            .join(".engram")
+            .join("genesis_shadow")
+            .join(format!("{}.bin", concept)))?;
+    let bytes = std::fs::read(&path).ok()?;
+    if bytes.len() % 4 != 0 { return None; }
+    let vec: Vec<f32> = bytes.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    if vec.is_empty() { None } else { Some(vec) }
+}
+
+/// OP_ADD(block.q, shadow) → L2 normalize — anchors an 8192-dim block to the genesis basis.
+/// The shadow vector is 768-dim; it is applied to the first 768 real components of q.
+/// This biases the block's semantic position toward the genesis pillar in the real subspace.
+fn apply_shadow_anchor(block: &mut engram_core::types::HolographicBlock, shadow: &[f32]) {
+    let len = shadow.len().min(block.q.len());
+    for i in 0..len {
+        block.q[i].re += shadow[i];
+    }
+    // L2 normalize the full 8192-dim q after anchoring
+    let norm: f32 = block.q.iter().map(|c| c.re * c.re + c.im * c.im).sum::<f32>().sqrt();
+    if norm > f32::EPSILON {
+        block.q.iter_mut().for_each(|c| { c.re /= norm; c.im /= norm; });
+    }
+}
+
+/// Read .engramignore from the Engram workspace root.
+/// Returns a list of path prefixes that the daemon should never watch or encode.
+fn load_engramignore() -> Vec<String> {
+    // Look for .engramignore in the Engram project root (adjacent to Cargo.toml)
+    let candidates = [
+        "/home/a/Documents/Engram/.engramignore",
+        "/home/a/Documents/CodeLand/.engramignore",
+    ];
+    let mut ignored = Vec::new();
+    for path in &candidates {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    ignored.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    ignored
+}
+
 /// Starts the global agentic background daemon attached to the MCP / REST Server.
 ///
 /// Autophagy GC is DISABLED. Nothing is ever evicted automatically.
 /// The daemon runs purely as a workspace file watcher — auto-ingesting saved files.
 pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
+    // Load shadow basis vectors at spawn time (once — not per file event)
+    let shadow_cybernetics: Option<Vec<f32>> = load_shadow_vector("cybernetics");
+    match &shadow_cybernetics {
+        Some(v) => info!("[ShadowBasis] Loaded cybernetics_768 ({} floats)", v.len()),
+        None    => info!("[ShadowBasis] cybernetics_768 not found — run gen_shadow_basis to enable genesis anchoring"),
+    }
+    let engramignore = load_engramignore();
+    if !engramignore.is_empty() {
+        info!("[.engramignore] Excluding {} path patterns from watch", engramignore.len());
+    }
     let (watch_tx, watch_rx) = flume::unbounded::<PathBuf>();
 
     let daemon = Arc::new(DaemonControl {
@@ -37,6 +106,22 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
         // Flush hot access timestamps to disk every 60 seconds (Mac hardening)
         let mut flush_interval = tokio::time::interval(Duration::from_secs(60));
 
+        // ── Integration Inbox Scanner (Phase 5) ──────────────────────────────
+        // Poll ~/.engram/stalks/default/inbox/ every 5 seconds for
+        // `integration_req_*.json` files written by the Cockpit when the operator
+        // clicks INTEGRATE on an escalation report.
+        // Format: { "concept": "...", "text": "...", "source": "escalation_id" }
+        // On success: writes the .leg block, then DELETES the request file.
+        let mut inbox_interval = tokio::time::interval(Duration::from_secs(5));
+
+        // The inbox dir is adjacent to the default stalk — always exists.
+        let inbox_dir = {
+            let lock = store.lock().unwrap();
+            PathBuf::from(lock.store_path()).join("inbox")
+        };
+        std::fs::create_dir_all(&inbox_dir).ok();
+        info!("Integration inbox watching: {}", inbox_dir.display());
+
         loop {
             if ctrl.shutdown.load(Ordering::Relaxed) {
                 break;
@@ -59,6 +144,54 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                     lock.access_index.flush_if_dirty();
                 }
 
+                _ = inbox_interval.tick() => {
+                    // ── Integration Inbox: sweep and process ─────────────────────────
+                    if let Ok(entries) = std::fs::read_dir(&inbox_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            let fname = path.file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("");
+                            if !fname.starts_with("integration_req_") || !fname.ends_with(".json") {
+                                continue;
+                            }
+                            match std::fs::read_to_string(&path) {
+                                Ok(raw) => {
+                                    if let Ok(req) = serde_json::from_str::<serde_json::Value>(&raw) {
+                                        let concept = req["concept"].as_str().unwrap_or("").to_string();
+                                        let text    = req["text"].as_str().unwrap_or("").to_string();
+                                        let source  = req["source"].as_str().unwrap_or("").to_string();
+
+                                        if concept.is_empty() || text.is_empty() {
+                                            error!("[INBOX] Malformed integration request {}: concept/text missing", fname);
+                                            std::fs::remove_file(&path).ok();
+                                            continue;
+                                        }
+
+                                        let mut lock = store.lock().unwrap();
+                                        match lock.remember(&concept, &text) {
+                                            Ok(_) => {
+                                                info!("[INBOX] Integrated escalation → Engram: '{}' (from {})", concept, source);
+                                                std::fs::remove_file(&path).ok();
+                                            }
+                                            Err(e) => {
+                                                error!("[INBOX] remember() failed for '{}': {}", concept, e);
+                                                // Leave the file for retry on next tick
+                                            }
+                                        }
+                                    } else {
+                                        error!("[INBOX] JSON parse error in {}", fname);
+                                        std::fs::remove_file(&path).ok();
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[INBOX] Failed to read {}: {}", fname, e);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 event = rx.recv_async() => {
                     if let Ok(ev) = event {
                         if ev.kind.is_modify() || ev.kind.is_create() {
@@ -72,12 +205,26 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                     "ex", "exs", "swift",
                                 ];
 
+                                // .engramignore: skip paths owned by ouroboros daemon
+                                let path_str = path.to_string_lossy();
+                                let is_ignored = engramignore.iter()
+                                    .any(|pat| path_str.contains(pat.as_str()));
+
                                 if allowed_exts.contains(&ext)
-                                    && !path.to_string_lossy().contains("/target/")
-                                    && !path.to_string_lossy().contains("/.git/")
+                                    && !path_str.contains("/target/")
+                                    && !path_str.contains("/.git/")
+                                    && !is_ignored
                                 {
                                     if let Ok(content) = std::fs::read_to_string(path) {
                                         let mut lock = store.lock().unwrap();
+
+                                        // ── Phase 1: Namespace separation ──────────────────────
+                                        // CodeLand AST blocks go into 'codeland_ast' namespace.
+                                        // Agent episodics remain in the default stalk.
+                                        let is_codeland = path_str.contains("/CodeLand/");
+                                        if is_codeland {
+                                            lock.set_active_stalk("codeland_ast");
+                                        }
 
                                         let items = engram_core::ast_extract::extract_ast_items(path.to_str().unwrap_or(""), &content);
 
@@ -89,13 +236,23 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                                 block.aabb_min = [item.start_pos.0 as f32, item.start_pos.1 as f32, 0.0];
                                                 block.aabb_max = [item.end_pos.0 as f32,   item.end_pos.1 as f32,   0.0];
 
-                                                // Store full unbroken source in Provlog
+                                                // Store full unbroken source in ProvLog
                                                 engram_core::storage::write_provlog(&mut block, &item.full_source);
+
+                                                // ── Phase 1: Genesis Shadow Anchor ─────────────
+                                                // OP_ADD(block.q, v_cybernetics_768) → L2 normalize
+                                                // Anchors the AST block to the CodeLand genesis
+                                                // coordinate system within the 768-dim manifold.
+                                                // Both vectors are 768-dim so dimensions match.
+                                                if let Some(ref shadow) = shadow_cybernetics {
+                                                    apply_shadow_anchor(&mut block, shadow);
+                                                }
 
                                                 if let Err(e) = lock.store(&item.concept, block) {
                                                     error!("Daemon failed to auto-sync AST {}: {}", item.concept, e);
                                                 } else {
-                                                    debug!("Daemon: Auto-synced AST {}", item.concept);
+                                                    debug!("Daemon: Auto-synced AST {} (shadow_anchor={})",
+                                                        item.concept, shadow_cybernetics.is_some());
                                                 }
                                             }
                                         } else {
@@ -127,6 +284,11 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                                     path.display()
                                                 );
                                             }
+
+                                        // Restore default namespace after CodeLand block
+                                        if is_codeland {
+                                            lock.set_active_stalk("default");
+                                        }
                                         }
                                     }
                                 }
