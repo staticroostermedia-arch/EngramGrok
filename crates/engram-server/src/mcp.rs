@@ -3,16 +3,41 @@
 //! Implements the MCP specification (protocol version 2024-11-05).
 //! Communicates over stdin/stdout, one JSON object per line.
 //!
-//! # Tools exposed to the LLM
+//! # Engram — 21 MCP Tools for Geometric Memory
 //!
-//! | Tool | Arguments | Description |
-//! |------|-----------|-------------|
-//! | `remember` | `concept: str, text: str` | Encode text and store as a memory |
-//! | `recall` | `query: str, k: int` | Find k most similar memories |
-//! | `forget` | `concept: str` | Delete a memory |
-//! | `list_concepts` | — | List all stored concept names |
+//! Engram exposes a HolographicBlock (.leg3) memory manifold to any MCP-compatible agent.
+//! Each memory is a 256KB block containing: semantic phase vector (q tensor), momentum tensor
+//! (p tensor), CRS confidence score, ADR thermodynamic state, and a BLAKE3 Merkle proof chain.
 //!
-//! # Claude Desktop config
+//! ## CRS Confidence Tiers
+//! | CRS Range | Meaning | Action |
+//! |-----------|---------|--------|
+//! | 1.0       | Pinned / Immortal | Load-bearing axiom, never evicted |
+//! | ≥ 0.74    | Grounded Fact (Bronze tier) | Safe to act on without verification |
+//! | ≥ 0.50    | Working Hypothesis | Use with caution, verify when possible |
+//! | < 0.50    | Uncertain | Do not act on without explicit confirmation |
+//!
+//! ## ZEDOS Memory Types
+//! | Type | Filter Key | Usage |
+//! |------|-----------|-------|
+//! | DECLARATIVE | 'declarative' | Facts, architecture, constants |
+//! | EPISODIC | 'episodic' | Session logs, event records |
+//! | OPERATIONAL | 'operational' | Procedures, workflows |
+//! | PRAXIS | 'praxis' | Crystallized solutions that have been verified |
+//! | RELATION | 'relation' | Knowledge graph edges (A→[label]→B) |
+//!
+//! ## Core Tool Reference
+//! | Tool | When to Call |
+//! |------|--------------|
+//! | `remember` | You learn a fact, decision, or solution to persist cross-session |
+//! | `recall` | Before answering technical questions or editing files |
+//! | `mcp_engram_update` | Changing an existing memory (never use forget+remember) |
+//! | `mcp_engram_session_end` | MANDATORY at end of every conversation |
+//! | `mcp_engram_context_for_file` | TRIGGER when opening or editing any file |
+//! | `mcp_engram_scar` | A fix fails or approach is a dead end |
+//! | `mcp_engram_verify_behavior` | A hypothesis is confirmed or refuted |
+//!
+//! # Claude Desktop / IDE Config
 //!
 //! ```json
 //! {
@@ -89,18 +114,26 @@ fn tool_list() -> Value {
             },
             {
                 "name": "remember",
-                "description": "Encode text and store it as a persistent memory under a concept name. \
-                                Use this to save facts, context, or information for later retrieval.",
+                "description": "Encode text and store it as a persistent HolographicBlock (.leg3) memory under a concept name. \
+                                WHEN TO CALL: Any time you learn a new fact, decision, user preference, architecture detail, \
+                                or solution you will need in a future session. If you would write it in a comment, store it here. \
+                                WHAT IT DOES: Encodes text into a 256KB complex phase vector (q tensor), applies the ADR \
+                                thermodynamic confidence gate, chains a BLAKE3 Merkle proof of lineage, and writes the block \
+                                to the persistent NVMe manifold. New blocks start at CRS=1.0 (maximum confidence). \
+                                CRS TIERS: 1.0=pinned/immortal | >=0.74=grounded fact (safe to act on) | \
+                                >=0.50=working hypothesis (use with caution) | <0.50=uncertain (verify first). \
+                                WARNING: To modify an existing concept use mcp_engram_update, NOT forget+remember. \
+                                Calling forget+remember destroys the block's thermodynamic history permanently.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "concept": {
                             "type": "string",
-                            "description": "A unique identifier for this memory (e.g. 'krebs_cycle', 'user_preference_dark_mode')"
+                            "description": "Unique snake_case identifier (e.g. 'api_auth_pattern', 'user_prefers_dark_mode'). Use namespacing for related concepts: 'project__component__detail'."
                         },
                         "text": {
                             "type": "string",
-                            "description": "The text content to encode and store"
+                            "description": "The text content to encode. Be specific and self-contained — this text must make sense when read in isolation in a future session."
                         }
                     },
                     "required": ["concept", "text"]
@@ -108,8 +141,17 @@ fn tool_list() -> Value {
             },
             {
                 "name": "recall",
-                "description": "Search persistent memory by semantic similarity. Returns the k most relevant \
-                                memories for the given query. Use this to retrieve context before answering questions.",
+                "description": "Search persistent memory by semantic similarity. Returns ranked HolographicBlock memories. \
+                                WHEN TO CALL: Before answering any technical question, before editing a file, \
+                                before making an architectural decision — check memory first. \
+                                OUTPUT: Each result shows concept name, score (0-1), crs (confidence), and text snippet. \
+                                Score >0.80 = strong match. Score 0.65-0.80 = relevant context. Score <0.65 = weak. \
+                                CRS in result tells you how reliable that memory is: >=0.74 is grounded fact. \
+                                ZEDOS FILTER GUIDE: 'praxis'=crystallized solutions that worked | \
+                                'declarative'=facts and architecture | 'episodic'=session logs | \
+                                'operational'=procedures and workflows | 'relation'=concept graph edges. \
+                                TIME DECAY: Only use when user asks about past work (e.g. 'last week'). \
+                                Use mcp_engram_read_concept after recall to get the full un-truncated text.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -136,7 +178,11 @@ fn tool_list() -> Value {
             },
             {
                 "name": "forget",
-                "description": "Delete a specific memory by concept name.",
+                "description": "Permanently delete a memory block from the manifold. \
+                                WARNING: This destroys the block's entire thermodynamic history (CRS, Merkle chain, ADR state). \
+                                WHEN TO USE: Only when a concept is completely obsolete or was stored in error. \
+                                If you need to change what a memory says, use mcp_engram_update instead — it preserves history. \
+                                Pinned blocks (CRS=1.0) can still be deleted with this tool if you explicitly target them.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -172,7 +218,14 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_session_end",
-                "description": "Commit session to long-term memory. Stores summary and calculates ADR Thermodynamics (Confidence/Frustration).",
+                "description": "MANDATORY: Call this at the end of every conversation or distinct task. \
+                                Commits a session summary as a ZEDOS_PRAXIS block and calculates ADR Thermodynamics \
+                                (alpha_a=confidence, alpha_d=frustration) based on the CRS of memories touched this session. \
+                                CONSEQUENCE OF SKIPPING: The session's work is lost to future agents. The next session \
+                                will have no record that this work happened, will re-derive solved problems, and will \
+                                lack the epistemic state needed to continue correctly. \
+                                WHAT TO INCLUDE IN SUMMARY: decisions made, problems solved, files changed, \
+                                open questions, and what the user wants next.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -183,7 +236,11 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_pin",
-                "description": "Lock a project management concept into the manifold so the Autophagy Daemon never decays it.",
+                "description": "Set a concept's CRS to 1.0 and lock it so the Autophagy Daemon never evicts it. \
+                                WHEN TO USE: For foundational knowledge that must survive forever — architecture decisions, \
+                                user constants, project rules, genesis axioms. Do NOT pin everything: \
+                                pin only what is genuinely load-bearing. Pinned blocks still support relate/update. \
+                                Use mcp_engram_forget_old to clean up unpinned blocks below a CRS threshold.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -197,7 +254,13 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_relate",
-                "description": "Bind two concepts via op_bind and store a directional relation block (ZEDOS_RELATION).",
+                "description": "Create a directional knowledge graph edge between two concepts using VSA OP_BIND. \
+                                Stores the edge as a ZEDOS_RELATION block linking concept_a →[label]→ concept_b. \
+                                WHEN TO USE: When you discover a meaningful relationship between two memories — \
+                                'depends_on', 'implements', 'contradicts', 'derived_from', 'same_category', etc. \
+                                This builds a navigable knowledge graph. Use mcp_engram_search_by_relation to traverse it \
+                                and mcp_engram_visualize to render a Mermaid diagram of the subgraph. \
+                                Both concepts must already exist in memory before relating them.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -219,7 +282,12 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_context_for_file",
-                "description": "Surface the top 5 most relevant memories for a given file path. Useful for proactive context loading when opening a file.",
+                "description": "TRIGGER: Call this automatically whenever you open or are about to edit a file. \
+                                Surfaces the top 5 memories most relevant to that file path, including AST-ingested \
+                                functions, structs, and known bugs associated with that file's geometry. \
+                                The daemon stores spatial AABB coordinates (line ranges) with each ingested AST node, \
+                                so results include which exact lines each concept came from. \
+                                This is faster and more precise than a free-text recall for file-specific context.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -289,7 +357,13 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_update",
-                "description": "CRITICAL: If you are modifying or appending to an existing concept, you MUST use this tool instead of 'forget' and 'remember'. This tool evaluates the Lyapunov stability drift of the concept. Failing to use this will destroy the concept's thermodynamic history and corrupt the agent's memory graph.",
+                "description": "CRITICAL: Use this whenever you need to change or append to an existing memory. \
+                                NEVER use forget+remember to update — that destroys the block's entire history. \
+                                WHAT THIS DOES DIFFERENTLY: Evaluates Lyapunov stability drift between the old \
+                                and new vector encodings. If drift is low (stable evolution), CRS is preserved. \
+                                If drift is high (contradictory change), CRS is penalized proportionally. \
+                                This creates a thermodynamic record of how a concept has evolved over time \
+                                and prevents silent rewrites of load-bearing memories.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -307,7 +381,11 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_summarize",
-                "description": "Return a project-state digest: all pinned memories first, then the top N memories by CRS score. Ideal as a single-call /wake_up replacement.",
+                "description": "Return a project-state digest: all pinned memories first, then the top N by CRS score. \
+                                WHEN TO USE: At the start of a new session when you need to rehydrate context fast. \
+                                Single call replaces multiple recall queries. Returns pinned blocks (CRS=1.0) first \
+                                because those are the load-bearing axioms of the project, followed by the \
+                                highest-confidence working memories. Ideal as a /wake_up replacement.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -371,7 +449,12 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_forget_old",
-                "description": "Manually trigger autophagy: evict all memories below a CRS threshold (pinned memories are always exempt).",
+                "description": "Manually trigger autophagy: evict all non-pinned memories below a CRS threshold. \
+                                WHEN TO USE: After a long project phase ends, after distill runs, or when the manifold \
+                                is growing too large. Start conservative (min_crs_threshold=0.3) and increase if needed. \
+                                Pinned blocks (CRS=1.0) are ALWAYS exempt and will never be evicted. \
+                                Use older_than_days to target stale memories while preserving recently-accessed ones. \
+                                Preview what would be evicted with mcp_engram_stats first.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -495,7 +578,12 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_query_with_momentum",
-                "description": "Momentum-assisted recall: blends semantic similarity (q tensor, 80%) with conceptual trajectory (p tensor, 20%). Finds memories that are actively evolving toward your query, not just matching it right now.",
+                "description": "Momentum-assisted recall: blends semantic similarity (q tensor, 80%) with conceptual trajectory (p tensor, 20%). \
+                                WHEN TO USE INSTEAD OF recall: When you want to find concepts that are actively \
+                                changing or evolving, not just ones that statically match your query right now. \
+                                Example: use this when asking 'what has been changing in the auth system?' \
+                                because momentum detects blocks whose p tensor is accelerating toward your query topic. \
+                                Use regular recall when you want stable, crystallized knowledge.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -514,7 +602,14 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_verify_behavior",
-                "description": "Formally report back empirical data (success/failure) regarding a specific memory rule or hypothesis. Promotes ZEDOS_HYPOTHESIS to ZEDOS_PRAXIS on consistent success.",
+                "description": "TRIGGER: Call this after any hypothesis is confirmed to work OR fails in practice. \
+                                Reports empirical success/failure data against a specific ZEDOS_HYPOTHESIS block. \
+                                WHAT HAPPENS ON SUCCESS: Consistent successes promote the block from \
+                                ZEDOS_HYPOTHESIS to ZEDOS_PRAXIS (crystallized, pinned, CRS=1.0). \
+                                WHAT HAPPENS ON FAILURE: CRS is penalized. Accumulate enough failures and \
+                                the block is automatically scarred. \
+                                EXAMPLES: After a code fix works — verify_behavior(concept, success=true). \
+                                After a fix fails — verify_behavior(concept, success=false), then consider mcp_engram_scar.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
