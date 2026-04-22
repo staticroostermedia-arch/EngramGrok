@@ -5,6 +5,12 @@
 //! Blocks are stored as `<concept>.leg` in the manifold directory.
 //! The file is exactly BLOCK_SIZE (256KB), 4096-byte aligned for O_DIRECT I/O.
 
+// Cap'n Proto generated bindings for the ProvLog schema (schema/provlog.capnp).
+// Generated at build time by build.rs via capnpc.
+pub mod provlog_capnp {
+    include!(concat!(env!("OUT_DIR"), "/provlog_capnp.rs"));
+}
+
 use crate::types::{HolographicBlock, BLOCK_SIZE};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -87,7 +93,7 @@ pub fn write_block<P: AsRef<Path>>(path: P, block: &HolographicBlock) -> std::io
 pub fn read_provlog(block: &HolographicBlock) -> String {
     let mut slice = &block.payload[..];
     if let Ok(message) = capnp::serialize::read_message(&mut slice, capnp::message::ReaderOptions::new()) {
-        if let Ok(plog) = message.get_root::<leg_core::provlog_capnp::prov_log::Reader>() {
+        if let Ok(plog) = message.get_root::<provlog_capnp::prov_log::Reader>() {
             if let Ok(text) = plog.get_source_text() {
                 if let Ok(string) = text.to_string() {
                     return string;
@@ -105,7 +111,7 @@ pub fn read_provlog(block: &HolographicBlock) -> String {
 pub fn write_provlog(block: &mut HolographicBlock, text: &str) {
     let mut message = capnp::message::Builder::new_default();
     {
-        let mut plog = message.init_root::<leg_core::provlog_capnp::prov_log::Builder>();
+        let mut plog = message.init_root::<provlog_capnp::prov_log::Builder>();
         plog.set_source_text(text);
         plog.set_text_data(());
         

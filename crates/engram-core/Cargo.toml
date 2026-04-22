@@ -39,7 +39,6 @@ streaming-iterator = "0.1"
 
 libc         = "0.2"   # O_DIRECT flag for direct I/O reads
 capnp        = "0.19"
-leg_core     = { path = "../../../CodeLand/crates/leg_core" }
 
 # Universal AST extraction — optional, enabled via `universal-ast`
 tree-sitter            = { version = "0.24", optional = true }
@@ -56,6 +55,9 @@ tree-sitter-java       = { version = "0.23", optional = true }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile  = "3"
+
+[build-dependencies]
+capnpc = "0.19"
 
 [[bench]]
 name    = "query_bench"
