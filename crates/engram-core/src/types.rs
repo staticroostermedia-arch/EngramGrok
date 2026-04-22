@@ -45,6 +45,8 @@ pub const ZEDOS_BODY: u8         = 0xB0;
 pub const ZEDOS_VERBATIM: u8     = 0xB1;
 /// Praxis memory: crystallized learned procedures.
 pub const ZEDOS_PRAXIS: u8       = 0x50;
+/// Hypothesis memory: aspirational/unverified claims pending behavioral validation.
+pub const ZEDOS_HYPOTHESIS: u8   = 0xAA;
 /// Phase M: Relation block — links two concepts via OP_BIND (Merkle-chained).
 pub const ZEDOS_RELATION: u8     = 0xE1;
 
@@ -106,10 +108,12 @@ pub struct LegFooter {
 ///
 /// ```text
 /// Offset 0x00000  [64KB]  q[] — position/knowledge phase vector
-/// Offset 0x10000  [64KB]  p[] — momentum/binding tensor  
+/// Offset 0x10000  [64KB]  p[] — momentum/binding tensor
 /// Offset 0x20000  [128KB] metadata, energetics, payload, footer
 ///   └─ 0x20000   header fields (magic, CRS, timestamps, ...)
-///   └─ 0x21000   Logenergetics capsule (64B + padding to 4KB)
+///   └─ 0x21000   Logenergetics capsule (64B struct)
+///   └─ 0x21040   err_residual_16d (128B) + l2_norm + dims_used (8B) + align (3B)
+///   └─ 0x210D0   _pad_energetics remainder (3896B)
 ///   └─ 0x22000   concept_ref (32B) + zedos_tag (1B) + payload (122,584B)
 ///   └─ 0x3FF00   LegFooter (256B, Merkle chain)
 /// ```
@@ -162,9 +166,31 @@ pub struct HolographicBlock {
     pub allowed_transforms: [u8; 64],
     pub _pad_header: [u8; 3872],
 
-    // ── Logenergetics capsule at 0x21000 ──────────────────────────────────────
+    // ── Logenergetics capsule at 0x21000 ───────────────────────────────────────────
     pub energetics: Logenergetics,
-    pub _pad_energetics: [u8; 4032],
+
+    // ── Prediction error residual at 0x21040 ─────────────────────────────────
+    // Carved from the former _pad_energetics region. Backwards compatible:
+    // old blocks have this region zeroed, which is the valid "no residual" sentinel.
+
+    /// First 16 complex dimensions of (actual_q − prior_q) computed at JIT learning time.
+    /// Captures the geometric *direction* of the prediction error in the FHRR subspace.
+    /// Zero-filled for blocks minted without residual computation (pre-Phase E.1).
+    pub err_residual_16d: [Complex32; 16],      // 128 bytes
+
+    /// L2-norm of the full 8192D residual vector (actual_q − prior_q).
+    /// Scalar "surprise magnitude" in the original high-dimensional space.
+    /// Used by M-NOL as a weighting factor: `repulsion = cos_sim_16d × l2_norm_residual`.
+    /// Zero = block predates this feature or no prior knowledge existed.
+    pub l2_norm_residual: f32,                  // 4 bytes
+
+    /// Number of meaningful dimensions stored in `err_residual_16d`.
+    /// Currently always 16 (or 0 if no residual). Reserved for future adaptive
+    /// PCA compression where only the top-k principal components are retained.
+    pub residual_dims_used: u8,                 // 1 byte
+    pub _pad_residual_align: [u8; 3],           // 3 bytes — align to 4-byte boundary
+
+    pub _pad_energetics: [u8; 3896],            // remaining dead pad (4032 − 136)
 
     // ── Payload region at 0x22000 ─────────────────────────────────────────────
     /// Wikidata Q-ID or relation anchor (32 bytes).
@@ -250,13 +276,17 @@ mod tests {
 
     #[test]
     fn stride_boundaries_exact() {
-        assert_eq!(offset_of!(HolographicBlock, q),           0x00000);
-        assert_eq!(offset_of!(HolographicBlock, p),           0x10000);
-        assert_eq!(offset_of!(HolographicBlock, magic),       0x20000);
-        assert_eq!(offset_of!(HolographicBlock, energetics),  0x21000);
-        assert_eq!(offset_of!(HolographicBlock, concept_ref), 0x22000);
-        assert_eq!(offset_of!(HolographicBlock, payload),     0x22028);
-        assert_eq!(offset_of!(HolographicBlock, footer),      261_888);
+        assert_eq!(offset_of!(HolographicBlock, q),              0x00000);
+        assert_eq!(offset_of!(HolographicBlock, p),              0x10000);
+        assert_eq!(offset_of!(HolographicBlock, magic),          0x20000);
+        assert_eq!(offset_of!(HolographicBlock, energetics),     0x21000);
+        // Residual fields immediately follow the 64-byte Logenergetics struct
+        assert_eq!(offset_of!(HolographicBlock, err_residual_16d), 0x21040,
+            "err_residual_16d must start at 0x21040 (Logenergetics end)");
+        // Payload region must not move
+        assert_eq!(offset_of!(HolographicBlock, concept_ref),    0x22000);
+        assert_eq!(offset_of!(HolographicBlock, payload),        0x22028);
+        assert_eq!(offset_of!(HolographicBlock, footer),         261_888);
     }
 
     #[test]

@@ -370,6 +370,16 @@ impl Backend {
         }
     }
     fn is_sheaf(&self) -> bool { matches!(self, Backend::Sheaf(_)) }
+    fn verify_hypothesis(&self, concept: &str, success: bool) -> Result<()> {
+        match self {
+            #[cfg(engram_backend_cuda)]
+            Backend::Gpu(b) => b.verify_hypothesis(concept, success),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.verify_hypothesis(concept, success),
+            Backend::Single(b) => b.verify_hypothesis(concept, success),
+            Backend::Sheaf(b) => b.verify_hypothesis(concept, success),
+        }
+    }
 }
 
 // ── StoreHandle ───────────────────────────────────────────────────────────────
@@ -519,6 +529,10 @@ impl StoreHandle {
         if r.is_ok() { self.access_index.touch(concept); }
         r
     }
+    pub fn verify_hypothesis(&self, concept: &str, success: bool) -> Result<()> {
+        self.backend.verify_hypothesis(concept, success)
+    }
+
 
     // ── Phase 10: New Agentic Tools ───────────────────────────────────────────
 

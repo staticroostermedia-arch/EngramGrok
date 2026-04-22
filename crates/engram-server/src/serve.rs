@@ -37,6 +37,8 @@ struct RecallReq {
     query: String,
     #[serde(default = "default_k")]
     k: usize,
+    #[serde(default)]
+    explain: bool,
 }
 fn default_k() -> usize { 5 }
 
@@ -48,10 +50,20 @@ struct ForgetReq {
 #[derive(Deserialize)]
 struct TraceReq {
     term_a: String,
+    /// VSA operation: "ADD" (superposition) or "BIND" (association). Defaults to "ADD".
+    #[serde(default = "default_op")]
     op: String,
     term_b: String,
     #[serde(default = "default_k")]
     k: usize,
+}
+fn default_op() -> String { "ADD".to_string() }
+
+#[derive(Deserialize)]
+struct RelateReq {
+    concept_a: String,
+    concept_b: String,
+    label: String,
 }
 
 #[derive(Serialize)]
@@ -60,6 +72,8 @@ struct MemoryRes {
     score: f32,
     crs: f32,
     text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explain: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -140,6 +154,7 @@ async fn recall(
         score: m.score,
         crs: m.crs,
         text: m.provlog,
+        explain: if payload.explain { Some(m.explain) } else { None },
     }).collect();
 
     (StatusCode::OK, Json(res))
@@ -200,6 +215,7 @@ async fn trace(
         score: m.score,
         crs: m.crs,
         text: m.provlog,
+        explain: Some(m.explain),
     }).collect();
 
     (StatusCode::OK, Json(res))
@@ -208,6 +224,30 @@ async fn trace(
 async fn list_concepts(State(store): State<SharedStore>) -> impl IntoResponse {
     let list = store.lock().unwrap().list();
     (StatusCode::OK, Json(list))
+}
+
+// ── Bug Fix: /api/relate was missing from REST (existed only in MCP) ──────────
+async fn relate(
+    State(store): State<SharedStore>,
+    Json(payload): Json<RelateReq>,
+) -> impl IntoResponse {
+    let a = payload.concept_a.trim();
+    let b = payload.concept_b.trim();
+    let label = payload.label.trim();
+    if a.is_empty() || b.is_empty() || label.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(GenericRes {
+            status: "error", message: "concept_a, concept_b, and label are required".into(),
+        }));
+    }
+    match store.lock().unwrap().relate(a, b, label) {
+        Ok(msg) => {
+            info!("rest: related {a} --[{label}]--> {b}");
+            (StatusCode::OK, Json(GenericRes { status: "success", message: msg }))
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(GenericRes {
+            status: "error", message: e.to_string(),
+        })),
+    }
 }
 
 /// GET /api/recent?n=10
@@ -270,11 +310,18 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
         .route("/api/remember", post(remember))
         .route("/api/recall",   post(recall))
         .route("/api/forget",   post(forget))
+        .route("/api/relate",   post(relate))
         .route("/api/trace",    post(trace))
         .route("/api/list",     get(list_concepts))
         .route("/api/recent",   get(recent_concepts))
         // ─ System ─
         .route("/api/boot_agent", post(boot_agent))
+        .route("/health", get(|| async {
+            Json(serde_json::json!({
+                "status": "ok",
+                "version": env!("CARGO_PKG_VERSION")
+            }))
+        }))
         .layer(middleware::from_fn(auth_middleware))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(store.clone());

@@ -16,81 +16,7 @@ use crate::ops::normalize;
 use crate::storage::write_provlog;
 use num_complex::Complex32;
 
-/// Fetch a dense embedding vector from the configured embedding server.
-///
-/// Tries the `ENGRAM_EMBED_URL` environment variable first (e.g. nomic-embed
-/// served by llama-server on port 8086), then falls back to port 8086 default.
-///
-/// **IMPORTANT FOR AGENTS:** If this returns None, the Euler gate WILL reject the
-/// resulting vector because BLAKE3-only vectors have chaotic phase distributions.
-/// Ensure ENGRAM_EMBED_URL=http://localhost:8086/v1/embeddings is set in the
-/// environment of whichever process is calling remember().
-///
-/// Returns a L2-normalised `Vec<f32>` of any dimension, or `None` on failure.
-fn fetch_neural_embedding(text: &str) -> Option<Vec<f32>> {
-    use serde_json::json;
-
-    // Default is port 8086 (nomic-embed via llama-server).
-    // Override with ENGRAM_EMBED_URL env var.
-    let url = std::env::var("ENGRAM_EMBED_URL")
-        .unwrap_or_else(|_| "http://localhost:8086/v1/embeddings".to_string());
-
-    let text_owned = text.to_string();
-    let url_clone  = url.clone();
-
-    // ── CRITICAL: Spawn a dedicated OS thread for the blocking HTTP call ──────
-    //
-    // reqwest::blocking panics if called while a Tokio runtime is active on
-    // the current thread (e.g. the MCP server's background daemon spawns a
-    // Tokio runtime at boot). The panic propagates as an Err through the
-    // blocking client builder's .build().ok()? and silently falls back to
-    // BLAKE3-only encoding — which always fails the Euler gate.
-    //
-    // Spawning a fresh OS thread guarantees no Tokio context is present,
-    // making reqwest::blocking safe to use without panicking.
-    let result = std::thread::spawn(move || -> Option<Vec<f32>> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_millis(3000))  // 3s — handles cold starts
-            .build()
-            .ok()?;
-
-        let body = json!({
-            "input": text_owned,
-            "model": "local"
-        });
-
-        let res: serde_json::Value = client.post(&url_clone)
-            .json(&body)
-            .send()
-            .map_err(|e| {
-                eprintln!("[ENGRAM WARN] Embedding server unreachable at {url_clone}: {e}");
-                eprintln!("[ENGRAM WARN] Falling back to BLAKE3-only encoding.");
-                eprintln!("[ENGRAM WARN] Euler gate WILL reject this vector. Set ENGRAM_EMBED_URL.");
-                e
-            })
-            .ok()?
-            .json()
-            .ok()?;
-
-        let emb = res["data"][0]["embedding"].as_array()?;
-        let vec: Vec<f32> = emb.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
-        if vec.is_empty() { return None; }
-
-        // L2-normalise so values land inside the Poincaré ball (||v|| ≤ 1)
-        let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm < 1e-9 { return None; }
-        Some(vec.into_iter().map(|x| x / norm).collect())
-    })
-    .join()
-    .unwrap_or_else(|e| {
-        eprintln!("[ENGRAM WARN] Embedding thread panicked: {:?}", e);
-        None
-    });
-
-    result
-}
-
-/// Encode free-form text into a `HolographicBlock` using Hybrid HRR + Neural Strategy.
+/// Encode free-form text into a `HolographicBlock` using Pure Logophysical Phase Accumulation.
 pub fn from_text(text: &str) -> Leg3Pointer {
     let mut block = Leg3Pointer::mint();
     block.magic = *b"LEG3";
@@ -122,23 +48,7 @@ pub fn from_text(text: &str) -> Leg3Pointer {
         }
     }
 
-    // Semantic Aura (Method B) — Neural embedding into dedicated slots.
-    //
-    // Strategy: place the neural vector CLEANLY into q[0..N].re where N is the
-    // embedding dimension (384 for MiniLM, up to 4096 for Gemma, etc.).
-    // This keeps slots 0..N free of hash contamination so the INT8 Poincaré
-    // kernel (which reads q[0..384].re) sees clean L2-normalised values.
-    //
-    // slots N..8192 keep the pure logophysical hash accumulation.
-    if let Some(neural_vec) = fetch_neural_embedding(text) {
-        let neural_len = neural_vec.len().min(DIMENSION);
-        // Write neural values into the first N real slots (overwrite hash)
-        for i in 0..neural_len {
-            q[i].re = neural_vec[i];
-            q[i].im = 0.0;  // clean imaginary — no hash contamination
-        }
-        // Slots neural_len..8192 keep the logophysical hash (already in q[])
-    }
+    // (Pure native strategy - Phase components only)
 
     // Phase 4: Normalize to unit hypersphere
     block.q = normalize(&q);

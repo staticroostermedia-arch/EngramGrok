@@ -81,20 +81,48 @@ pub fn write_block<P: AsRef<Path>>(path: P, block: &HolographicBlock) -> std::io
     Ok(())
 }
 
-/// Read the ProvLog text from a block's payload field.
+/// Read the ProvLog text from a block's payload field (Capn Proto).
 ///
-/// Returns UTF-8 text up to the first null byte, or an empty string if
-/// the payload contains no valid UTF-8.
+/// Falls back to UTF-8 parsing for legacy blocks without Cap'n Proto framing.
 pub fn read_provlog(block: &HolographicBlock) -> String {
+    let mut slice = &block.payload[..];
+    if let Ok(message) = capnp::serialize::read_message(&mut slice, capnp::message::ReaderOptions::new()) {
+        if let Ok(plog) = message.get_root::<leg_core::provlog_capnp::prov_log::Reader>() {
+            if let Ok(text) = plog.get_source_text() {
+                if let Ok(string) = text.to_string() {
+                    return string;
+                }
+            }
+        }
+    }
+
+    // Fallback: raw UTF-8 up to first null (for legacy non-unified stalks prior to the Great Reminting)
     let end = block.payload.iter().position(|&b| b == 0).unwrap_or(block.payload.len());
     String::from_utf8_lossy(&block.payload[..end]).into_owned()
 }
 
-/// Write ProvLog text into a block's payload field.
-///
-/// Truncates silently if `text.len() > payload capacity (122,584 bytes)`.
+/// Write ProvLog text into a block's payload field using Cap'n Proto.
 pub fn write_provlog(block: &mut HolographicBlock, text: &str) {
-    let bytes = text.as_bytes();
-    let len = bytes.len().min(block.payload.len());
-    block.payload[..len].copy_from_slice(&bytes[..len]);
+    let mut message = capnp::message::Builder::new_default();
+    {
+        let mut plog = message.init_root::<leg_core::provlog_capnp::prov_log::Builder>();
+        plog.set_source_text(text);
+        plog.set_text_data(());
+        
+        // Export Thermodynamic factors from Engram directly into the Capnp block schema
+        plog.set_ego_coherence(block.energetics.crs);
+        
+        // Map Praxis logic
+        if block.zedos_tag == crate::types::ZEDOS_PRAXIS {
+            plog.set_is_praxis(true);
+        }
+    }
+
+    let mut buf = Vec::new();
+    capnp::serialize::write_message(&mut buf, &message).unwrap();
+    let len = buf.len().min(block.payload.len());
+    
+    // Wipe previous trailing bytes to avoid Cap'n Proto parse confusion
+    block.payload.fill(0);
+    block.payload[..len].copy_from_slice(&buf[..len]);
 }

@@ -19,6 +19,7 @@ mod mcp;
 mod serve;
 mod store;
 pub mod daemon;
+pub mod ki_hijacker;
 
 use clap::{Parser, Subcommand};
 use store::open_store;
@@ -88,6 +89,22 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             let _guard = rt.enter();
+
+            // ── Boot file-watcher daemon (AST auto-ingest) ────────────────────
+            store::StoreHandle::boot_daemon(store.clone());
+
+            // ── Boot KI Hijacker — Logophysical Antigravity Bridge ────────────
+            //
+            // Every 60s, queries the manifold for top-N CRS + hot-session
+            // memories and writes them to:
+            //   ~/.gemini/antigravity/knowledge/active_engram_context/artifacts/context.md
+            //
+            // Antigravity reads this KI at session start. This means the
+            // agent always wakes up with its own geometric memory injected
+            // into its context window — no explicit recall calls needed.
+            let _hijacker = ki_hijacker::spawn(store.clone());
+            tracing::info!("[KI_HIJACKER] Logophysical Antigravity Bridge spawned (MCP mode).");
+
             mcp::run(store)?;
         }
         Commands::Serve { port, no_genesis } => {
@@ -97,6 +114,16 @@ fn main() -> anyhow::Result<()> {
                     Err(e)   => tracing::warn!("Genesis seed failed: {e}"),
                 }
             }
+
+            let _guard = rt.enter();
+
+            // ── Boot file-watcher daemon ──────────────────────────────────────
+            store::StoreHandle::boot_daemon(store.clone());
+
+            // ── Boot KI Hijacker ──────────────────────────────────────────────
+            let _hijacker = ki_hijacker::spawn(store.clone());
+            tracing::info!("[KI_HIJACKER] Logophysical Antigravity Bridge spawned (REST mode).");
+
             rt.block_on(serve::run(store, port))?;
         }
     }

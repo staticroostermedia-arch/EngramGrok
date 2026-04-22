@@ -53,3 +53,4 @@ blake3  = { workspace = true }
 toml    = "0.8"
 bincode = "1"
 regex = "1.12.3"
+chrono = { version = "0.4", features = ["serde"] }

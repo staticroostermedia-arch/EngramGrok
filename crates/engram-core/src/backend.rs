@@ -34,6 +34,14 @@ pub struct Memory {
     pub aabb_min: [f32; 3],
     /// Spatial bounding box max [row, col, 0.0] — file coordinates of AST node
     pub aabb_max: [f32; 3],
+    /// Geometric anomaly breakdown
+    pub explain: String,
+    // ── Phase E.1: Prediction error residual ────────────────────────────────────
+    /// L2-norm of the 8192D prediction-error residual (actual_q − prior_q).
+    /// 0.0 = block predates residual tracking or was a complete novelty with no prior.
+    /// High values indicate high surprise / large prior mismatch at learning time.
+    /// Used by M-NOL as the scaling factor for geometric denial-field repulsion.
+    pub l2_norm_residual: f32,
 }
 
 /// Distance metric and quantization mode for nearest-neighbour search.
@@ -114,7 +122,133 @@ pub trait VsaBackend: Send + Sync {
         let block = self.encode(query_text);
         self.query(&block.q, k)
     }
+
+    /// Store a memory block with a baked-in prediction error residual.
+    ///
+    /// `prior_q` is the centroid of what the agent *believed* the topic meant
+    /// before this JIT learning event. The residual `(actual_q - prior_q)` captures
+    /// how much reality diverged from prior expectation.
+    ///
+    /// - The first 16 complex dims of the residual are stored in `err_residual_16d`.
+    /// - The full-space L2-norm is stored in `l2_norm_residual` for M-NOL scaling.
+    /// - When `prior_q` is all zeros (no prior knowledge), the residual equals
+    ///   the full learned vector, representing maximum possible surprise.
+    fn remember_with_residual(
+        &self,
+        concept: &str,
+        text: &str,
+        prior_q: &[Complex32; 8192],
+    ) -> Result<()> {
+        let mut block = self.encode(text);
+
+        // Compute element-wise residual: actual_q − prior_q
+        let mut l2_sq = 0.0f32;
+        for i in 0..crate::types::DIMENSION {
+            let diff = block.q[i] - prior_q[i];
+            l2_sq += diff.norm_sqr();
+            if i < 16 {
+                block.err_residual_16d[i] = diff;
+            }
+        }
+        block.l2_norm_residual = l2_sq.sqrt();
+        block.residual_dims_used = 16;
+
+        self.store(concept, block)
+    }
+
+    /// Formally verify a behavioral hypothesis (ZEDOS_HYPOTHESIS).
+    /// If it succeeds consistently, it automatically promotes to ZEDOS_PRAXIS.
+    fn verify_hypothesis(&self, concept: &str, success: bool) -> Result<()> {
+        let mut block_ptr = self.fetch_block(concept)
+            .ok_or_else(|| anyhow::anyhow!("Concept '{}' not found", concept))?;
+        
+        if block_ptr.zedos_tag != crate::types::ZEDOS_HYPOTHESIS && block_ptr.zedos_tag != crate::types::ZEDOS_PRAXIS {
+            return Err(anyhow::anyhow!("Concept is not a hypothesis or praxis block. Found tag: {}", block_ptr.zedos_tag));
+        }
+        
+        if success {
+            block_ptr.energetics.alpha_a = (block_ptr.energetics.alpha_a + 0.25).min(2.0);
+            block_ptr.fail_streak = 0;
+        } else {
+            block_ptr.energetics.alpha_d = (block_ptr.energetics.alpha_d + 0.25).min(2.0);
+            block_ptr.fail_streak = block_ptr.fail_streak.saturating_add(1);
+        }
+        
+        // Promote to Praxis if sufficiently verified
+        if block_ptr.energetics.alpha_a - block_ptr.energetics.alpha_d >= 1.0 {
+            block_ptr.zedos_tag = crate::types::ZEDOS_PRAXIS;
+        }
+        
+        self.store(concept, block_ptr)
+    }
+
+    /// Update an existing memory block by superposing new evidence onto it.
+    ///
+    /// This is the canonical way to accumulate knowledge into a persistent concept
+    /// over time. Each call:
+    ///
+    /// 1. Re-encodes `new_text` into a fresh HolographicBlock.
+    /// 2. OP_ADD superposition: blends the new q-vector into the existing one
+    ///    (weight: 80% prior, 20% new evidence), then L2-normalises the result.
+    /// 3. Records Lyapunov drift velocity (`dv`): `1.0 - cosine(old_q, blended_q)`.
+    ///    High drift = the new evidence is geometrically far from prior centroid.
+    /// 4. Increments `superposition_depth` (conceptual mass accumulator).
+    /// 5. Propagates `err_residual_16d` and `l2_norm_residual` from the new block
+    ///    so the most recent learning event's surprise is always accessible.
+    ///
+    /// If the concept does not yet exist, falls back to plain `remember()`.
+    fn update(&self, concept: &str, new_text: &str) -> Result<()> {
+        // If no prior block exists, mint fresh (no superposition needed)
+        let Some(mut existing) = self.fetch_block(concept) else {
+            return self.remember(concept, new_text);
+        };
+
+        // Encode new evidence
+        let new_block = self.encode(new_text);
+
+        // Compute cosine similarity between old and new q-vectors (for drift)
+        let old_cosine = cosine_similarity(&existing.q, &new_block.q);
+
+        // OP_ADD superposition: 80% prior belief + 20% new evidence
+        // This preserves the accumulated geometric identity while integrating new data.
+        const PRIOR_WEIGHT: f32 = 0.80;
+        const NEW_WEIGHT:   f32 = 0.20;
+        let mut norm_sq = 0.0f32;
+        for i in 0..crate::types::DIMENSION {
+            let blended = existing.q[i] * PRIOR_WEIGHT + new_block.q[i] * NEW_WEIGHT;
+            existing.q[i] = blended;
+            norm_sq += blended.norm_sqr();
+        }
+        // L2-normalise to keep the vector on the unit hypersphere
+        let norm = norm_sq.sqrt().max(1e-9);
+        for i in 0..crate::types::DIMENSION {
+            existing.q[i] /= norm;
+        }
+
+        // Lyapunov drift velocity: angular distance moved by this update
+        // 0.0 = no change, 1.0 = complete conceptual reversal
+        existing.energetics.dv = (1.0 - old_cosine).clamp(0.0, 1.0);
+
+        // Accumulate superposition depth (conceptual mass)
+        existing.superposition_count = existing.superposition_count.saturating_add(1);
+
+        // Propagate residual from the fresh encoding (most-recent surprise)
+        existing.err_residual_16d = new_block.err_residual_16d;
+        existing.l2_norm_residual = new_block.l2_norm_residual;
+        existing.residual_dims_used = new_block.residual_dims_used;
+
+        // Update ProvLog payload to the latest text (most recent wins for readability)
+        let text_bytes = new_text.as_bytes();
+        let copy_len = text_bytes.len().min(existing.payload.len());
+        existing.payload[..copy_len].copy_from_slice(&text_bytes[..copy_len]);
+        if copy_len < existing.payload.len() {
+            existing.payload[copy_len..].fill(0);
+        }
+
+        self.store(concept, existing)
+    }
 }
+
 
 // ── CPU Backend (always compiled) ────────────────────────────────────────────
 
@@ -359,12 +493,28 @@ fn score_block(
     block: &crate::types::HolographicBlock,
 ) -> Memory {
     let base_sim = cosine_similarity(query, &block.q);
-    let crs_weight = 0.85 + (block.crs_score * 0.15);
-    let stability   = 1.0 - (block.energetics.dv * 0.10);
-    let depth_bonus = 1.0 + (block.superposition_count.min(10) as f32 * 0.005);
-    let score = (base_sim * crs_weight * stability * depth_bonus).clamp(-1.0, 1.0);
-    let provlog = String::from_utf8_lossy(&block.payload)
-        .trim_matches('\0').chars().take(512).collect();
+    
+    // Normalize factors to [0.0, 1.0] for Dirichlet convex combination
+    let base_sim_norm = (base_sim + 1.0) / 2.0; 
+    let crs_norm = block.crs_score.clamp(0.0, 1.0);
+    let stability_norm = (1.0 - block.energetics.dv).clamp(0.0, 1.0);
+    let depth_norm = (block.superposition_count.min(10) as f32 / 10.0).clamp(0.0, 1.0);
+
+    // Universal Dirichlet Governor Weights (must sum to 1.0)
+    const D1: f32 = 0.70; // Semantic Resonance
+    const D2: f32 = 0.15; // Epistemic Coherence
+    const D3: f32 = 0.10; // Structural Stability
+    const D4: f32 = 0.05; // Superposition Mass
+
+    let score = (base_sim_norm * D1) + (crs_norm * D2) + (stability_norm * D3) + (depth_norm * D4);
+    
+    let provlog_full = crate::storage::read_provlog(block);
+    let provlog = provlog_full.chars().take(512).collect();
+    
+    let explain = format!(
+        "Additive Dirichlet: sim={:.4}*{} + crs={:.4}*{} + stab={:.4}*{} + mass={:.4}*{} => score={:.4}", 
+        base_sim_norm, D1, crs_norm, D2, stability_norm, D3, depth_norm, D4, score
+    );
     Memory {
         concept, score, crs: block.crs_score, provlog,
         drift_velocity: block.energetics.dv,
@@ -374,5 +524,39 @@ fn score_block(
         alpha_d: block.energetics.alpha_d,
         aabb_min: block.aabb_min,
         aabb_max: block.aabb_max,
+        explain,
+        l2_norm_residual: block.l2_norm_residual,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_verify_hypothesis() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = CpuBackend::new(dir.path());
+        let concept = "test_hyp";
+        
+        let mut block = backend.encode("testing");
+        block.zedos_tag = crate::types::ZEDOS_HYPOTHESIS;
+        backend.store(concept, block).unwrap();
+
+        // Trigger failures
+        backend.verify_hypothesis(concept, false).unwrap();
+        let b1 = backend.fetch_block(concept).unwrap();
+        assert_eq!(b1.fail_streak, 1);
+        assert!(b1.energetics.alpha_d > 0.0);
+
+        // Trigger successes
+        backend.verify_hypothesis(concept, true).unwrap();
+        backend.verify_hypothesis(concept, true).unwrap();
+        backend.verify_hypothesis(concept, true).unwrap();
+        backend.verify_hypothesis(concept, true).unwrap();
+        backend.verify_hypothesis(concept, true).unwrap();
+
+        let b2 = backend.fetch_block(concept).unwrap();
+        assert_eq!(b2.zedos_tag, crate::types::ZEDOS_PRAXIS, "Should have promoted to PRAXIS");
     }
 }

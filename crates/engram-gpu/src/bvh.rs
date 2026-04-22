@@ -297,8 +297,10 @@ impl BvhManifold {
                 zedos_tag: block.zedos_tag,
                 alpha_a: block.energetics.alpha_a,
                 alpha_d: block.energetics.alpha_d,
+                l2_norm_residual: block.l2_norm_residual,
                 aabb_min: block.aabb_min,
                 aabb_max: block.aabb_max,
+                explain: format!("GPU SIM => score={:.4} (crs={:.3})", c.score, c.crs),
             })
         }).collect();
 

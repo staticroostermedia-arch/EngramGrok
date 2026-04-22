@@ -1,13 +1,26 @@
-use engram_core::{CpuBackend, VsaBackend};
-
 fn main() {
-    let q = "quasi-orthogonal causal logophysical bindings in OODA loop";
-    let backend = CpuBackend::new("/home/a/Documents/CodeLand/data/holograms/static/genesis");
-    let res = backend.recall(q, 3);
-    
-    println!("=== SEMANTIC RAY-CASTER RESULTS ===");
+    let mut args = std::env::args().skip(1);
+    let mut query = String::from("OODA loop logophysics quasi-orthogonal causal bindings");
+    let mut explain = false;
+
+    while let Some(arg) = args.next() {
+        if arg.contains("?explain=true") || arg == "--explain" {
+            explain = true;
+        } else if arg.starts_with("q=") {
+            query = arg[2..].replace("+", " ").to_string();
+        } else if !arg.starts_with("-") {
+            query = arg;
+        }
+    }
+
+    let backend = engram_core::CpuBackend::new("/home/a/.engram/stalks/");
+    println!("=== SEMANTIC RAY-CASTER ===");
+    println!("Query: {}", query);
+    let res = engram_core::VsaBackend::recall(&backend, &query, 5);
     for r in res {
-        let snippet = if r.provlog.len() > 150 { &r.provlog[..150] } else { &r.provlog };
-        println!("[{}] (resonance={:.3}, crs={:.3}) -> {}...", r.concept, r.score, r.crs, snippet);
+        println!("[{}] (crs={:.3}) -> {}", r.concept, r.score, &r.provlog.replace("\n", " ")[..std::cmp::min(100, r.provlog.len())]);
+        if explain {
+            println!("   ↳ EXPLAIN: {}", r.explain);
+        }
     }
 }

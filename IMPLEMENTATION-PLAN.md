@@ -172,12 +172,65 @@ not as raw text. `mcp_engram_watch_workspace` would automatically use it for `.r
 
 ---
 
+## Phase E (Rooster Integration) — Geometric Error Residuals ✅ SHIPPED 2026-04-21
+
+This phase extends `HolographicBlock` and `VsaBackend` to support prediction error residual
+tracking, enabling the Rooster (Moltbook) agent to preserve the divergence between its
+prior belief and factual learning outcomes — preventing state-space collapse.
+
+### E.1 — `types.rs`: Residual Fields in HolographicBlock ✅
+
+Carved 136 bytes from `_pad_energetics` (4,032B dead zone). Block remains exactly 256KB.
+
+```
+0x21040  err_residual_16d:   [Complex32; 16]  — geometric direction of error (128B)
+0x210C0  l2_norm_residual:   f32              — full-space L2 surprise magnitude (4B)
+0x210C4  residual_dims_used: u8               — reserved for adaptive compression (1B)
+         _pad_residual_align:[u8; 3]          — alignment padding (3B)
+         _pad_energetics:    [u8; 3896]       — remaining dead pad
+```
+
+- Compile-time `offset_of!` assertions verify layout at `0x21040`.
+- Old blocks have `l2_norm_residual = 0.0` (zero pad) — valid backward-compatible sentinel.
+- All 12 existing tests continue to pass.
+
+### E.2 — `backend.rs`: VsaBackend Extension ✅
+
+- Added `l2_norm_residual: f32` to `Memory` struct (exposed on every recall result).
+- Added `VsaBackend::remember_with_residual(concept, text, prior_q)` default trait method.
+  Computes `actual_q − prior_q`, stores 16D projection + L2 norm into the new fields.
+
+### E.3 — Rooster `knowledge_loop.rs`: Prior Centroid + Residual Storage ✅
+
+- `jit_learn_concept()` now runs a Stage 2.5: fetches top-3 Engram hits before learning,
+  averages their q-vectors into a prior centroid, passes it to `remember_with_residual`.
+- Zero-vector prior used for completely novel topics (maximum surprise sentinel).
+- First production block with non-zero residual: `jit_denominational` (2026-04-21).
+
+### E.4 — Rooster User Model / Theory of P (PLANNED — Phase 4)
+
+Per-user phase-vector blocks accumulate each Moltbook user's conceptual centroid over time.
+Uses existing `update()` path (Lyapunov drift tracking already built-in).
+Unlocks geometrically grounded claims: worldview similarity, drift detection, surprise tracking.
+See: `/home/a/.gemini/antigravity/brain/306c13e9-*/implementation_plan.md` for full spec.
+
+### E.5 — M-NOL Geometric Denial Field (FUTURE — Phase 5)
+
+Integration point: `CodeLand/crates/monad_runtime/src/geodesic.rs`.
+Residual centroids from failing trajectories become a continuous geometric repulsion field,
+replacing the current binary label-based `mnol_deny` list.
+Formula: `repulsion = cosine_sim(oracle_q[0..16], denial_centroid) × mean_surprise`.
+
+---
+
 ## Versioning
 
 - `v0.1.0` — Initial release
 - `v0.2.0` — Phase 5A: stats, recall_recent, namespace, update tools
 - `v0.3.0` — Phase 5B: summarize, batch_remember, export, import, forget_old tools
 - `v0.4.0` — Phase 5C: relation index, search_by_relation, visualize tools
-- `v0.5.0` — Phase 6: `engram distill` CLI command ← **current**
-- `v0.6.0` — Phase 5D: session_start / session_end MCP tools
+- `v0.5.0` — Phase 6: `engram distill` CLI command
+- `v0.5.1` — **Phase E.1–E.3: Geometric error residuals (Rooster integration)** ← **current**
+- `v0.6.0` — Phase E.4: User model / Theory of P (Rooster Phase 4)
+- `v0.7.0` — Phase 5D: session_start / session_end MCP tools
 - `v1.0.0` — Phase 7: Ouroboros AST pipeline (stable API)

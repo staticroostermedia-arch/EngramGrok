@@ -509,7 +509,25 @@ fn tool_list() -> Value {
                             "default": 5
                         }
                     },
-                    "required": ["query"]
+                     "required": ["query"]
+                }
+            },
+            {
+                "name": "mcp_engram_verify_behavior",
+                "description": "Formally report back empirical data (success/failure) regarding a specific memory rule or hypothesis. Promotes ZEDOS_HYPOTHESIS to ZEDOS_PRAXIS on consistent success.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "The concept name of the hypothesis to verify"
+                        },
+                        "success": {
+                            "type": "boolean",
+                            "description": "True if the behavior or rule worked successfully, false if it failed"
+                        }
+                    },
+                    "required": ["concept", "success"]
                 }
             }
         ]
@@ -1258,6 +1276,28 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 output.push_str(&format!("**[{}] {}** (momentum score: {:.3}, drift: {:.3})\n", i + 1, concept, score, dv));
             }
             json!({ "content": [{ "type": "text", "text": output.trim() }] })
+        }
+        "mcp_engram_verify_behavior" => {
+            let concept = args.get("concept").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let success = args.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            if concept.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: missing required 'concept' string" }], "isError": true });
+            }
+
+            let raw_concept = concept.split_once("::").map_or(concept.as_str(), |(_, r)| r);
+
+            match store.lock().unwrap().verify_hypothesis(raw_concept, success) {
+                Ok(_) => {
+                    let result_msg = if success {
+                        format!("✓ Hypothesis verified successfully: '{}'. Alpha_a increased. May promote to PRAXIS if threshold reached.", concept)
+                    } else {
+                        format!("✓ Hypothesis failure logged: '{}'. Alpha_d increased.", concept)
+                    };
+                    json!({ "content": [{ "type": "text", "text": result_msg }] })
+                },
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error verifying hypothesis: {e}") }], "isError": true }),
+            }
         }
 
         unknown => json!({

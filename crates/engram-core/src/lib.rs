@@ -50,7 +50,7 @@ pub use types::{
     BLOCK_SIZE, DIMENSION,
     // ZEDOS epistemic tags — exposed so downstream storage tools can work with the full format
     ZEDOS_DECLARATIVE, ZEDOS_EPISODIC, ZEDOS_OPERATIONAL,
-    ZEDOS_BODY, ZEDOS_VERBATIM, ZEDOS_PRAXIS, ZEDOS_RELATION,
+    ZEDOS_BODY, ZEDOS_VERBATIM, ZEDOS_PRAXIS, ZEDOS_RELATION, ZEDOS_HYPOTHESIS,
 };
 pub use ops::{op_add, op_bind, cosine_similarity};
 pub use backend::{VsaBackend, CpuBackend, SheafBackend};
