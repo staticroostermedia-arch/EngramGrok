@@ -74,7 +74,7 @@ We call it a **HolographicBlock**.
 
 ---
 
-## Part III: The Block
+## Part IV: The Block
 
 Every piece of knowledge in Engram lives in a HolographicBlock. Its anatomy is fixed and enforced by the compiler:
 
