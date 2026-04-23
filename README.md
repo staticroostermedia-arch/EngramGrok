@@ -43,11 +43,12 @@ Your agent immediately has access to all 21 tools. See [`integrations/`](integra
 Engram maps your project's memory into strict 262,144 byte (256KB) containers called **HolographicBlocks**. This size is non-arbitrary.
 
 - **Native Tensor Load:** 256KB perfectly aligns to 64× 4KB hardware pages. Because the `.leg` format is a strict C-struct, it requires zero JSON decoding or Protobuf parsing.
-- **O_DIRECT and DMA:** Engram bypasses the operating system's page-cache. When your agent searches for a memory, the tensor streams via Direct Memory Access (DMA) from the physical NVMe SSD straight into CPU registers or GPU VRAM.
+- **O_DIRECT and GPUDirect Storage (GDS):** Engram bypasses the operating system's page-cache. When your agent searches for a memory, the tensor streams via Direct Memory Access (DMA) from the physical NVMe SSD straight into CPU registers or directly into GPU VRAM using NVIDIA cuFile APIs.
+- **Zero-Copy Architecture:** By leveraging GPUDirect Storage, Engram eliminates the CPU bounce buffer entirely. Tensors are transferred directly over the PCIe bus to the GPU for massive parallel distance calculations, enabling scan rates of gigabytes per second with near-zero CPU overhead.
 
 Every block mathematically fuses the full original source code, 8192-dimensional semantic tensors, spatial 3D bounds (for code placement), and cryptographic BLAKE3 Merkle chain proofs.
 
-*(See [docs/architecture.md](docs/architecture.md) for a deep dive into the container format and LBVH scaling).*
+*(See [docs/architecture.md](docs/architecture.md) for a deep dive into the container format, cuFile integration, and LBVH scaling).*
 
 ---
 

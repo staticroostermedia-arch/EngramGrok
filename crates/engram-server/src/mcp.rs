@@ -217,6 +217,17 @@ fn tool_list() -> Value {
                 }
             },
             {
+                "name": "mcp_engram_session_start",
+                "description": "MANDATORY: Call this at the start of every conversation or distinct task. Validates manifold integrity and initializes the session epistemic state. You MUST provide your initial intent or objective for the session. This binds the thermodynamic context and provides a health check of the memory index.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "intent": { "type": "string", "description": "Agent's primary intent or goal for this session" }
+                    },
+                    "required": ["intent"]
+                }
+            },
+            {
                 "name": "mcp_engram_session_end",
                 "description": "MANDATORY: Call this at the end of every conversation or distinct task. \
                                 Commits a session summary as a ZEDOS_PRAXIS block and calculates ADR Thermodynamics \
@@ -800,6 +811,42 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             })
         }
 
+        "mcp_engram_session_start" => {
+            let intent = args["intent"].as_str().unwrap_or("").trim().to_string();
+            if intent.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: intent required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            let key = format!("session_start_{}", timestamp);
+            
+            // Validate manifold integrity
+            let all_concepts = lock.list();
+            let total_memories = all_concepts.len();
+            let mut pinned_count = 0;
+            let mut avg_crs = 0.0;
+            if total_memories > 0 {
+                let mut sum_crs = 0.0;
+                for c in &all_concepts {
+                    if let Some(b) = lock.fetch_block(c) {
+                        sum_crs += b.crs_score;
+                        if b.crs_score >= 1.0 { pinned_count += 1; }
+                    }
+                }
+                avg_crs = sum_crs / total_memories as f32;
+            }
+
+            // Create episodic log block
+            let mut session_block = lock.encode(&format!("SESSION_START intent: {}", intent));
+            session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+            session_block.crs_score = 1.0;
+            
+            match lock.store(&key, session_block) {
+                Ok(_) => json!({ "content": [{ "type": "text", "text": format!("✓ Session initialized. Manifold Integrity Validated: {} total memories ({} pinned). Average CRS: {:.3}.", total_memories, pinned_count, avg_crs) }] }),
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            }
+        }
         "mcp_engram_session_end" => {
             let summary = args["summary"].as_str().unwrap_or("").trim().to_string();
             if summary.is_empty() {
