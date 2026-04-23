@@ -26,7 +26,33 @@ The result is that every AI agent in the world runs on top of a fundamental mism
 
 ---
 
-## Part II: The First-Principles Question
+## Part II: The Cage Beneath the Cage
+
+The binary storage problem is real. But it is a symptom of something deeper.
+
+Every computation that has ever run on digital hardware is, at its physical foundation, **Boolean**. AND gates. OR gates. XOR. Truth tables. The entire edifice of computing — Turing machines, SQL, every API, every database — reduces at the silicon level to electrons in two states.
+
+Boolean algebra is Turing-complete. It is universal for *symbolic* computation. But it answers a specific class of question: **is X a member of set Y?** True or false. The answer is a bit.
+
+Geometric algebra answers a different question: **how close is X to Y?** The answer is a distance — a real number on a continuous manifold.
+
+That difference is not cosmetic. It is the difference between **retrieval** and **understanding**.
+
+When a search engine asks "does this document contain the word 'memory'?" it is asking a Boolean question. When a human recognizes that a conversation about "forgetting" is semantically adjacent to one about "episodic recall" — without any shared keywords — it is performing geometric reasoning over a continuous semantic space.
+
+LLMs perform exactly this geometric reasoning *inside* the attention mechanism — computing similarity, weighing proximity, attending to semantically nearby tokens. That computation is genuinely continuous. And then its output is tokenized, the geometry is discarded, and the next retrieval step is a string match against a key-value store.
+
+We serialized continuous geometry into symbols, retrieved it with Boolean logic, and then had to reconstruct the geometry from scratch on every inference. The bottleneck was never the model. It was the assumption that Boolean storage was the only option.
+
+The open question this creates — one that Engram makes formally addressable but does not yet fully answer — is whether there is a **computational complexity gap** between Boolean symbolic systems and continuous geometric systems for semantic reasoning tasks. Complexity theory tells us that some problems are polynomial in one computational model and NP-hard in another. We do not have an analogous theorem for geometric vs. Boolean computation of meaning.
+
+We believe analogical reasoning is in this class. The geometric computation of "A is to B as C is to what?" — the *king − man + woman* problem — requires Boolean systems to enumerate candidates and apply an explicit similarity function. In a continuous geometric system, it reduces to a single algebraic inversion: `q_result = q_C ⊛ (q_A ⊛* q_B)`, computed in microseconds regardless of manifold size, requiring no enumeration and no schema.
+
+Whether this performance difference is polynomial, exponential, or represents a fundamental separation in computational class is not yet known. Building the infrastructure to study it concretely is part of why Engram exists.
+
+---
+
+## Part III: The First-Principles Question
 
 The correct engineering response to a fundamental mismatch is not to add another abstraction layer on top. It is to go back to the metal and ask what the physics actually demands.
 
@@ -72,7 +98,19 @@ Every field has a precise physical and mathematical meaning.
 
 **The CRS (Coherence-Reliability Score)** is computed via **Lyapunov stability analysis** on every update. When an agent writes to a block, the system measures the phase-space drift between the old and new q tensor. A small, consistent drift (refinement) increases CRS. A large, contradictory drift (hallucination or confusion) penalizes it. The CRS is a thermodynamic measurement of epistemic stability, not a human-assigned quality tag.
 
-**The BLAKE3 Merkle chain** means every block carries a cryptographic record of its entire history. You can prove that a memory was derived from a specific source, and you can detect if it was tampered with.
+**The BLAKE3 Merkle chain** is conventionally read as a tamper-detection mechanism. That is its immediate function. Its deeper theoretical value is different.
+
+On every update, the chain rolls:
+```
+sig_1 ← sig_0
+sig_0 ← BLAKE3(q_bytes ∥ sig_1)
+```
+
+This is not a Merkle *tree* (which proves set membership). It is a Merkle *chain* — it proves **temporal causation**. Given any two consecutive hashes, a third party can cryptographically verify not just that both states existed, but that one was *derived from* the other. This is **cognitive provenance**: the ability to prove that a system's current belief was produced by a specific sequence of prior states and operations.
+
+In condensed matter physics, a **time crystal** is a phase of matter that spontaneously breaks time-translation symmetry — it repeats in time the way a conventional crystal repeats in space. The BLAKE3 Merkle chain is an information-theoretic analog: it imposes a discrete temporal ordering on cognitive states, where each state is cryptographically bound to its predecessor by a fixed transformation. The chain cannot be reordered, forged, or abbreviated without detection.
+
+Whether this information-theoretic time crystal has deeper physical implications — whether the discrete temporal symmetry imposed by a cryptographic hash on cognitive state evolution corresponds to anything nontrivial in the physics of information — is an open question we find genuinely interesting and do not currently know how to formalize. The practical value is clear. The theoretical depth may be greater than we understand.
 
 **The ZEDOS tag** classifies the *epistemic nature* of the knowledge — the difference between a crystallized solution (PRAXIS), a working hypothesis (HYPOTHESIS), and a raw session observation (EPISODIC) — and routes it through different decay and retrieval pathways accordingly.
 
@@ -80,7 +118,29 @@ This is not a schema. It is a **physics.**
 
 ---
 
-## Part IV: How It Moves
+## Part V: The Algebra of Association
+
+The q-tensor and p-tensor store the *what* of a memory. The algebra of what you can *do* with two or more memories in combination is where Engram's expressive power lives.
+
+There are two primitive operators:
+
+**OP_ADD** (superposition): `q_c = normalize(q_a + q_b)`. Produces a vector geometrically near both inputs. Encodes category membership and concept blending. A query against a superposition retrieves concepts similar to either constituent — a continuous, graded analog of set union.
+
+**OP_BIND** (complex phase multiplication): `q_c = q_a ⊛ q_b`, where each component `c[i] = a[i] · b[i]` in the complex field. This operator has three properties that no Boolean association structure — no hash map, no join table, no foreign key — possesses:
+
+**1. Invertibility.** If `C = A ⊛ B`, then `A ≈ C ⊛ B*` (conjugate multiplication recovers one operand given the other). Binding is algebraically reversible. This is not a lookup — it is geometric inversion. Given the relationship and one term, you recover the other term. SQL cannot do this. Neither can any key-value store. It is a property unique to the algebra.
+
+**2. Compositionality.** `A ⊛ B ⊛ C` encodes a triple. `(role₁ ⊛ filler₁) + (role₂ ⊛ filler₂)` encodes a structured record — without a schema, without a table, in a single flat vector. Hierarchical knowledge structures — frames, property graphs, typed relations — encode naturally as superpositions of bound pairs.
+
+**3. Distributivity over superposition.** `A ⊛ (B + C) ≈ (A ⊛ B) + (A ⊛ C)`. Binding distributes across concept categories. A query for `navigation_primitive ⊛ goal_directed` retrieves all concepts that are instances of navigation-toward-a-goal — without enumerating them explicitly. The set membership emerges geometrically.
+
+These three properties together form an **associative algebra over continuous geometry**. The open question — one we are working on but have not resolved — is whether OP_ADD + OP_BIND is **computationally complete** for semantic reasoning: whether every reasoning task expressible in first-order logic, modal logic, or graph traversal can be reformulated as a finite sequence of these two operations over a high-dimensional phase space.
+
+We believe the answer is yes for a meaningful class of reasoning tasks, including analogical inference, relational generalization, and causal chain reconstruction. We do not have a formal proof. If the answer is yes, the implication is significant: every reasoning system built on Boolean symbolic logic is operating in a strictly smaller computational space than one built on OP_ADD + OP_BIND over continuous geometry. The algebra of thought may have a richer structure than the Church-Turing thesis requires us to assume.
+
+---
+
+## Part VI: How It Moves
 
 A standard vector database retrieves memories by computing dot products against a flat array of vectors stored in RAM. This works at small scale. It does not scale to the full knowledge base of an intelligent system, because it requires the entire index to fit in CPU DRAM — the most expensive memory in any machine.
 
@@ -94,7 +154,7 @@ This is why the 256KB block size is non-negotiable. It is the exact unit that th
 
 ---
 
-## Part V: The Memory That Earns Its Place
+## Part VII: The Memory That Earns Its Place
 
 The most dangerous failure mode of an AI memory system is not amnesia. It is **uncritical accumulation** — storing everything, trusting everything, allowing a model's hallucinations to pollute its own long-term memory until the context window is full of contradictory noise.
 
@@ -112,7 +172,7 @@ The Lyapunov stability framework that drives the CRS is borrowed from **dynamica
 
 ---
 
-## Part VI: The Agentic Daemon
+## Part VIII: The Agentic Daemon
 
 Engram is not a passive database that waits to be queried.
 
@@ -124,7 +184,7 @@ The daemon also writes a session context snapshot — a distilled summary of the
 
 ---
 
-## Part VII: What We Are Building
+## Part IX: What We Are Building
 
 We are not building a faster vector database.
 
