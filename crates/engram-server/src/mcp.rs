@@ -113,7 +113,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "remember",
+                "name": "mcp_engram_remember",
                 "description": "Encode text and store it as a persistent HolographicBlock (.leg3) memory under a concept name. \
                                 WHEN TO CALL: Any time you learn a new fact, decision, user preference, architecture detail, \
                                 or solution you will need in a future session. If you would write it in a comment, store it here. \
@@ -140,7 +140,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "recall",
+                "name": "mcp_engram_recall",
                 "description": "Search persistent memory by semantic similarity. Returns ranked HolographicBlock memories. \
                                 WHEN TO CALL: Before answering any technical question, before editing a file, \
                                 before making an architectural decision — check memory first. \
@@ -177,7 +177,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "forget",
+                "name": "mcp_engram_forget",
                 "description": "Permanently delete a memory block from the manifold. \
                                 WARNING: This destroys the block's entire thermodynamic history (CRS, Merkle chain, ADR state). \
                                 WHEN TO USE: Only when a concept is completely obsolete or was stored in error. \
@@ -195,7 +195,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "list_concepts",
+                "name": "mcp_engram_list_concepts",
                 "description": "BEHAVIOR: Lists all concept names currently stored in the memory manifold. USAGE: Call this when you need to see a directory of all remembered concepts without fetching their full text. Use this to orient yourself to the current namespace. OUTPUT: Returns a text string containing a newline-separated list of all concept identifiers.",
                 "inputSchema": {
                     "type": "object",
@@ -658,7 +658,7 @@ fn tool_list() -> Value {
 
 fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
     match name {
-        "remember" => {
+        "mcp_engram_remember" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
             let text    = args["text"].as_str().unwrap_or("").trim().to_string();
 
@@ -685,7 +685,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "recall" => {
+        "mcp_engram_recall" => {
             let query = args["query"].as_str().unwrap_or("").trim().to_string();
             let k = args["k"].as_u64().unwrap_or(5).min(20) as usize;
             let zedos_filter = args["zedos_filter"].as_str().map(|s| s.trim().to_lowercase());
@@ -779,7 +779,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "forget" => {
+        "mcp_engram_forget" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
             if concept.is_empty() {
                 return json!({
@@ -799,7 +799,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "list_concepts" => {
+        "mcp_engram_list_concepts" => {
             let concepts = store.lock().unwrap().list();
             if concepts.is_empty() {
                 json!({ "content": [{ "type": "text", "text": "No memories stored yet." }] })
