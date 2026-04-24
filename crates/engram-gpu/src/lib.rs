@@ -22,6 +22,8 @@
 //! On GPU-less machines, `CudaBackend` transparently delegates to `CpuBackend`.
 
 pub mod bvh;
+#[cfg(engram_backend_cuda)]
+pub mod optix_pipeline;
 pub mod backend;
 pub mod metal_backend;
 
