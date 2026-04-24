@@ -1,4 +1,8 @@
 // Phase 8 — OptiX RT-Core Smoke Test
+// This example only compiles and runs on CUDA-enabled hosts.
+// On CI (non-CUDA) the entire file is excluded via the cfg gate below.
+#![cfg(engram_backend_cuda)]
+//
 //
 // Validates the hardware-accelerated BVH pipeline end-to-end:
 //   1. Build a GAS from a 3×3×3 grid of synthetic AABBs (27 primitives)
