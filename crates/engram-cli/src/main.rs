@@ -76,7 +76,26 @@ enum Commands {
         k: usize,
     },
     /// Verify the agent's connection and system health
+    /// Verify the agent's connection and system health
     VerifyAgent,
+    /// Print manifold health statistics
+    Stats,
+    /// Export the manifold (or a filtered subset) as a portable JSON array
+    Export {
+        /// Only export memories with CRS >= this value (default: 0.0)
+        #[arg(long, default_value_t = 0.0)]
+        min_crs: f32,
+    },
+    /// Restore memories from a JSON array exported by `export`
+    Import {
+        /// Path to the JSON file
+        file: String,
+    },
+    /// Track a user interaction in the persistent Rooster User Model (Phase E.4)
+    TrackUser {
+        /// The interaction text to track
+        interaction: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -119,7 +138,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Ingest { path, chunk_size } => {
-            use engram_core::ast_extract::extract_ast_items;
+            use engram_ast::extract_ast_items;
             use walkdir::WalkDir;
             use std::fs;
 
@@ -403,6 +422,68 @@ fn main() -> anyhow::Result<()> {
             }
 
             println!("💡 To track code edits, run mcp_engram_watch_workspace on first agent turn.");
+        }
+        Commands::Stats => {
+            let concepts = backend.list();
+            let total_memories = concepts.len();
+            let mut pinned_count = 0;
+            let mut avg_crs = 0.0;
+            if total_memories > 0 {
+                let mut sum_crs = 0.0;
+                for c in &concepts {
+                    if let Some(b) = backend.fetch_block(c) {
+                        sum_crs += b.crs_score;
+                        if b.crs_score >= 1.0 { pinned_count += 1; }
+                    }
+                }
+                avg_crs = sum_crs / total_memories as f32;
+            }
+            println!("📊 Engram Manifold Stats");
+            println!("   Total Memories : {}", total_memories);
+            println!("   Pinned (CRS=1) : {}", pinned_count);
+            println!("   Average CRS    : {:.3}", avg_crs);
+            println!("   Store Path     : {}", store_path);
+        }
+        Commands::Export { min_crs } => {
+            let concepts = backend.list();
+            let mut exported = Vec::new();
+            for c in concepts {
+                if let Some(b) = backend.fetch_block(&c) {
+                    if b.crs_score >= min_crs {
+                        let text = std::str::from_utf8(&b.payload).unwrap_or("").trim_matches(char::from(0));
+                        exported.push(serde_json::json!({
+                            "concept": c,
+                            "text": text.trim(),
+                            "crs_score": b.crs_score,
+                            "zedos_tag": b.zedos_tag,
+                        }));
+                    }
+                }
+            }
+            let json = serde_json::to_string_pretty(&exported)?;
+            println!("{}", json);
+        }
+        Commands::Import { file } => {
+            let json = std::fs::read_to_string(&file)?;
+            let entries: Vec<serde_json::Value> = serde_json::from_str(&json)?;
+            let mut count = 0;
+            for entry in entries {
+                let concept = entry["concept"].as_str().unwrap_or("");
+                let text = entry["text"].as_str().unwrap_or("");
+                if !concept.is_empty() && !text.is_empty() {
+                    if backend.remember(concept, text).is_ok() {
+                        count += 1;
+                    }
+                }
+            }
+            println!("✓ Imported {} memories from {}", count, file);
+        }
+        Commands::TrackUser { interaction } => {
+            if let Err(e) = backend.track_user_centroid(&interaction) {
+                eprintln!("✗ Failed to track user interaction: {}", e);
+            } else {
+                println!("✓ Tracked user interaction in Rooster User Model.");
+            }
         }
     }
 

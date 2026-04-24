@@ -9,3 +9,9 @@ data/manifold/
 .DS_Store
 IMPLEMENTATION-PLAN.md
 .venv/
+
+# Runtime logs
+server.log
+# Scratch test files
+test_hypothesis.rs
+sem_search.rs

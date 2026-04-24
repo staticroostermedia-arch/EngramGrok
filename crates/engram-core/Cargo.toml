@@ -11,18 +11,6 @@ repository.workspace = true
 default = []
 rayon-backend = []     # Enable Rayon parallel scan (always available on CPU)
 bvh = []               # Enable O(log N) LBVH index (CPU, no GPU required)
-universal-ast = [
-    "dep:tree-sitter",
-    "dep:tree-sitter-rust",
-    "dep:tree-sitter-python",
-    "dep:tree-sitter-typescript",
-    "dep:tree-sitter-javascript",
-    "dep:tree-sitter-go",
-    "dep:tree-sitter-c",
-    "dep:tree-sitter-cpp",
-    "dep:tree-sitter-java",
-]
-
 [dependencies]
 
 num-complex  = { workspace = true }
@@ -39,18 +27,6 @@ streaming-iterator = "0.1"
 
 libc         = "0.2"   # O_DIRECT flag for direct I/O reads
 capnp        = "0.19"
-
-# Universal AST extraction — optional, enabled via `universal-ast`
-tree-sitter            = { version = "0.24", optional = true }
-tree-sitter-rust       = { version = "0.24", optional = true }
-tree-sitter-python     = { version = "0.23", optional = true }
-tree-sitter-typescript = { version = "0.23", optional = true }
-tree-sitter-javascript = { version = "0.23", optional = true }
-tree-sitter-go         = { version = "0.23", optional = true }
-tree-sitter-c          = { version = "0.23", optional = true }
-tree-sitter-cpp        = { version = "0.23", optional = true }
-tree-sitter-java       = { version = "0.23", optional = true }
-
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -8,7 +8,6 @@
 //! - **Full source** = Complete node source for the provlog
 
 use tree_sitter::{Language, Parser, Query, QueryCursor, Node};
-use streaming_iterator::StreamingIterator;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ItemKind {
@@ -94,7 +93,6 @@ impl LangConfig {
 
 fn get_config(ext: &str) -> Option<LangConfig> {
     match ext {
-        #[cfg(feature = "universal-ast")]
         "rs" => Some(LangConfig::new(
             tree_sitter_rust::LANGUAGE.into(),
             r#"
@@ -105,7 +103,6 @@ fn get_config(ext: &str) -> Option<LangConfig> {
             (impl_item type: (type_identifier) @name) @impl
             "#
         )),
-        #[cfg(feature = "universal-ast")]
         "py" => Some(LangConfig::new(
             tree_sitter_python::LANGUAGE.into(),
             r#"
@@ -113,7 +110,6 @@ fn get_config(ext: &str) -> Option<LangConfig> {
             (class_definition name: (identifier) @name) @class
             "#
         )),
-        #[cfg(feature = "universal-ast")]
         "ts" | "tsx" => Some(LangConfig::new(
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             r#"
@@ -124,7 +120,6 @@ fn get_config(ext: &str) -> Option<LangConfig> {
             (lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function))) @fn
             "#
         )),
-        #[cfg(feature = "universal-ast")]
         "js" | "jsx" => Some(LangConfig::new(
             tree_sitter_javascript::LANGUAGE.into(),
             r#"
@@ -134,7 +129,6 @@ fn get_config(ext: &str) -> Option<LangConfig> {
             (lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function))) @fn
             "#
         )),
-        #[cfg(feature = "universal-ast")]
         "go" => Some(LangConfig::new(
             tree_sitter_go::LANGUAGE.into(),
             r#"
@@ -144,7 +138,6 @@ fn get_config(ext: &str) -> Option<LangConfig> {
             (type_declaration (type_spec name: (type_identifier) @name type: (interface_type))) @interface
             "#
         )),
-        #[cfg(feature = "universal-ast")]
         "java" => Some(LangConfig::new(
             tree_sitter_java::LANGUAGE.into(),
             r#"
@@ -153,7 +146,6 @@ fn get_config(ext: &str) -> Option<LangConfig> {
             (method_declaration name: (identifier) @name) @method
             "#
         )),
-        #[cfg(feature = "universal-ast")]
         "c" => Some(LangConfig::new(
             tree_sitter_c::LANGUAGE.into(),
             r#"
@@ -162,7 +154,6 @@ fn get_config(ext: &str) -> Option<LangConfig> {
             (enum_specifier name: (type_identifier) @name) @enum
             "#
         )),
-        #[cfg(feature = "universal-ast")]
         "cpp" | "cc" | "cxx" | "h" | "hpp" => Some(LangConfig::new(
             tree_sitter_cpp::LANGUAGE.into(),
             r#"
@@ -191,7 +182,7 @@ pub fn extract_ast_items(file_path: &str, source: &str) -> Vec<AstItem> {
 
     let mut parser = Parser::new();
     if parser.set_language(&config.language).is_err() {
-        return Vec::new(); // Failed to set language
+        return Vec::new();
     }
 
     let tree = match parser.parse(source, None) {

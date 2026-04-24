@@ -642,11 +642,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "engram-ast"
+version = "0.4.0"
+dependencies = [
+ "streaming-iterator",
+ "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-go",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+]
+
+[[package]]
 name = "engram-cli"
 version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
+ "engram-ast",
  "engram-core",
  "num-complex",
  "reqwest",
@@ -675,15 +692,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
- "tree-sitter",
- "tree-sitter-c",
- "tree-sitter-cpp",
- "tree-sitter-go",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-typescript",
 ]
 
 [[package]]
@@ -715,6 +723,7 @@ dependencies = [
  "blake3",
  "chrono",
  "clap",
+ "engram-ast",
  "engram-core",
  "engram-gpu",
  "flume",
@@ -2792,14 +2801,13 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.24.7"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5387dffa7ffc7d2dae12b50c6f7aab8ff79d6210147c6613561fc3d474c6f75"
+checksum = "0203df02a3b6dd63575cc1d6e609edc2181c9a11867a271b25cfd2abff3ec5ca"
 dependencies = [
  "cc",
  "regex",
  "regex-syntax",
- "streaming-iterator",
  "tree-sitter-language",
 ]
 
@@ -2871,9 +2879,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-rust"
-version = "0.24.2"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "439e577dbe07423ec2582ac62c7531120dbfccfa6e5f92406f93dd271a120e45"
+checksum = "ca8ccb3e3a3495c8a943f6c3fd24c3804c471fd7f4f16087623c7fa4c0068e8a"
 dependencies = [
  "cc",
  "tree-sitter-language",

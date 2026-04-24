@@ -144,16 +144,26 @@ Integrates Engram into the agent session lifecycle. Two new MCP tools:
 
 ## Phase 8: OptiX RT-Core BVH Acceleration 🟡 IN PROGRESS
 
-- Replace `filter_cpu()` in `engram-gpu/src/bvh.rs` with OptiX 8 RT-Core hardware traversal.
+- Replace `filter_cpu()` in `engram-gpu/src/bvh.rs` with OptiX 9.1 RT-Core hardware traversal.
 - **Prereq:** `OPTIX_SDK_PATH=/home/a/optix` ✅ | Runtime `libnvoptix.so` ✅ | RTX 5060 Ti + 5060 ✅
 - **Compilation:** ✅ All OptiX shaders compile. Binary links `libcuda.so.1` + `libcudart.so.12`.
-- **Bug fixed (2026-04-24):** `probe_cuda()` in `backend.rs` called `cuDeviceGetCount` without
+- **Bug fixed (2026-04-24 session 1):** `probe_cuda()` in `backend.rs` called `cuDeviceGetCount` without
   first calling `cuInit(0)`. CUDA driver API requires `cuInit` before any other call.
-  Without it, `cuDeviceGetCount` returns `CUDA_ERROR_NOT_INITIALIZED (3)` → `rc != 0` → false,
+  Without it, `cuDeviceGetCount` returns `CUDA_ERROR_NOT_INITIALIZED (3)` → false,
   making the system report "No CUDA device" even with 2 GPUs present.
-  **Fix:** dlsym `cuInit`, call it with flags=0, fail gracefully if it returns non-zero,
-  then call `cuDeviceGetCount`. GPU now detected correctly.
-- **Status:** [x] intersect.cu  [x] rg.cu  [x] ah.cu  [x] ms.cu  [x] host.cpp  [x] pipeline.rs  [x] build.rs  [x] bvh.rs  [ ] probe_cuda fix rebuild
+  **Fix:** dlsym `cuInit`, call it with flags=0, fail gracefully if non-zero, then `cuDeviceGetCount`.
+- **Bug fixed (2026-04-24 session 2) — SM 12.0 PTX mismatch:**
+  PTX kernels were compiled with `--gpu-architecture=compute_86` (Ampere). RTX 5060 Ti / RTX 5060
+  are Blackwell consumer GPU = **SM 12.0** (not SM 10.0). `optixModuleCreate` JIT-compiling SM 8.6
+  PTX for SM 12.0 causes a SIGSEGV inside the NVIDIA driver's JIT compiler.
+  **Fix:**
+    1. `build.rs`: auto-detect native GPU SM via `nvidia-smi`, compile PTX for that arch.
+    2. Also add `sm_120` to the regular CUDA kernel `--generate-code` flags.
+    3. `bvh.rs`: guard `OptixBvhPipeline::build()` behind `ENGRAM_OPTIX_ENABLED=1` env var.
+       Default = disabled so the system is stable without explicit opt-in.
+- **Status:** [x] intersect.cu  [x] rg.cu  [x] ah.cu  [x] ms.cu  [x] host.cpp  [x] pipeline.rs
+             [x] build.rs (SM 12.0 native arch)  [x] bvh.rs (ENGRAM_OPTIX_ENABLED gate)
+             [ ] live RT-Core traversal demo on hardware
 
 ---
 

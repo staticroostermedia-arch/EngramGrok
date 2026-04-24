@@ -635,6 +635,21 @@ fn tool_list() -> Value {
                     },
                     "required": ["concept", "success"]
                 }
+            },
+            {
+                "name": "mcp_engram_track_user",
+                "description": "Track a user interaction in the persistent Rooster User Model (Phase E.4). \
+                                Applies a 90/10 EMA superposition to track geometric drift of user intent.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "interaction": {
+                            "type": "string",
+                            "description": "The interaction text to track"
+                        }
+                    },
+                    "required": ["interaction"]
+                }
             }
         ]
     })
@@ -1439,6 +1454,22 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     json!({ "content": [{ "type": "text", "text": result_msg }] })
                 },
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error verifying hypothesis: {e}") }], "isError": true }),
+            }
+        }
+
+        "mcp_engram_track_user" => {
+            let interaction = args.get("interaction").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+            if interaction.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: missing required 'interaction' string" }], "isError": true });
+            }
+
+            match store.lock().unwrap().track_user_centroid(&interaction) {
+                Ok(_) => {
+                    info!("tracked user interaction: {:.20}...", interaction);
+                    json!({ "content": [{ "type": "text", "text": "✓ Tracked user interaction in Rooster User Model." }] })
+                },
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error tracking interaction: {e}") }], "isError": true }),
             }
         }
 
