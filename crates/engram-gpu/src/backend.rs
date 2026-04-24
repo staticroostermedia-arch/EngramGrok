@@ -70,25 +70,44 @@ impl CudaBackend {
     }
 
     /// Check if a CUDA-capable GPU is reachable.
-    /// Uses the CUDA runtime API via a safe probe.
+    ///
+    /// Uses the CUDA driver API via `dlopen`/`dlsym` — no compile-time CUDA dependency.
+    ///
+    /// # CUDA Driver API initialization contract
+    /// `cuInit(0)` MUST be called before any other CUDA driver API function.
+    /// Without it, `cuDeviceGetCount` returns `CUDA_ERROR_NOT_INITIALIZED (3)`
+    /// regardless of how many GPUs are physically present. This was the root cause
+    /// of the "No CUDA device" false negative on the RTX 5060 Ti / RTX 5060 machine.
     fn probe_cuda() -> bool {
-        // Try to call cudaGetDeviceCount via libc dlsym
-        // If libcuda.so isn't loaded or returns 0 devices → false
         #[cfg(target_os = "linux")]
         {
-            // We check by probing the shared library — no compile-time CUDA required
             unsafe {
                 let lib = libc::dlopen(
                     b"libcuda.so.1\0".as_ptr() as *const libc::c_char,
-                    libc::RTLD_NOW | libc::RTLD_LOCAL,
+                    libc::RTLD_NOW | libc::RTLD_GLOBAL,
                 );
                 if lib.is_null() { return false; }
-                let sym = libc::dlsym(lib, b"cuDeviceGetCount\0".as_ptr() as *const libc::c_char);
-                if sym.is_null() {
+
+                // Step 1: cuInit(0) — mandatory before any other driver API call.
+                let init_sym = libc::dlsym(lib, b"cuInit\0".as_ptr() as *const libc::c_char);
+                if init_sym.is_null() {
                     libc::dlclose(lib);
                     return false;
                 }
-                let get_count: extern "C" fn(*mut i32) -> i32 = std::mem::transmute(sym);
+                let cu_init: extern "C" fn(u32) -> i32 = std::mem::transmute(init_sym);
+                if cu_init(0) != 0 {
+                    // cuInit failed — driver not available or permission denied
+                    libc::dlclose(lib);
+                    return false;
+                }
+
+                // Step 2: cuDeviceGetCount — now safe to call after cuInit.
+                let count_sym = libc::dlsym(lib, b"cuDeviceGetCount\0".as_ptr() as *const libc::c_char);
+                if count_sym.is_null() {
+                    libc::dlclose(lib);
+                    return false;
+                }
+                let get_count: extern "C" fn(*mut i32) -> i32 = std::mem::transmute(count_sym);
                 let mut count: i32 = 0;
                 let rc = get_count(&mut count);
                 libc::dlclose(lib);

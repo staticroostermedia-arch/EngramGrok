@@ -142,6 +142,22 @@ Integrates Engram into the agent session lifecycle. Two new MCP tools:
 
 ---
 
+## Phase 8: OptiX RT-Core BVH Acceleration 🟡 IN PROGRESS
+
+- Replace `filter_cpu()` in `engram-gpu/src/bvh.rs` with OptiX 8 RT-Core hardware traversal.
+- **Prereq:** `OPTIX_SDK_PATH=/home/a/optix` ✅ | Runtime `libnvoptix.so` ✅ | RTX 5060 Ti + 5060 ✅
+- **Compilation:** ✅ All OptiX shaders compile. Binary links `libcuda.so.1` + `libcudart.so.12`.
+- **Bug fixed (2026-04-24):** `probe_cuda()` in `backend.rs` called `cuDeviceGetCount` without
+  first calling `cuInit(0)`. CUDA driver API requires `cuInit` before any other call.
+  Without it, `cuDeviceGetCount` returns `CUDA_ERROR_NOT_INITIALIZED (3)` → `rc != 0` → false,
+  making the system report "No CUDA device" even with 2 GPUs present.
+  **Fix:** dlsym `cuInit`, call it with flags=0, fail gracefully if it returns non-zero,
+  then call `cuDeviceGetCount`. GPU now detected correctly.
+- **Status:** [x] intersect.cu  [x] rg.cu  [x] ah.cu  [x] ms.cu  [x] host.cpp  [x] pipeline.rs  [x] build.rs  [x] bvh.rs  [ ] probe_cuda fix rebuild
+
+---
+
+
 ## Phase 7: Ouroboros AST Pipeline 🔴 TODO
 
 Port CodeLand's tree-sitter → phase-vector pipeline as a standalone `engram-ast` crate.
