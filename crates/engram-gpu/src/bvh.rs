@@ -285,7 +285,8 @@ impl BvhManifold {
 
         let pos = Self::project_to_3d(q);
 
-        // ── Phase 8: OptiX RT-Core path ───────────────────────────────────────
+        // ── Phase 8: OptiX RT-Core path (CUDA builds only) ───────────────────
+        #[cfg(engram_backend_cuda)]
         let ids = if let Some(ref pipe) = self.optix_pipeline {
             let hits = pipe.query_filter_optix([pos.x, pos.y, pos.z], KNN_FILTER_CANDIDATES);
             if !hits.is_empty() {
@@ -297,6 +298,10 @@ impl BvhManifold {
         } else {
             self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
         };
+
+        // ── CPU BVH slab path (non-CUDA builds) ──────────────────────────────
+        #[cfg(not(engram_backend_cuda))]
+        let ids = self.filter_cpu(pos, KNN_FILTER_CANDIDATES);
 
         #[derive(Clone)]
         struct ScoredCandidate {
