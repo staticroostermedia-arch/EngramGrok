@@ -275,6 +275,8 @@ impl Backend {
             Backend::Gpu(b) => b.forget(concept),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.forget(concept),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.forget(concept),
             Backend::Single(b) => b.forget(concept),
             Backend::Sheaf(b) => b.forget(concept),
         }
@@ -285,6 +287,8 @@ impl Backend {
             Backend::Gpu(b) => b.list(),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.list(),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.list(),
             Backend::Single(b) => b.list(),
             Backend::Sheaf(b) => b.list(),
         }
@@ -295,6 +299,8 @@ impl Backend {
             Backend::Gpu(b) => b.fetch_block(concept),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.fetch_block(concept),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.fetch_block(concept),
             Backend::Single(b) => b.fetch_block(concept),
             Backend::Sheaf(b) => b.fetch_block(concept),
         }
@@ -305,6 +311,8 @@ impl Backend {
             Backend::Gpu(b) => b.fetch(concept),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.fetch(concept),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.fetch(concept),
             Backend::Single(b) => b.fetch(concept),
             Backend::Sheaf(b) => b.fetch(concept),
         }
@@ -315,6 +323,8 @@ impl Backend {
             Backend::Gpu(b) => b.encode(text),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.encode(text),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.encode(text),
             Backend::Single(b) => b.encode(text),
             Backend::Sheaf(b) => b.encode(text),
         }
@@ -325,6 +335,8 @@ impl Backend {
             Backend::Gpu(b) => b.query(q, k),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.query(q, k),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.query(q, k),
             Backend::Single(b) => b.query(q, k),
             Backend::Sheaf(b) => b.query(q, k),
         }
@@ -335,6 +347,8 @@ impl Backend {
             Backend::Gpu(b) => b.store(concept, block),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.store(concept, block),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.store(concept, block),
             Backend::Single(b) => b.store(concept, block),
             Backend::Sheaf(b) => b.store(concept, block),
         }
@@ -345,6 +359,8 @@ impl Backend {
             Backend::Gpu(_) => false,
             #[cfg(engram_backend_metal)]
             Backend::Metal(_) => false,
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(_) => false,
             Backend::Single(_) => false,
             Backend::Sheaf(b) => b.set_active_stalk(name),
         }
@@ -355,6 +371,8 @@ impl Backend {
             Backend::Gpu(_) => vec!["default".to_string()],
             #[cfg(engram_backend_metal)]
             Backend::Metal(_) => vec!["default".to_string()],
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(_) => vec!["default".to_string()],
             Backend::Single(_) => vec!["default".to_string()],
             Backend::Sheaf(b) => b.stalk_names().into_iter().map(|s| s.to_string()).collect(),
         }
@@ -365,6 +383,8 @@ impl Backend {
             Backend::Gpu(_) => "default".to_string(),
             #[cfg(engram_backend_metal)]
             Backend::Metal(_) => "default".to_string(),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(_) => "default".to_string(),
             Backend::Single(_) => "default".to_string(),
             Backend::Sheaf(b) => b.active_stalk_name().to_string(),
         }
@@ -376,21 +396,44 @@ impl Backend {
             Backend::Gpu(b) => b.verify_hypothesis(concept, success),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.verify_hypothesis(concept, success),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.verify_hypothesis(concept, success),
             Backend::Single(b) => b.verify_hypothesis(concept, success),
             Backend::Sheaf(b) => b.verify_hypothesis(concept, success),
         }
     }
+    /// Phase E.4 Rooster User Model: 90/10 EMA superposition of user interaction centroid.
+    /// Implemented inline on the Backend enum so all backend variants are covered without
+    /// requiring `track_user_centroid` to be a concrete method on each backend struct.
     fn track_user_centroid(&self, interaction: &str) -> Result<()> {
-        match self {
-            #[cfg(engram_backend_cuda)]
-            Backend::Gpu(b) => b.track_user_centroid(interaction),
-            #[cfg(engram_backend_metal)]
-            Backend::Metal(b) => b.track_user_centroid(interaction),
-            Backend::Single(b) => b.track_user_centroid(interaction),
-            Backend::Sheaf(b) => b.track_user_centroid(interaction),
-        }
+        use engram_core::types::ZEDOS_USER_MODEL;
+        const CENTROID: &str = "_user_centroid";
+        let new_block = self.encode(interaction);
+        let centroid = if let Some(mut existing) = self.fetch_block(CENTROID) {
+            let mut norm_sq = 0.0f32;
+            for i in 0..engram_core::types::DIMENSION {
+                let blended = existing.q[i] * 0.90 + new_block.q[i] * 0.10;
+                existing.q[i] = blended;
+                norm_sq += blended.norm_sqr();
+            }
+            let norm = norm_sq.sqrt().max(1e-9);
+            for i in 0..engram_core::types::DIMENSION { existing.q[i] /= norm; }
+            existing.superposition_count = existing.superposition_count.saturating_add(1);
+            let text_bytes = interaction.as_bytes();
+            let copy_len = text_bytes.len().min(existing.payload.len());
+            existing.payload[..copy_len].copy_from_slice(&text_bytes[..copy_len]);
+            if copy_len < existing.payload.len() { existing.payload[copy_len..].fill(0); }
+            existing
+        } else {
+            let mut fresh = new_block;
+            fresh.zedos_tag = ZEDOS_USER_MODEL;
+            fresh.crs_score = 1.0;
+            fresh
+        };
+        self.store(CENTROID, centroid)
     }
 }
+
 
 // ── StoreHandle ───────────────────────────────────────────────────────────────
 
