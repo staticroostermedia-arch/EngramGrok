@@ -32,9 +32,9 @@ pub use backend::CudaBackend;
 pub use metal_backend::MetalBackend;
 pub mod quant;
 
-/// WebGPU INT8 Poincaré backend — available when `wgpu-backend` feature is enabled.
-#[cfg(feature = "wgpu-backend")]
+/// WebGPU INT8 Poincaré backend — available when no CUDA/Metal is detected (build.rs wgpu fallback).
+#[cfg(engram_backend_wgpu)]
 pub mod wgpu_backend;
-#[cfg(feature = "wgpu-backend")]
+#[cfg(engram_backend_wgpu)]
 pub use wgpu_backend::WgpuBackend;
 

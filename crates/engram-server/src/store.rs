@@ -29,7 +29,7 @@ use engram_gpu::backend::CudaBackend;
 use engram_gpu::metal_backend::MetalBackend;
 #[cfg(engram_backend_wgpu)]
 use engram_gpu::wgpu_backend::WgpuBackend;
-use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION};
+use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION, ZEDOS_USER_MODEL};
 use engram_core::ops::{op_add, op_bind, op_deduce};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -406,7 +406,6 @@ impl Backend {
     /// Implemented inline on the Backend enum so all backend variants are covered without
     /// requiring `track_user_centroid` to be a concrete method on each backend struct.
     fn track_user_centroid(&self, interaction: &str) -> Result<()> {
-        use engram_core::types::ZEDOS_USER_MODEL;
         const CENTROID: &str = "_user_centroid";
         let new_block = self.encode(interaction);
         let centroid = if let Some(mut existing) = self.fetch_block(CENTROID) {
