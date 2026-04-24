@@ -461,6 +461,7 @@ impl VsaBackend for WgpuBackend {
                     score,
                     crs:     block.crs,
                     provlog: block.provlog.clone(),
+                    ..Default::default()
                 }
             })
             .collect()
