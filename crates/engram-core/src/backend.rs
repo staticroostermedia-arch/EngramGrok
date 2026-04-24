@@ -9,7 +9,7 @@ use num_complex::Complex32;
 use anyhow::Result;
 
 /// A retrieved memory with its concept name and similarity score.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Memory {
     /// The concept identifier (e.g. "krebs_cycle")
     pub concept: String,
@@ -246,6 +246,49 @@ pub trait VsaBackend: Send + Sync {
         }
 
         self.store(concept, existing)
+    }
+
+    /// Track the persistent centroid of user interaction (Phase E.4 Rooster User Model).
+    ///
+    /// Applies the 90/10 EMA superposition formula:
+    /// Q_new = 0.9 * Q_old + 0.1 * Q_input
+    /// This tracks the geometric drift of user attention over time.
+    /// The resulting vector is stored under the `_user_centroid` concept with the
+    /// `ZEDOS_USER_MODEL` tag.
+    fn track_user_centroid(&self, interaction_text: &str) -> Result<()> {
+        let centroid_concept = "_user_centroid";
+        let new_block = self.encode(interaction_text);
+        
+        let centroid = if let Some(mut existing) = self.fetch_block(centroid_concept) {
+            let mut norm_sq = 0.0f32;
+            for i in 0..crate::types::DIMENSION {
+                let blended = existing.q[i] * 0.90 + new_block.q[i] * 0.10;
+                existing.q[i] = blended;
+                norm_sq += blended.norm_sqr();
+            }
+            let norm = norm_sq.sqrt().max(1e-9);
+            for i in 0..crate::types::DIMENSION {
+                existing.q[i] /= norm;
+            }
+            existing.superposition_count = existing.superposition_count.saturating_add(1);
+            
+            // Update payload with latest interaction for visibility
+            let text_bytes = interaction_text.as_bytes();
+            let copy_len = text_bytes.len().min(existing.payload.len());
+            existing.payload[..copy_len].copy_from_slice(&text_bytes[..copy_len]);
+            if copy_len < existing.payload.len() {
+                existing.payload[copy_len..].fill(0);
+            }
+            
+            existing
+        } else {
+            let mut fresh = new_block;
+            fresh.zedos_tag = crate::types::ZEDOS_USER_MODEL;
+            fresh.crs_score = 1.0;
+            fresh
+        };
+        
+        self.store(centroid_concept, centroid)
     }
 }
 
