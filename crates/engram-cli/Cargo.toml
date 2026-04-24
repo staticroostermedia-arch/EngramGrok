@@ -12,7 +12,8 @@ name = "engram-cli"
 path = "src/main.rs"
 
 [dependencies]
-engram-core = { path = "../engram-core", features = ["universal-ast"] }
+engram-core = { path = "../engram-core" }
+engram-ast  = { path = "../engram-ast" }
 clap        = { workspace = true }
 serde_json  = { workspace = true }
 anyhow       = { workspace = true }

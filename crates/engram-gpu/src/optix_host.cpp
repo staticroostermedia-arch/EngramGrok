@@ -107,6 +107,11 @@ EngramOptiXPipeline* engram_optix_init(
 
     char log[4096]; size_t log_size = sizeof(log);
 
+    // PTX text is valid SM-native virtual ISA. _optix_* intrinsics are resolved
+    // by the OptiX 9.1 JIT at optixModuleCreate time — not by ptxas.
+    // We compile with nvcc --ptx --gpu-architecture=compute_120 (native SM 12.0)
+    // and ignore ptxas exit codes (CUDA 13 ptxas rejects _optix_* as unknown;
+    // the PTX file is written before ptxas validation runs).
     auto compile_mod = [&](const char* ptx, OptixModule* mod) -> bool {
         log_size = sizeof(log);
         OptixResult r = optixModuleCreate(

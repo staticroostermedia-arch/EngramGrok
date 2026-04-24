@@ -226,7 +226,7 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                             lock.set_active_stalk("codeland_ast");
                                         }
 
-                                        let items = engram_core::ast_extract::extract_ast_items(path.to_str().unwrap_or(""), &content);
+                                        let items = engram_ast::extract_ast_items(path.to_str().unwrap_or(""), &content);
 
                                         if !items.is_empty() {
                                             for item in items {

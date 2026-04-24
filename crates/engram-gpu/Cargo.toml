@@ -13,6 +13,7 @@ default      = []
 # preferred path — just `cargo install engram-server` and the best backend is chosen.
 cuda-kernels = []   # kept for explicit override: --features cuda-kernels
 rocm-kernels = []   # kept for explicit override: --features rocm-kernels
+wgpu-backend = []   # WGPU fallback
 
 [dependencies]
 engram-core  = { path = "../engram-core", default-features = false }

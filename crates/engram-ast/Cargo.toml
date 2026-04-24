@@ -1,0 +1,25 @@
+[package]
+name        = "engram-ast"
+description = "Universal AST extraction pipeline for Engram ingestion"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+streaming-iterator = "0.1"
+
+# Universal AST extraction
+# tree-sitter 0.23 uses ABI v14; all available grammar crates are at 0.23 which also emit v14.
+# tree-sitter-rust 0.24 emits ABI v15 and requires tree-sitter 0.24 — excluded here.
+# Use 0.23.x for the full grammar suite.
+tree-sitter            = { version = "0.23" }
+tree-sitter-rust       = { version = "0.23" }
+tree-sitter-python     = { version = "0.23" }
+tree-sitter-typescript = { version = "0.23" }
+tree-sitter-javascript = { version = "0.23" }
+tree-sitter-go         = { version = "0.23" }
+tree-sitter-c          = { version = "0.23" }
+tree-sitter-cpp        = { version = "0.23" }
+tree-sitter-java       = { version = "0.23" }

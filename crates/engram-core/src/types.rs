@@ -49,6 +49,8 @@ pub const ZEDOS_PRAXIS: u8       = 0x50;
 pub const ZEDOS_HYPOTHESIS: u8   = 0xAA;
 /// Phase M: Relation block — links two concepts via OP_BIND (Merkle-chained).
 pub const ZEDOS_RELATION: u8     = 0xE1;
+/// Phase E.4: User Model block — tracks persistent centroid of user interaction.
+pub const ZEDOS_USER_MODEL: u8   = 0xC0;
 
 // ── Compile-time size seal ──────────────────────────────────────────────────────
 const _: () = assert!(
