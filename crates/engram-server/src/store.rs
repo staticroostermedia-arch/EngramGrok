@@ -380,6 +380,16 @@ impl Backend {
             Backend::Sheaf(b) => b.verify_hypothesis(concept, success),
         }
     }
+    fn track_user_centroid(&self, interaction: &str) -> Result<()> {
+        match self {
+            #[cfg(engram_backend_cuda)]
+            Backend::Gpu(b) => b.track_user_centroid(interaction),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.track_user_centroid(interaction),
+            Backend::Single(b) => b.track_user_centroid(interaction),
+            Backend::Sheaf(b) => b.track_user_centroid(interaction),
+        }
+    }
 }
 
 // ── StoreHandle ───────────────────────────────────────────────────────────────
@@ -427,7 +437,7 @@ impl StoreHandle {
                         SheafBackend::new_boxed(boxed_stalks)
                     };
 
-                    #[cfg(not(feature = "cuda"))]
+                    #[cfg(not(engram_backend_cuda))]
                     let sheaf = {
                         SheafBackend::new(stalks)
                     };
@@ -442,18 +452,19 @@ impl StoreHandle {
                 }
             }
         } else {
-            // Use GPU-accelerated backend when compiled with appropriate features
+            // GPU backend selection — mutually exclusive, uses propagated cfg flags from build.rs.
+            // Exactly one of these blocks compiles at a time; the last expression is the `Backend`.
             #[cfg(engram_backend_cuda)]
             {
                 tracing::info!("engram-gpu: CudaBackend selected (BVH + CUDA cosine kernels)");
                 Backend::Gpu(CudaBackend::new(&expanded))
             }
-            #[cfg(all(feature = "metal", not(feature = "cuda")))]
+            #[cfg(all(engram_backend_metal, not(engram_backend_cuda)))]
             {
                 tracing::info!("engram-gpu: MetalBackend selected (Apple Silicon GPU cosine kernels)");
                 Backend::Metal(MetalBackend::new(&expanded))
             }
-            #[cfg(not(any(feature = "cuda", feature = "metal")))]
+            #[cfg(not(any(engram_backend_cuda, engram_backend_metal)))]
             {
                 Backend::Single(CpuBackend::new(&expanded))
             }
@@ -514,7 +525,28 @@ impl StoreHandle {
         for m in &results { self.access_index.touch(&m.concept); }
         results
     }
-    pub fn forget(&self, concept: &str) -> Result<()> { self.backend.forget(concept) }
+    /// Delete a concept from the manifold.
+    ///
+    /// **Autophagy Protection**: A hard-coded set of foundational blocks can NEVER be
+    /// deleted — not by `forget`, not by `mcp_engram_forget_old`, not by any agent.
+    /// These are load-bearing anchors whose removal would corrupt longitudinal continuity.
+    ///
+    /// Current protected concepts:
+    /// - `_user_centroid`  — Phase E.4 Rooster User Model (90/10 EMA centroid)
+    pub fn forget(&self, concept: &str) -> Result<()> {
+        // Strip sheaf prefix for comparison
+        let raw = concept.split_once("::").map_or(concept, |(_, r)| r);
+        const PROTECTED: &[&str] = &["_user_centroid"];
+        if PROTECTED.contains(&raw) {
+            return Err(anyhow::anyhow!(
+                "Cannot delete protected concept '{}'. \
+                 This block anchors longitudinal manifold continuity (Rooster User Model). \
+                 To reset user intent, use mcp_engram_update instead.",
+                concept
+            ));
+        }
+        self.backend.forget(concept)
+    }
     pub fn list(&self) -> Vec<String> { self.backend.list() }
     pub fn fetch(&self, concept: &str) -> Option<Box<[engram_core::Complex32; 8192]>> { self.backend.fetch(concept) }
     pub fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> { self.backend.fetch_block(concept) }
@@ -531,6 +563,9 @@ impl StoreHandle {
     }
     pub fn verify_hypothesis(&self, concept: &str, success: bool) -> Result<()> {
         self.backend.verify_hypothesis(concept, success)
+    }
+    pub fn track_user_centroid(&self, interaction: &str) -> Result<()> {
+        self.backend.track_user_centroid(interaction)
     }
 
 
@@ -970,16 +1005,90 @@ impl StoreHandle {
     }
 
     /// BFS over the relation graph from a seed concept. Returns Mermaid graph LR source.
+    ///
+    /// Phase AST-Viz: nodes that were ingested from workspace source files carry
+    /// spatial AABB coordinates (`aabb_min[0]` / `aabb_max[0]` = row range).
+    /// Those nodes are grouped into Mermaid `subgraph` sections, keyed by file stem
+    /// (the prefix before the first `::` in the concept name).
+    /// Non-AST nodes are rendered as plain nodes outside any subgraph.
+    /// All directed edges are emitted after the subgraph declarations.
     pub fn visualize_graph(&self, seed: &str, depth: usize) -> String {
+        use std::collections::{HashMap, HashSet};
+
         let edges = self.relation_index.bfs(seed, depth);
         if edges.is_empty() {
             return format!("No outgoing relations found for '{}'.", seed);
         }
-        let mut lines = vec!["```mermaid".to_string(), "graph LR".to_string()];
+
+        // ── Collect every unique node name referenced in the BFS result ──────
+        let mut node_names: HashSet<String> = HashSet::new();
         for e in &edges {
-            let f = e.from.replace([' ', '-', '/'], "_");
-            let t = e.to.replace([' ', '-', '/'], "_");
-            lines.push(format!("  {}[\"{}\"] -->|{}| {}[\"{}\"]", f, e.from, e.label, t, e.to));
+            node_names.insert(e.from.clone());
+            node_names.insert(e.to.clone());
+        }
+
+        // ── Bucket nodes: AST (has spatial bounds) vs standalone ─────────────
+        // Key: file_stem (String), Value: Vec<(node_name, row_min, row_max)>
+        let mut ast_groups: HashMap<String, Vec<(String, f32, f32)>> = HashMap::new();
+        let mut standalone: Vec<String> = Vec::new();
+
+        for name in &node_names {
+            // Strip sheaf prefix if present
+            let raw = name.split_once("::").map_or(name.as_str(), |(_, r)| r);
+            if let Some(block) = self.fetch_block(raw) {
+                let row_min = block.aabb_min[0];
+                let row_max = block.aabb_max[0];
+                if row_max > 0.0 {
+                    // Derive file stem from concept name (everything before the first '__' or '::')
+                    let stem = raw
+                        .split_once("::")
+                        .map(|(s, _)| s)
+                        .or_else(|| raw.split_once("__").map(|(s, _)| s))
+                        .unwrap_or(raw)
+                        .to_string();
+                    ast_groups
+                        .entry(stem)
+                        .or_default()
+                        .push((name.clone(), row_min, row_max));
+                    continue;
+                }
+            }
+            standalone.push(name.clone());
+        }
+
+        // ── Build Mermaid output ──────────────────────────────────────────────
+        let mut lines = vec!["```mermaid".to_string(), "graph LR".to_string()];
+
+        // Sanitise an identifier for Mermaid (spaces / slashes / dashes → _)
+        let sanitise = |s: &str| s.replace([' ', '-', '/', ':'], "_");
+
+        // Emit subgraphs for each file stem
+        let mut file_stems: Vec<&String> = ast_groups.keys().collect();
+        file_stems.sort();
+        for stem in file_stems {
+            let nodes = &ast_groups[stem];
+            lines.push(format!("  subgraph {}[\"📄 {}\"]", sanitise(stem), stem));
+            for (name, row_min, row_max) in nodes {
+                let id = sanitise(name);
+                lines.push(format!(
+                    "    {}[\"{}\\n(L{:.0}–L{:.0})\"]",
+                    id, name, row_min, row_max
+                ));
+            }
+            lines.push("  end".to_string());
+        }
+
+        // Emit standalone nodes (no spatial data)
+        for name in &standalone {
+            let id = sanitise(name);
+            lines.push(format!("  {}[\"{}\"]", id, name));
+        }
+
+        // Emit edges
+        for e in &edges {
+            let f = sanitise(&e.from);
+            let t = sanitise(&e.to);
+            lines.push(format!("  {} -->|{}| {}", f, e.label, t));
         }
         lines.push("```".to_string());
         lines.join("\n")
