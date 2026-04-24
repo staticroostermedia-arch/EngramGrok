@@ -151,6 +151,10 @@ pub struct BvhManifold {
     /// K-NN result cache (FNV hash → top-K results)
     query_cache: std::sync::RwLock<HashMap<u64, Vec<Memory>>>,
     cache_queue: std::sync::RwLock<std::collections::VecDeque<u64>>,
+    /// Phase 8: OptiX RT-Core accelerated BVH pipeline.
+    /// `Some(_)` when compiled with OPTIX_SDK_PATH and init succeeded.
+    /// `None` → query falls back to `filter_cpu()` (CPU slab traversal).
+    pub optix_pipeline: Option<crate::optix_pipeline::OptixBvhPipeline>,
 }
 
 unsafe impl Send for BvhManifold {}
@@ -195,6 +199,27 @@ impl BvhManifold {
         build_top_down(&mut leaves, &mut nodes, -1);
         eprintln!("[BVH] ✓ LBVH ready: {} nodes ({} concepts)", nodes.len(), entries.len());
 
+        // Phase 8: Attempt OptiX RT-Core GAS construction.
+        //
+        // Gated behind ENGRAM_OPTIX_ENABLED=1 because the PTX kernels are compiled
+        // for a specific SM target; on Blackwell (SM 10.0) with a mismatched PTX
+        // arch the optixModuleCreate call SIGSEGVs inside the driver's JIT compiler.
+        // The CPU BVH + CUDA cosine-kernel path (CudaBackend) is already fast enough
+        // for manifolds <100K blocks. OptiX is only needed at >100K scale.
+        let optix_pipeline = if std::env::var("ENGRAM_OPTIX_ENABLED").as_deref() == Ok("1") {
+            let aabb_data = crate::optix_pipeline::OptixBvhPipeline::aabb_from_entries(&entries, AABB_RADIUS);
+            let pipe = crate::optix_pipeline::OptixBvhPipeline::build(&aabb_data);
+            if pipe.is_some() {
+                eprintln!("[BVH] ✓ OptiX RT-Core pipeline ready.");
+            } else {
+                eprintln!("[BVH] OptiX RT-Core init failed — CPU BVH active.");
+            }
+            pipe
+        } else {
+            eprintln!("[BVH] OptiX RT-Core disabled (set ENGRAM_OPTIX_ENABLED=1 to enable).");
+            None
+        };
+
         Some(Self {
             nodes,
             entries,
@@ -203,6 +228,7 @@ impl BvhManifold {
             ready: Arc::new(AtomicBool::new(true)),
             query_cache: std::sync::RwLock::new(HashMap::new()),
             cache_queue: std::sync::RwLock::new(std::collections::VecDeque::new()),
+            optix_pipeline,
         })
     }
 
@@ -254,7 +280,19 @@ impl BvhManifold {
         }
 
         let pos = Self::project_to_3d(q);
-        let ids = self.filter_cpu(pos, KNN_FILTER_CANDIDATES);
+
+        // ── Phase 8: OptiX RT-Core path ───────────────────────────────────────
+        let ids = if let Some(ref pipe) = self.optix_pipeline {
+            let hits = pipe.query_filter_optix([pos.x, pos.y, pos.z], KNN_FILTER_CANDIDATES);
+            if !hits.is_empty() {
+                hits
+            } else {
+                // Fall back to CPU slab traversal on empty result
+                self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
+            }
+        } else {
+            self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
+        };
 
         #[derive(Clone)]
         struct ScoredCandidate {
