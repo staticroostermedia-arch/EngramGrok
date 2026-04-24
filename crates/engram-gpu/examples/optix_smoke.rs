@@ -1,8 +1,4 @@
 // Phase 8 — OptiX RT-Core Smoke Test
-// This example only compiles and runs on CUDA-enabled hosts.
-// On CI (non-CUDA) the entire file is excluded via the cfg gate below.
-#![cfg(engram_backend_cuda)]
-//
 //
 // Validates the hardware-accelerated BVH pipeline end-to-end:
 //   1. Build a GAS from a 3×3×3 grid of synthetic AABBs (27 primitives)
@@ -13,11 +9,19 @@
 // Run with:
 //   OPTIX_SDK_PATH=/home/a/optix cargo run -p engram-gpu --example optix_smoke
 //
-// Without OPTIX_SDK_PATH the binary falls back to the CPU BVH path and prints
-// a clear diagnostic so CI machines don't falsely fail.
+// Without CUDA (CI) a stub main runs and prints a diagnostic — no false failure.
 
+#[cfg(not(engram_backend_cuda))]
+fn main() {
+    eprintln!("[optix_smoke] CUDA not detected — OptiX smoke test skipped on this platform.");
+    eprintln!("[optix_smoke] Set OPTIX_SDK_PATH and rebuild with a CUDA-enabled toolchain.");
+}
+
+#[cfg(engram_backend_cuda)]
 use std::time::Instant;
+#[cfg(engram_backend_cuda)]
 use engram_gpu::optix_pipeline::OptixBvhPipeline;
+#[cfg(engram_backend_cuda)]
 use engram_gpu::bvh::ManifoldEntry;
 
 // AABB half-extent matching AABB_RADIUS in index.rs / optix_intersect.cu
@@ -27,6 +31,7 @@ const SPACING: f32 = 400.0;
 // Grid dimensions (GRID × GRID × GRID primitives)
 const GRID: i32 = 3;
 
+#[cfg(engram_backend_cuda)]
 fn main() {
     println!("=== OptiX RT-Core Smoke Test ===");
 
