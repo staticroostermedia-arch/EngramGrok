@@ -20,8 +20,14 @@
 //!   optix_available       — OptiX RT-Core BVH compiled (NVIDIA only)
 
 fn main() {
-    // Declare custom cfg keys so rustc doesn't warn about unknown cfgs
+    // Declare ALL custom cfg keys so rustc's check-cfg pass doesn't warn.
+    // These are emitted conditionally below depending on detected GPU toolchain.
     println!("cargo::rustc-check-cfg=cfg(optix_available)");
+    println!("cargo::rustc-check-cfg=cfg(engram_backend_cuda)");
+    println!("cargo::rustc-check-cfg=cfg(engram_backend_rocm)");
+    println!("cargo::rustc-check-cfg=cfg(engram_backend_metal)");
+    println!("cargo::rustc-check-cfg=cfg(engram_backend_wgpu)");
+    println!("cargo::rustc-check-cfg=cfg(engram_backend_cpu)");
 
     // ── Always emit CPU baseline ─────────────────────────────────────────────
     println!("cargo:rustc-cfg=engram_backend_cpu");
@@ -295,6 +301,11 @@ fn compile_optix_ptx(nvcc: &std::path::Path, sdk: &str) -> bool {
 /// Detect the native GPU virtual PTX architecture via nvidia-smi.
 /// Returns e.g. "compute_120" for SM 12.0 (RTX 5060 Ti / Blackwell consumer).
 /// Falls back through compute_89 → compute_86 if detection fails.
+///
+/// NOTE: Currently used only for CUDA regular kernel arch selection when the
+/// OptiX PTX path is NOT taken. Retained for future per-kernel arch tuning.
+/// The OptiX PTX path is intentionally capped at compute_89 (see compile_optix_ptx).
+#[allow(dead_code)]
 fn detect_native_ptx_arch() -> String {
     // nvidia-smi returns "12.0" for SM 12.0
     let output = std::process::Command::new("nvidia-smi")
