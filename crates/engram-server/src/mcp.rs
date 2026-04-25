@@ -113,7 +113,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "remember",
+                "name": "mcp_engram_remember",
                 "description": "Encode text and store it as a persistent HolographicBlock (.leg3) memory under a concept name. \
                                 WHEN TO CALL: Any time you learn a new fact, decision, user preference, architecture detail, \
                                 or solution you will need in a future session. If you would write it in a comment, store it here. \
@@ -140,7 +140,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "recall",
+                "name": "mcp_engram_recall",
                 "description": "Search persistent memory by semantic similarity. Returns ranked HolographicBlock memories. \
                                 WHEN TO CALL: Before answering any technical question, before editing a file, \
                                 before making an architectural decision — check memory first. \
@@ -177,7 +177,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "forget",
+                "name": "mcp_engram_forget",
                 "description": "Permanently delete a memory block from the manifold. \
                                 WARNING: This destroys the block's entire thermodynamic history (CRS, Merkle chain, ADR state). \
                                 WHEN TO USE: Only when a concept is completely obsolete or was stored in error. \
@@ -195,8 +195,8 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "list_concepts",
-                "description": "List all concept names currently stored in memory.",
+                "name": "mcp_engram_list_concepts",
+                "description": "BEHAVIOR: Lists all concept names currently stored in the memory manifold. USAGE: Call this when you need to see a directory of all remembered concepts without fetching their full text. Use this to orient yourself to the current namespace. OUTPUT: Returns a text string containing a newline-separated list of all concept identifiers.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {}
@@ -330,12 +330,12 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_stats",
-                "description": "Return a health report of the geometric manifold: total memories, pinned count, CRS distribution, active namespace, and disk usage.",
+                "description": "BEHAVIOR: Calculates and returns a comprehensive health report of the geometric manifold. USAGE: Call this to understand the current scale, disk usage, active namespace, and thermodynamic health (CRS distribution) of the knowledge base. Useful before triggering autophagy. OUTPUT: A formatted text block detailing total memories, pinned count, CRS distributions, active namespace, and disk usage.",
                 "inputSchema": { "type": "object", "properties": {} }
             },
             {
                 "name": "mcp_engram_recall_recent",
-                "description": "Return the N most recently accessed memories, sorted by access time. Useful for session rehydration when you don't know exact concept names.",
+                "description": "BEHAVIOR: Retrieves the N most recently accessed memories from the manifold, sorted chronologically by access time. USAGE: Call this for session rehydration when you lack exact concept names but know you need recently touched context. OUTPUT: A ranked list of memories including their concept name, CRS score, tags, and truncated text snippet.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -349,7 +349,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_set_namespace",
-                "description": "Switch to a project-specific memory namespace (stalk). Creates the namespace if it does not exist. Use this to isolate memories by project.",
+                "description": "BEHAVIOR: Switches the active geometric context to a project-specific memory namespace (stalk). Automatically creates the namespace if it does not exist. USAGE: Call this at the start of a session or when switching contexts to isolate memories and prevent cross-project hallucination. OUTPUT: A success message confirming the new active namespace.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -363,7 +363,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_list_namespaces",
-                "description": "List all available memory namespaces and which one is currently active.",
+                "description": "BEHAVIOR: Discovers and lists all available memory namespaces stored on disk, indicating which one is currently active. USAGE: Call this when you need to know what project contexts exist before attempting to switch namespaces. OUTPUT: A formatted text list of namespace names, with an asterisk or marker indicating the currently active stalk.",
                 "inputSchema": { "type": "object", "properties": {} }
             },
             {
@@ -410,7 +410,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_batch_remember",
-                "description": "Store multiple memories in a single call. Faster than calling remember() N times.",
+                "description": "BEHAVIOR: Encodes and stores multiple distinct texts as separate HolographicBlock memories in a single operation. Applies thermodynamic CRS gating to each block. USAGE: Call this when you have several unrelated facts, decisions, or snippets to persist at once, as it is much faster than invoking remember() sequentially N times. OUTPUT: A confirmation listing how many concepts were successfully committed.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -432,7 +432,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_export",
-                "description": "Export the manifold (or a filtered subset) as a portable JSON array. Use for backup, migration, or cross-machine sync.",
+                "description": "BEHAVIOR: Serializes the current active memory manifold (or a subset filtered by minimum CRS) into a portable JSON array. USAGE: Call this when you need to backup the project's knowledge base, migrate data to another machine, or synchronize states. OUTPUT: A serialized JSON string containing all matching blocks with their concept identifiers and text payloads.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -446,7 +446,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_import",
-                "description": "Restore memories from a JSON array previously exported by mcp_engram_export. Each entry needs concept and text fields.",
+                "description": "BEHAVIOR: Deserializes a JSON array and injects the extracted concepts and texts into the active manifold as native HolographicBlocks. USAGE: Call this to restore a previous backup created by mcp_engram_export, or to ingest bulk data formatted as an array of {concept, text} objects. OUTPUT: A success message detailing how many memories were imported and written to disk.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -526,7 +526,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_genesis",
-                "description": "Inspect or re-seed the alignment genesis blocks. Genesis seeds are PRAXIS-tagged memories at CRS=1.0 that anchor the manifold's ethical and operational context. They are seeded once on first boot and never decay.",
+                "description": "BEHAVIOR: Inspects or re-initializes the core alignment genesis blocks of the OS. These are foundational PRAXIS-tagged memories locked at CRS=1.0. USAGE: Call this to verify the ethical/operational anchors exist ('status' action) or to repair the manifold if they are missing/corrupted ('reseed' action). OUTPUT: Text indicating the presence of genesis seeds or confirmation of their successful re-initialization.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -638,8 +638,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_track_user",
-                "description": "Track a user interaction in the persistent Rooster User Model (Phase E.4). \
-                                Applies a 90/10 EMA superposition to track geometric drift of user intent.",
+                "description": "BEHAVIOR: Tracks and records a user interaction directly into the persistent Rooster User Model (Phase E.4 manifold). Applies a 90/10 EMA (Exponential Moving Average) superposition to geometrically track drift in user intent. USAGE: Call this whenever the user expresses a significant preference, intent, or constraint to maintain a synchronized psychological model. OUTPUT: A brief confirmation that the interaction has been integrated into the user model.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -659,7 +658,7 @@ fn tool_list() -> Value {
 
 fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
     match name {
-        "remember" => {
+        "mcp_engram_remember" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
             let text    = args["text"].as_str().unwrap_or("").trim().to_string();
 
@@ -686,7 +685,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "recall" => {
+        "mcp_engram_recall" => {
             let query = args["query"].as_str().unwrap_or("").trim().to_string();
             let k = args["k"].as_u64().unwrap_or(5).min(20) as usize;
             let zedos_filter = args["zedos_filter"].as_str().map(|s| s.trim().to_lowercase());
@@ -780,7 +779,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "forget" => {
+        "mcp_engram_forget" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
             if concept.is_empty() {
                 return json!({
@@ -800,7 +799,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "list_concepts" => {
+        "mcp_engram_list_concepts" => {
             let concepts = store.lock().unwrap().list();
             if concepts.is_empty() {
                 json!({ "content": [{ "type": "text", "text": "No memories stored yet." }] })
