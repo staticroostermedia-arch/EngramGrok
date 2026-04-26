@@ -276,6 +276,31 @@ async fn recent_concepts(
     (StatusCode::OK, Json(res))
 }
 
+// ── Phase 2: /api/hydrate ────────────────────────────────────────────────────
+//
+// Returns the same genesis+session payload as `mcp_engram_session_start` over HTTP.
+// Designed for non-MCP consumers: Gemma scout, Moltbook posting pipeline, CLI tools.
+//
+// GET /api/hydrate
+// Response: {
+//   "total_memories": usize,
+//   "namespace": str,
+//   "genesis": [{ "concept", "crs", "text" }],
+//   "recent_sessions": [{ "concept", "age", "text" }],
+//   "stats": { "genesis_loaded", "genesis_total", "session_count" }
+// }
+async fn hydrate(State(store): State<SharedStore>) -> impl IntoResponse {
+    let payload = store.lock().unwrap().build_hydration_payload();
+    let genesis_loaded = payload["stats"]["genesis_loaded"].as_u64().unwrap_or(0);
+    let total          = payload["total_memories"].as_u64().unwrap_or(0);
+    let session_count  = payload["stats"]["session_count"].as_u64().unwrap_or(0);
+    info!(
+        "rest: /api/hydrate — {} memories | {}/5 genesis | {} session records",
+        total, genesis_loaded, session_count
+    );
+    (StatusCode::OK, Json(payload))
+}
+
 // ── System Process Management ────────────────────────────────────────────────────
 async fn boot_agent() -> impl IntoResponse {
     use std::process::Command;
@@ -314,6 +339,8 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
         .route("/api/trace",    post(trace))
         .route("/api/list",     get(list_concepts))
         .route("/api/recent",   get(recent_concepts))
+        // ─ Agent Hydration (Phase 2) ─
+        .route("/api/hydrate",  get(hydrate))
         // ─ System ─
         .route("/api/boot_agent", post(boot_agent))
         .route("/health", get(|| async {

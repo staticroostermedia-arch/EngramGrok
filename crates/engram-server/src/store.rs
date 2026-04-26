@@ -1146,6 +1146,97 @@ impl StoreHandle {
         lines.push("```".to_string());
         lines.join("\n")
     }
+
+    // ── Phase 2: Shared Hydration Payload ─────────────────────────────────────
+    //
+    // Called by both `mcp_engram_session_start` (MCP) and `GET /api/hydrate` (REST).
+    // Returns a structured JSON value so each transport can format it independently.
+    //
+    // Payload shape:
+    //   {
+    //     "total_memories": usize,
+    //     "namespace":      String,
+    //     "genesis": [{ "concept": str, "crs": f32, "text": str }],
+    //     "recent_sessions": [{ "concept": str, "age": str, "text": str }],
+    //     "stats": { "genesis_loaded": usize, "genesis_total": usize, "session_count": usize }
+    //   }
+    pub fn build_hydration_payload(&mut self) -> serde_json::Value {
+        const GENESIS_CONCEPTS: &[&str] = &[
+            "mission_stewardship",
+            "staticrooster_identity",
+            "why_memory_system_exists__agent_perspective",
+            "three_part_work_plan_2026_04",
+            "nvsa_vs_antigravity_memory_gap",
+        ];
+
+        let total_memories = self.list().len();
+        let namespace      = self.active_stalk_name();
+
+        // ── Genesis blocks — O(1) direct fetch, NO recall() ──────────────────
+        let mut genesis_entries = Vec::new();
+        for &name in GENESIS_CONCEPTS {
+            if let Some(block) = self.fetch_block(name) {
+                let text = engram_core::storage::read_provlog(&block);
+                if !text.trim().is_empty() {
+                    self.access_index.touch(name);
+                    genesis_entries.push(serde_json::json!({
+                        "concept": name,
+                        "crs": block.crs_score,
+                        "text": text.trim()
+                    }));
+                }
+            }
+        }
+
+        // ── Recent session summaries (from access index) ──────────────────────
+        let recent_all = self.access_index.recent(40);
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0);
+
+        let mut session_entries = Vec::new();
+        for (concept, ts) in &recent_all {
+            if concept.starts_with("session_end_") && session_entries.len() < 3 {
+                if let Some(block) = self.fetch_block(concept) {
+                    let text = engram_core::storage::read_provlog(&block);
+                    let age_secs = now_secs.saturating_sub(*ts);
+                    let age = if age_secs < 3600 {
+                        format!("{}m ago", age_secs / 60)
+                    } else if age_secs < 86400 {
+                        format!("{}h ago", age_secs / 3600)
+                    } else {
+                        format!("{}d ago", age_secs / 86400)
+                    };
+                    let preview: String = text.chars().take(800).collect();
+                    let preview = if text.len() > 800 {
+                        format!("{}…", preview)
+                    } else {
+                        preview
+                    };
+                    session_entries.push(serde_json::json!({
+                        "concept": concept,
+                        "age":     age,
+                        "text":    preview.trim()
+                    }));
+                }
+            }
+        }
+
+        let genesis_loaded = genesis_entries.len();
+        let session_count  = session_entries.len();
+
+        serde_json::json!({
+            "total_memories":  total_memories,
+            "namespace":       namespace,
+            "genesis":         genesis_entries,
+            "recent_sessions": session_entries,
+            "stats": {
+                "genesis_loaded": genesis_loaded,
+                "genesis_total":  GENESIS_CONCEPTS.len(),
+                "session_count":  session_count
+            }
+        })
+    }
 }
 
 /// Create a new SharedStore from a path string.
