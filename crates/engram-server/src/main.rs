@@ -20,6 +20,8 @@ mod serve;
 mod store;
 pub mod daemon;
 pub mod ki_hijacker;
+pub mod scout;
+pub mod scout_supervisor;
 
 use clap::{Parser, Subcommand};
 use store::open_store;
@@ -74,6 +76,12 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Boot scout daemon in background if running `serve` or `mcp`
+    if let Commands::Serve { .. } | Commands::Mcp { .. } = cli.command {
+        scout_supervisor::boot();
+    }
+
     let store = open_store(&cli.store);
 
     let rt = tokio::runtime::Builder::new_multi_thread()

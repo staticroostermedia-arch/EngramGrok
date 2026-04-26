@@ -301,6 +301,45 @@ async fn hydrate(State(store): State<SharedStore>) -> impl IntoResponse {
     (StatusCode::OK, Json(payload))
 }
 
+// ── Phase 4: POST /api/scout ──────────────────────────────────────────────────
+//
+// Triggers the web search → Gemma 4B synthesis → manifold storage pipeline.
+// Returns { concept, summary, snippets, total_memories }.
+//
+// Config via environment:
+//   ENGRAM_SCOUT_LLM_URL   — default: http://localhost:11434
+//   ENGRAM_SCOUT_LLM_MODEL — default: gemma4:e4b-nemo
+#[derive(Deserialize)]
+struct ScoutReq {
+    query: String,
+    #[serde(default = "default_scout_max")]
+    max_results: usize,
+}
+fn default_scout_max() -> usize { 5 }
+
+async fn scout_handler(
+    State(store): State<SharedStore>,
+    Json(payload): Json<ScoutReq>,
+) -> impl IntoResponse {
+    let query = payload.query.trim().to_string();
+    if query.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "query is required" })),
+        );
+    }
+    let max = payload.max_results.clamp(1, 10);
+    info!("rest: POST /api/scout {:?} max={}", query, max);
+
+    match crate::scout::run(store, &query, max).await {
+        Ok(result) => (StatusCode::OK, Json(serde_json::to_value(result).unwrap())),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
 // ── System Process Management ────────────────────────────────────────────────────
 async fn boot_agent() -> impl IntoResponse {
     use std::process::Command;
@@ -341,6 +380,8 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
         .route("/api/recent",   get(recent_concepts))
         // ─ Agent Hydration (Phase 2) ─
         .route("/api/hydrate",  get(hydrate))
+        // ─ Scout Pipeline (Phase 4) ─
+        .route("/api/scout",    post(scout_handler))
         // ─ System ─
         .route("/api/boot_agent", post(boot_agent))
         .route("/health", get(|| async {

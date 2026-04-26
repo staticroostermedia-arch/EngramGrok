@@ -39,9 +39,11 @@
 ## Status
 - [x] Recall latency fix (D4 rebalance + async BVH) — commit d605235
 - [x] Phase 1 — `session_start` hydration payload (genesis + history + stats)
+- [x] Phase 2 — `GET /api/hydrate` REST endpoint
+     - `build_hydration_payload()` shared method in StoreHandle — no duplication
+     - Verified: 3690 memories | 5/5 genesis | 2 session records | <500ms
 - [x] Phase 3 — ki_hijacker immediate bake on spawn, Genesis Layer by name
      - Verified: KI baked in <2s, 29KB, 5/5 genesis, 8 gold, 6 hot, 1 episodic
      - Binary deployment fix: .local/bin PATH collision resolved
-- [ ] Phase 2 — /api/hydrate REST endpoint
 - [ ] Phase 4 — Gemma 4B scout
 - [ ] Phase 5 — Moltbook integration

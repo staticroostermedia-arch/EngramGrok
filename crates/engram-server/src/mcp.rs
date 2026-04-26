@@ -230,7 +230,7 @@ fn tool_list() -> Value {
             {
                 "name": "mcp_engram_session_end",
                 "description": "MANDATORY: Call this at the end of every conversation or distinct task. \
-                                Commits a session summary as a ZEDOS_PRAXIS block and calculates ADR Thermodynamics \
+                                Commits a session summary as a ZEDOS_EPISODIC block and calculates ADR Thermodynamics \
                                 (alpha_a=confidence, alpha_d=frustration) based on the CRS of memories touched this session. \
                                 CONSEQUENCE OF SKIPPING: The session's work is lost to future agents. The next session \
                                 will have no record that this work happened, will re-derive solved problems, and will \
@@ -649,6 +649,25 @@ fn tool_list() -> Value {
                     },
                     "required": ["interaction"]
                 }
+            },
+            {
+                "name": "mcp_engram_scout",
+                "description": "Phase 4 Scout Pipeline: searches the web (DuckDuckGo, no API key) and synthesizes results via Gemma 4B (e4b-nemo). The synthesized summary is stored as a ZEDOS_DECLARATIVE block in the manifold (CRS=0.9) and returned. USAGE: Call this to ground a hypothesis in real-world web data before storing it. EXAMPLE: mcp_engram_scout({query: 'latest Gemma model benchmarks 2025'}). CONFIG: Set ENGRAM_SCOUT_LLM_URL (default: http://localhost:11434) and ENGRAM_SCOUT_LLM_MODEL (default: gemma4:e4b-nemo) to override the synthesis endpoint.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query to look up on the web"
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum number of web snippets to retrieve (default: 5, max: 10)",
+                            "default": 5
+                        }
+                    },
+                    "required": ["query"]
+                }
             }
         ]
     })
@@ -657,6 +676,45 @@ fn tool_list() -> Value {
 // ── Tool dispatch ─────────────────────────────────────────────────────────────
 
 fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
+    // ── Phase 4: Scout (async) — bridge into the tokio runtime ───────────────
+    if name == "mcp_engram_scout" {
+        let query = args["query"].as_str().unwrap_or("").trim().to_string();
+        let max_results = args["max_results"].as_u64().unwrap_or(5).min(10) as usize;
+        if query.is_empty() {
+            return json!({
+                "content": [{ "type": "text", "text": "Error: query is required." }],
+                "isError": true
+            });
+        }
+        info!("mcp_engram_scout: {:?} (max_results={})", query, max_results);
+        let store_clone = store.clone();
+        let result = tokio::runtime::Handle::current()
+            .block_on(crate::scout::run(store_clone, &query, max_results));
+        return match result {
+            Ok(r) => json!({
+                "content": [{ "type": "text", "text": format!(
+                    "✓ Scout complete for {:?}\n\
+                     Concept stored: `{}`\n\
+                     Manifold size: {} memories\n\n\
+                     ## Synthesis\n{}\n\n\
+                     ## Sources ({} snippets)\n{}",
+                    query,
+                    r.concept,
+                    r.total_memories,
+                    r.summary,
+                    r.snippets.len(),
+                    r.snippets.iter().enumerate()
+                        .map(|(i, s)| format!("{}. **{}** — {}", i+1, s.title, s.snippet))
+                        .collect::<Vec<_>>().join("\n")
+                )}]
+            }),
+            Err(e) => json!({
+                "content": [{ "type": "text", "text": format!("Scout error: {e}") }],
+                "isError": true
+            }),
+        };
+    }
+
     match name {
         "mcp_engram_remember" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
@@ -965,7 +1023,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
             // --- PHASE 8.3: ADR THERMODYNAMICS ---
             let mut session_block = lock.encode(&summary);
-            session_block.zedos_tag = engram_core::types::ZEDOS_PRAXIS;
+            session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
 
             if avg_crs > 0.85 {
                 session_block.energetics.alpha_a = 0.8; // Affirm (High Confidence)
@@ -975,7 +1033,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 session_block.energetics.alpha_d = 0.7; // Deny (Frustration/Debugging)
             }
             session_block.energetics.heat_dissipated += 5.47e-4 * count as f32; 
-            session_block.crs_score = 0.80; // Standard PRAXIS baseline
+            session_block.crs_score = 0.80; // Standard EPISODIC baseline
 
             let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
             let key = format!("session_end_{}", timestamp);
