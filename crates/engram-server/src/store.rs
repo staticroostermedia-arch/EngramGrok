@@ -563,9 +563,20 @@ impl StoreHandle {
         r
     }
     pub fn recall(&mut self, query: &str, k: usize) -> Vec<Memory> {
+        // MIN_SCORE_THRESHOLD: Dirichlet composite score floor.
+        // With 3000+ pinned blocks at CRS=1.0 the scorer's CRS term lifts all
+        // blocks to ~0.27 minimum, causing noise blocks to top the ranking.
+        // Any result below 0.30 is semantically irrelevant — drop it so callers
+        // get an empty result rather than plausible-looking noise.
+        const MIN_SCORE_THRESHOLD: f32 = 0.30;
+
         let results = self.backend.recall(query, k);
-        for m in &results { self.access_index.touch(&m.concept); }
-        results
+        let filtered: Vec<Memory> = results
+            .into_iter()
+            .filter(|m| m.score >= MIN_SCORE_THRESHOLD)
+            .collect();
+        for m in &filtered { self.access_index.touch(&m.concept); }
+        filtered
     }
     /// Delete a concept from the manifold.
     ///
