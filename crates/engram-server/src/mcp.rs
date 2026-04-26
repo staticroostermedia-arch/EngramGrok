@@ -1501,9 +1501,15 @@ fn dispatch(req: Request, store: &SharedStore) -> Option<Response> {
             }))
         }
 
-        "initialized" => {
-            // Deprecated fallback (should be caught by is_none above if compliant)
-            return None;
+        "initialized" | "notifications/initialized" => {
+            // MCP spec says this is a notification (no id), but some IDE clients
+            // (including Antigravity) send it with an id. Return empty OK so
+            // the client doesn't interpret silence as a dropped connection.
+            if id.is_some() {
+                Response::ok(id, json!({}))
+            } else {
+                return None; // true notification — no response expected
+            }
         }
 
         "tools/list" => Response::ok(id, tool_list()),
