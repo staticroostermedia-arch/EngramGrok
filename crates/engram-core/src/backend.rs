@@ -544,10 +544,15 @@ fn score_block(
     let depth_norm = (block.superposition_count.min(10) as f32 / 10.0).clamp(0.0, 1.0);
 
     // Universal Dirichlet Governor Weights (must sum to 1.0)
-    const D1: f32 = 0.70; // Semantic Resonance
-    const D2: f32 = 0.15; // Epistemic Coherence
+    // D1 (Semantic Resonance) is primary — drives meaningful recall.
+    // D4 (Superposition Mass) is kept small; deep blocks should NOT outrank
+    // semantically stronger fresh blocks just because they've been updated often.
+    // Previous D4=0.05 was giving Moltbook agents (depth=27) a 0.05 non-semantic
+    // bonus that consistently outranked fresh genesis blocks.
+    const D1: f32 = 0.74; // Semantic Resonance (was 0.70)
+    const D2: f32 = 0.14; // Epistemic Coherence (was 0.15)
     const D3: f32 = 0.10; // Structural Stability
-    const D4: f32 = 0.05; // Superposition Mass
+    const D4: f32 = 0.02; // Superposition Mass (was 0.05 — reduced to prevent depth inflation)
 
     let score = (base_sim_norm * D1) + (crs_norm * D2) + (stability_norm * D3) + (depth_norm * D4);
     

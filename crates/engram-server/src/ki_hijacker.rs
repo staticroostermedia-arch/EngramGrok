@@ -68,11 +68,19 @@ pub fn spawn(store: SharedStore) -> Arc<HijackerControl> {
             return;
         }
 
-        // Write initial metadata/timestamps on startup
+        // Write initial metadata on startup
         write_metadata(&ki_dir.parent().unwrap_or(&ki_dir));
 
+        // ── IMMEDIATE BAKE: write KI within ~1s of server spawn ─────────────
+        // Previously the first tick was consumed (discarded), causing a 60s
+        // blind window where Antigravity had no KI to read. Fix: bake once
+        // immediately, then enter the regular interval loop.
+        if let Err(e) = bake_ki(&store, &ki_dir).await {
+            warn!("[KI_HIJACKER] Failed to bake initial KI: {}", e);
+        }
+
         let mut ticker = interval(Duration::from_secs(TICK_SECS));
-        ticker.tick().await; // consume the immediate first tick
+        ticker.tick().await; // consume t=0 tick (immediate) for the loop
 
         loop {
             if ctrl_inner.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
@@ -91,20 +99,42 @@ pub fn spawn(store: SharedStore) -> Arc<HijackerControl> {
     ctrl
 }
 
+/// Named genesis concepts to always load by exact name.
+/// FHRR uses BLAKE3 lexical encoding — recall() cannot reliably surface these
+/// because lexical overlap is poor. Direct fetch is O(1) and deterministic.
+const GENESIS_NAMES: &[&str] = &[
+    "mission_stewardship",
+    "staticrooster_identity",
+    "why_memory_system_exists__agent_perspective",
+    "three_part_work_plan_2026_04",
+    "nvsa_vs_antigravity_memory_gap",
+];
+
 /// Generate the full KI context.md from the live manifold and write it to disk.
 async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
     // Collect memories while holding the lock as briefly as possible.
-    let (top_crs, recent, episodics, total, namespace) = {
+    let (genesis_blocks, top_crs, recent, episodics, total, namespace) = {
         let mut s = store.lock().unwrap();
+
+        // ── Genesis layer: load by exact name (O(1), BLAKE3 safe) ─────────────
+        let genesis_blocks: Vec<(String, f32, String)> = GENESIS_NAMES.iter().filter_map(|&name| {
+            s.fetch_block(name).map(|b| {
+                let text = engram_core::storage::read_provlog(&b);
+                s.access_index.touch(name);
+                (name.to_string(), b.crs_score, text)
+            })
+        }).collect();
 
         // Top-N by CRS score — queries on multiple conceptual axes to get breadth
         let mut top_crs = s.recall("current active work project architecture decisions blockers", TOP_N_BY_CRS * 2);
         let mut extra    = s.recall("session progress bugs fixed implementation", TOP_N_BY_CRS);
         top_crs.append(&mut extra);
 
-        // Deduplicate by concept name and sort by CRS score descending
+        // Deduplicate by concept name, exclude genesis concepts (already shown), sort by CRS desc
+        let genesis_set: std::collections::HashSet<&str> = GENESIS_NAMES.iter().copied().collect();
         top_crs.sort_by(|a, b| b.crs.partial_cmp(&a.crs).unwrap_or(std::cmp::Ordering::Equal));
         top_crs.dedup_by(|a, b| a.concept == b.concept);
+        top_crs.retain(|m| !genesis_set.contains(m.concept.as_str()));
         top_crs.truncate(TOP_N_BY_CRS);
 
         // Most-recently-accessed — the "hot session" layer
@@ -128,18 +158,18 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
         let total = s.list().len();
         let namespace = s.active_stalk_name();
 
-        (top_crs, recent, all, total, namespace)
+        (genesis_blocks, top_crs, recent, all, total, namespace)
     };
 
     // Check if there's actually anything to write
-    if top_crs.is_empty() && recent.is_empty() {
+    if genesis_blocks.is_empty() && top_crs.is_empty() && recent.is_empty() {
         debug!("[KI_HIJACKER] Manifold empty — skipping KI write.");
         return Ok(());
     }
 
     // Build the context.md content
     let now = chrono::Utc::now();
-    let mut md = String::with_capacity(4096);
+    let mut md = String::with_capacity(8192);
 
     md.push_str("# Engram Manifold Context\n\n");
     md.push_str(&format!(
@@ -147,12 +177,29 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
         now.format("%Y-%m-%d %H:%M:%S")
     ));
     md.push_str(&format!(
-        "> Namespace: `{}` | Total memories: {} | Showing top {}/{} by CRS + {} hot + {} episodic\n\n",
+        "> Namespace: `{}` | Total memories: {} | Genesis: {}/{} | Gold: {}/{} | Hot: {} | Episodic: {}\n\n",
         namespace, total,
+        genesis_blocks.len(), GENESIS_NAMES.len(),
         top_crs.len(), TOP_N_BY_CRS,
         recent.len(),
         episodics.len()
     ));
+    md.push_str("---\n\n");
+
+    // ── Section 0: Genesis Layer (identity anchors, always present) ───────────
+    md.push_str("## 🔒 Genesis Layer — Operational Identity (Pinned, CRS=1.0)\n\n");
+    md.push_str("*Loaded by exact concept name (BLAKE3 O(1) direct fetch — BVH-independent).*\n\n");
+    if genesis_blocks.is_empty() {
+        md.push_str(
+            "_No genesis blocks found. Run `mcp_engram_genesis reseed` or call \
+             `mcp_engram_remember` for `mission_stewardship` and `staticrooster_identity`._\n\n"
+        );
+    } else {
+        for (name, crs, text) in &genesis_blocks {
+            // Full text for genesis — these are the identity anchors, no truncation
+            md.push_str(&format!("### `{}`\n**CRS:** `{:.3}` 🔒 GENESIS\n\n{}\n\n", name, crs, text.trim()));
+        }
+    }
     md.push_str("---\n\n");
 
     // ── Section 1: Gold Layer (highest CRS — permanent architectural knowledge) ─
@@ -286,8 +333,8 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
     });
     std::fs::write(ki_root.join("timestamps.json"), serde_json::to_string_pretty(&timestamps)?)?;
 
-    info!("[KI_HIJACKER] ✓ KI artifact baked — {} gold, {} hot, {} episodic | {} total memories",
-        top_crs.len(), recent.len(), episodics.len(), total);
+    info!("[KI_HIJACKER] ✓ KI artifact baked — {}/{} genesis, {} gold, {} hot, {} episodic | {} total memories",
+        genesis_blocks.len(), GENESIS_NAMES.len(), top_crs.len(), recent.len(), episodics.len(), total);
 
     Ok(())
 }
