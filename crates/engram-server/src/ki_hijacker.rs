@@ -336,9 +336,117 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
     info!("[KI_HIJACKER] ✓ KI artifact baked — {}/{} genesis, {} gold, {} hot, {} episodic | {} total memories",
         genesis_blocks.len(), GENESIS_NAMES.len(), top_crs.len(), recent.len(), episodics.len(), total);
 
+    // ── Phase 70.2: system_state_vector ──────────────────────────────────────
+    // Compute the weighted OP_ADD centroid of all pinned blocks + recency-weighted
+    // recent blocks and store it as concept `__system_state__`.
+    // Gives cold-start agents instant geometric orientation without keyword guessing.
+    mint_system_state_vector(store).await;
+    // ─────────────────────────────────────────────────────────────────────────
+
     Ok(())
 }
 
+
+/// Phase 70.2 — Mint the manifold geometric centroid as `__system_state__`.
+///
+/// Computes a weighted OP_ADD superposition of:
+/// - All pinned (CRS=1.0) blocks (equal weight)
+/// - Top-16 recently-accessed blocks (linearly decaying recency weight)
+///
+/// Stored as ZEDOS_OPERATIONAL, CRS=0.99 so autophagy can eventually clean stale state.
+/// The concept name `__system_state__` is always overwritten — not versioned.
+async fn mint_system_state_vector(store: &SharedStore) {
+    use engram_core::ops::{op_add, normalize};
+    use engram_core::Complex32;
+
+    let (pinned_qs, recent_weighted): (Vec<[Complex32; 8192]>, Vec<([Complex32; 8192], f32)>) = {
+        let mut s = store.lock().unwrap();
+        let all_concepts = s.list();
+
+        // Collect pinned block phase vectors
+        let mut pinned: Vec<[Complex32; 8192]> = Vec::new();
+        for name in &all_concepts {
+            let raw = name.split_once("::").map_or(name.as_str(), |(_, r)| r);
+            if let Some(block) = s.fetch_block(raw) {
+                if block.crs_score >= 1.0 {
+                    if let Some(q) = s.fetch(raw) {
+                        pinned.push(*q);
+                    }
+                }
+            }
+        }
+
+        // Collect recent block phase vectors with linearly decaying weights
+        let recent_keys = s.access_index.recent(16);
+        let n = recent_keys.len();
+        let mut recent: Vec<([Complex32; 8192], f32)> = Vec::new();
+        for (i, (concept, _ts)) in recent_keys.iter().enumerate() {
+            let raw = concept.split_once("::").map_or(concept.as_str(), |(_, r)| r);
+            // Skip self-referential housekeeping concepts
+            if raw.starts_with("__") || raw.starts_with("session_") || raw.starts_with("protocol_gap_") {
+                continue;
+            }
+            if let Some(q) = s.fetch(raw) {
+                let weight = (n - i) as f32 / n as f32; // 1.0 → 1/n, newest first
+                recent.push((*q, weight));
+            }
+        }
+
+        (pinned, recent)
+    };
+
+    if pinned_qs.is_empty() && recent_weighted.is_empty() {
+        debug!("[KI_HIJACKER] system_state_vector: no vectors available, skipping.");
+        return;
+    }
+
+    // Accumulate weighted sum into a stack-allocated zero vector
+    let zero = [Complex32::default(); 8192];
+    let mut accum = zero;
+
+    // Pinned blocks: equal weight 1.0
+    for q in &pinned_qs {
+        let result = op_add(&accum, q);
+        accum = result;
+    }
+    // Recent blocks: linearly decaying weight — scale by multiplying each element
+    for (q, w) in &recent_weighted {
+        let scaled: [Complex32; 8192] = std::array::from_fn(|i| q[i] * *w);
+        let result = op_add(&accum, &scaled);
+        accum = result;
+    }
+
+    // Final normalize to unit sphere
+    let state_q = normalize(&accum);
+
+    // Only mint if the centroid is non-degenerate
+    let mag: f32 = state_q.iter().map(|c| c.norm_sqr()).sum::<f32>().sqrt();
+    if mag < 1e-6 {
+        warn!("[KI_HIJACKER] system_state_vector degenerate (|q|={:.2e}), skipping mint.", mag);
+        return;
+    }
+
+    // Mint using the real store API: encode() gives a Leg3Pointer shell,
+    // then we overwrite its q-vector field before store().
+    let provlog_text = format!(
+        "Manifold geometric centroid — {} pinned + {} recent blocks. \
+         Regenerated every 60s by ki_hijacker.",
+        pinned_qs.len(), recent_weighted.len()
+    );
+    let mut s = store.lock().unwrap();
+    let mut sys_block = s.encode(&provlog_text);
+    sys_block.crs_score = 0.99;  // Below 1.0 so autophagy can evict stale state
+    sys_block.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+    // Overwrite the q-vector with our computed centroid
+    sys_block.q = state_q;
+    match s.store("__system_state__", sys_block) {
+        Ok(_) => info!(
+            "[KI_HIJACKER] system_state_vector minted ({} pinned + {} recent, |q|={:.4})",
+            pinned_qs.len(), recent_weighted.len(), mag
+        ),
+        Err(e) => warn!("[KI_HIJACKER] system_state_vector store failed: {}", e),
+    }
+}
 
 /// Write the static metadata.json — only needed once, but harmless to overwrite.
 fn write_metadata(ki_root: &std::path::Path) {
