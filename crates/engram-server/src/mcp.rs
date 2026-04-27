@@ -396,7 +396,9 @@ fn tool_list() -> Value {
                                 WHEN TO USE: At the start of a new session when you need to rehydrate context fast. \
                                 Single call replaces multiple recall queries. Returns pinned blocks (CRS=1.0) first \
                                 because those are the load-bearing axioms of the project, followed by the \
-                                highest-confidence working memories. Ideal as a /wake_up replacement.",
+                                highest-confidence working memories. Also appends a ⬡ system_state_vector health line \
+                                (CRS, total memory count, active namespace) — updated every 60s by ki_hijacker. \
+                                Ideal as a /wake_up replacement.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -667,15 +669,6 @@ fn tool_list() -> Value {
                         }
                     },
                     "required": ["query"]
-                }
-            },
-            {
-                "name": "mcp_engram_read_system_state",
-                "description": "Phase 70.2: Returns the current geometric centroid of the entire manifold (concept `__system_state__`). Updated every 60s by ki_hijacker. Use this at session start for instant manifold orientation without guessing keywords. Returns: CRS health score, pinned block count, last-update provlog. Call mcp_engram_recall_recent if you need the list of recent concepts instead.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
                 }
             }
         ]
@@ -1406,6 +1399,21 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             if pinned.is_empty() && ranked.is_empty() {
                 out.push_str("No memories stored yet.");
             }
+            // ── Phase 70.2: append system_state_vector health ──────────────────
+            {
+                let lock2 = store.lock().unwrap();
+                if let Some(sys) = lock2.fetch_block("__system_state__") {
+                    let total = lock2.list().len();
+                    let ns = lock2.active_stalk_name();
+                    out.push_str(&format!(
+                        "\n\n⬡ system_state_vector  CRS={:.3} | {} memories | NS={} (updated every 60s by ki_hijacker)",
+                        sys.crs_score, total, ns
+                    ));
+                } else {
+                    out.push_str("\n\n⬡ system_state_vector  not yet minted (wait up to 60s after server start)");
+                }
+            }
+            // ───────────────────────────────────────────────────────────────────
             info!("summarize: {} pinned, {} ranked", pinned.len(), ranked.len());
             json!({ "content": [{ "type": "text", "text": out.trim() }] })
         }
