@@ -91,7 +91,7 @@ enum Commands {
         /// Path to the JSON file
         file: String,
     },
-    /// Track a user interaction in the persistent Rooster User Model (Phase E.4)
+    /// Track a user interaction in the persistent User Model (Phase E.4)
     TrackUser {
         /// The interaction text to track
         interaction: String,
@@ -482,7 +482,7 @@ fn main() -> anyhow::Result<()> {
             if let Err(e) = backend.track_user_centroid(&interaction) {
                 eprintln!("✗ Failed to track user interaction: {}", e);
             } else {
-                println!("✓ Tracked user interaction in Rooster User Model.");
+                println!("✓ Tracked user interaction in User Model.");
             }
         }
     }

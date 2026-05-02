@@ -47,3 +47,45 @@
      - Binary deployment fix: .local/bin PATH collision resolved
 - [ ] Phase 4 — Gemma 4B scout
 - [ ] Phase 5 — Moltbook integration
+
+---
+
+## Ego Integration (Epoch IX) — Engram Manifold → Interpretive Substrate
+
+### Goals
+- Transition Engram from flat 25k-block thermodynamic collapse to Ego-gated interpretive memory.
+- Implement NREM circadian consolidation of high-signal memories into the Ego narrative tensor.
+- Implement Phase 4 Transductive oracle fallthrough for low-confidence recall misses.
+
+### Phase E1 — Thermodynamic Baseline Fix
+- **File**: `engram-core/src/encode.rs`
+- **Change**: `crs_score` default lowered from `1.0` → `0.74` (grounded-tier).
+- **Status**: ✅ Complete (verified clean build)
+
+### Phase E2 — Ego-gated CRS Initialization
+- **File**: `engram-server/src/store.rs`
+- **Change**: `StoreHandle` gains `ego_q: Box<[Complex32; 8192]>`. `load_ego_q()` resolves
+  `~/.engram/ego.leg3` at runtime. `remember()` initializes new blocks at
+  `CRS = 0.50 + ego_resonance * 0.44` (range [0.50, 0.94]).
+- **Status**: ✅ Complete
+
+### Phase E3 — NREM Dream Consolidation (Phase 3)
+- **File**: `engram-server/src/daemon.rs`
+- **Change**: Circadian timer fires every 6h. Scans all blocks with CRS ≥ 0.85,
+  OP_ADD-superposes their q-vectors, L2-normalizes, mints `ego.leg3`, calls
+  `StoreHandle::refresh_ego_q()` for live hot-swap.
+- **Status**: ✅ Complete
+
+### Phase E4 — Transductive Oracle Fallthrough (Phase 4)
+- **File**: `engram-server/src/store.rs`
+- **Change**: `recall()` triggers `oracle_fallthrough()` when results are empty or all
+  scores < `MIN_SCORE_THRESHOLD` (0.30). POSTs `{ query, k:3 }` to
+  `http://localhost:8080/api/ask`, maps `assembled_prose` to a synthetic `Memory`
+  with `score=0.29`, `provlog=prose`, `explain="Transductive[oracle=LBVH]"`.
+  Silent fallback (3s timeout) if oracle unreachable.
+- **Status**: ✅ Complete (Memory struct field fix applied 2026-04-28)
+
+### Deployment
+- Restart engram-server to activate: `StoreHandle::new()` loads `ego.leg3` on startup.
+- NREM fires automatically at 6h intervals from daemon spawn.
+- Oracle fallthrough is transparent — no config needed.

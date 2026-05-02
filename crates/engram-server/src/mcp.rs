@@ -210,7 +210,7 @@ fn tool_list() -> Value {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Absolute path to the workspace folder (e.g. /home/a/Documents/CodeLand)"
+                            "description": "Absolute path to the workspace folder (e.g. /home/user/Documents/MyProject)"
                         }
                     },
                     "required": ["path"]
@@ -640,7 +640,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_track_user",
-                "description": "BEHAVIOR: Tracks and records a user interaction directly into the persistent Rooster User Model (Phase E.4 manifold). Applies a 90/10 EMA (Exponential Moving Average) superposition to geometrically track drift in user intent. USAGE: Call this whenever the user expresses a significant preference, intent, or constraint to maintain a synchronized psychological model. OUTPUT: A brief confirmation that the interaction has been integrated into the user model.",
+                "description": "BEHAVIOR: Tracks and records a user interaction directly into the persistent User Model manifold. Applies a 90/10 EMA (Exponential Moving Average) superposition to geometrically track drift in user intent. USAGE: Call this whenever the user expresses a significant preference, intent, or constraint to maintain a synchronized psychological model. OUTPUT: A brief confirmation that the interaction has been integrated into the user model.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -941,7 +941,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             // MUST be loaded by exact concept name — do NOT use recall() here.
             const GENESIS_CONCEPTS: &[&str] = &[
                 "mission_stewardship",
-                "staticrooster_identity",
+                "project_identity",
                 "why_memory_system_exists__agent_perspective",
                 "three_part_work_plan_2026_04",
                 "nvsa_vs_antigravity_memory_gap",
@@ -963,7 +963,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             if genesis_section.is_empty() {
                 genesis_section.push_str(
                     "_No genesis blocks found. Run `mcp_engram_genesis reseed` or store \
-                     `mission_stewardship` and `staticrooster_identity` blocks._\n"
+                     `mission_stewardship` and `project_identity` blocks._\n"
                 );
             }
 
@@ -1727,7 +1727,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             match store.lock().unwrap().track_user_centroid(&interaction) {
                 Ok(_) => {
                     info!("tracked user interaction: {:.20}...", interaction);
-                    json!({ "content": [{ "type": "text", "text": "✓ Tracked user interaction in Rooster User Model." }] })
+                    json!({ "content": [{ "type": "text", "text": "✓ Tracked user interaction in User Model." }] })
                 },
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error tracking interaction: {e}") }], "isError": true }),
             }

@@ -1,9 +1,6 @@
 //! Core types for the LEG container format.
 //!
-//! The [`HolographicBlock`] is the triadic digital container described in
-//! **U.S. Patent Application No. 19/372,256** (pending), *Self-Contained Variable
-//! File System (.LEG Container Format)*, Applicant: Aric Goodman, Oregon, USA.
-//! Filed under 35 U.S.C. § 111(a) — Static Rooster Media.
+//! The [`HolographicBlock`] is the fundamental triadic digital container:
 //!
 //! ## Triadic Structure (FIG. 1)
 //!

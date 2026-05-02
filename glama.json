@@ -100,7 +100,7 @@
     },
     {
       "name": "mcp_engram_track_user",
-      "description": "Track a user interaction in the persistent Rooster User Model using 90/10 EMA superposition."
+      "description": "Track a user interaction in the persistent User Model using 90/10 EMA superposition."
     },
     {
       "name": "mcp_engram_recall_in_file",

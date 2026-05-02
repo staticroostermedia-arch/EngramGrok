@@ -31,7 +31,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 #[command(
     name    = "engram",
     version = env!("CARGO_PKG_VERSION"),
-    about   = "Persistent geometric memory for AI agents — by Aric Goodman / Static Rooster Media",
+    about   = "Persistent geometric memory for AI agents",
     long_about = None,
 )]
 struct Cli {
@@ -77,8 +77,10 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    // Boot scout daemon in background if running `serve` or `mcp`
-    if let Commands::Serve { .. } | Commands::Mcp { .. } = cli.command {
+    // Boot scout daemon in background — only for HTTP serve mode.
+    // In MCP mode the scout is not needed and its port-8088 startup
+    // noise on stderr would corrupt the JSON-RPC protocol stream.
+    if let Commands::Serve { .. } = cli.command {
         scout_supervisor::boot();
     }
 

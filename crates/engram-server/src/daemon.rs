@@ -43,14 +43,22 @@ fn apply_shadow_anchor(block: &mut engram_core::types::HolographicBlock, shadow:
     }
 }
 
-/// Read .engramignore from the Engram workspace root.
-/// Returns a list of path prefixes that the daemon should never watch or encode.
+/// Read .engramignore files from the watched workspace root and ~/.engram/.
+/// Returns a list of path patterns that the daemon should never watch or encode.
+/// To customise: create a `.engramignore` in your project root or in `~/.engram/`.
 fn load_engramignore() -> Vec<String> {
-    // Look for .engramignore in the Engram project root (adjacent to Cargo.toml)
-    let candidates = [
-        "/home/a/Documents/Engram/.engramignore",
-        "/home/a/Documents/CodeLand/.engramignore",
-    ];
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    // ~/.engram/.engramignore — user-level global ignore list
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(std::path::PathBuf::from(&home).join(".engram").join(".engramignore"));
+    }
+
+    // $ENGRAM_LINKED_WORKSPACE/.engramignore — project-level ignore list
+    if let Ok(ws) = std::env::var("ENGRAM_LINKED_WORKSPACE") {
+        candidates.push(std::path::PathBuf::from(&ws).join(".engramignore"));
+    }
+
     let mut ignored = Vec::new();
     for path in &candidates {
         if let Ok(text) = std::fs::read_to_string(path) {
@@ -106,6 +114,26 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
         // Flush hot access timestamps to disk every 60 seconds (Mac hardening)
         let mut flush_interval = tokio::time::interval(Duration::from_secs(60));
 
+        // ── Phase 3 Epoch IX: NREM Dream Consolidation ───────────────────────
+        // Fire every 6 hours. On each tick:
+        //   1. Scan all manifold blocks with CRS ≥ 0.85 (high-confidence memories).
+        //   2. OP_ADD-superpose their q-vectors (equal weights, then L2-normalize).
+        //   3. Write the resulting centroid to `~/.engram/ego.leg3`.
+        //   4. Call StoreHandle::refresh_ego_q() so the live server picks it up.
+        // Effect: the Ego's interpretive frame evolves nightly, causing Ego-resonant
+        // memories to surface higher in recall over time (emergent long-term consolidation).
+        let mut nrem_interval = tokio::time::interval(Duration::from_secs(6 * 3600));
+        nrem_interval.tick().await; // skip the immediate first tick at startup
+
+        // If ego.leg3 does not exist yet, trigger an immediate NREM pass to seed it.
+        let ego_path = std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".engram").join("ego.leg3"))
+            .unwrap_or_default();
+        if !ego_path.exists() {
+            info!("[NREM] ego.leg3 missing on startup — triggering immediate genesis consolidation.");
+            run_nrem_consolidation(&store);
+        }
+
         // ── Integration Inbox Scanner (Phase 5) ──────────────────────────────
         // Poll ~/.engram/stalks/default/inbox/ every 5 seconds for
         // `integration_req_*.json` files written by the Cockpit when the operator
@@ -142,6 +170,10 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                     // Flush hot access timestamps to disk every 60 seconds
                     let mut lock = store.lock().unwrap();
                     lock.access_index.flush_if_dirty();
+                }
+
+                _ = nrem_interval.tick() => {
+                    run_nrem_consolidation(&store);
                 }
 
                 _ = inbox_interval.tick() => {
@@ -218,12 +250,25 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                     if let Ok(content) = std::fs::read_to_string(path) {
                                         let mut lock = store.lock().unwrap();
 
-                                        // ── Phase 1: Namespace separation ──────────────────────
-                                        // CodeLand AST blocks go into 'codeland_ast' namespace.
-                                        // Agent episodics remain in the default stalk.
-                                        let is_codeland = path_str.contains("/CodeLand/");
-                                        if is_codeland {
-                                            lock.set_active_stalk("codeland_ast");
+                                        // ── Namespace separation ────────────────────────────────
+                                        // If ENGRAM_LINKED_WORKSPACE is set, AST blocks from that
+                                        // workspace go into a dedicated '<workspace_name>_ast' stalk.
+                                        // This keeps auto-ingested code blocks separate from agent
+                                        // episodic memories in the default stalk.
+                                        let linked_ws = std::env::var("ENGRAM_LINKED_WORKSPACE").ok();
+                                        let (is_linked, ast_stalk) = match &linked_ws {
+                                            Some(ws) if path_str.contains(ws.as_str()) => {
+                                                let name = std::path::Path::new(ws)
+                                                    .file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or("linked")
+                                                    .to_lowercase();
+                                                (true, format!("{}_ast", name))
+                                            }
+                                            _ => (false, String::new()),
+                                        };
+                                        if is_linked {
+                                            lock.set_active_stalk(&ast_stalk);
                                         }
 
                                         let items = engram_ast::extract_ast_items(path.to_str().unwrap_or(""), &content);
@@ -239,10 +284,10 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                                 // Store full unbroken source in ProvLog
                                                 engram_core::storage::write_provlog(&mut block, &item.full_source);
 
-                                                // ── Phase 1: Genesis Shadow Anchor ─────────────
+                                                // ── Genesis Shadow Anchor ──────────────────────
                                                 // OP_ADD(block.q, v_cybernetics_768) → L2 normalize
-                                                // Anchors the AST block to the CodeLand genesis
-                                                // coordinate system within the 768-dim manifold.
+                                                // Biases the AST block toward the genesis coordinate
+                                                // system within the 768-dim shadow manifold.
                                                 // Both vectors are 768-dim so dimensions match.
                                                 if let Some(ref shadow) = shadow_cybernetics {
                                                     apply_shadow_anchor(&mut block, shadow);
@@ -285,8 +330,8 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                                 );
                                             }
 
-                                        // Restore default namespace after CodeLand block
-                                        if is_codeland {
+                                        // Restore default namespace after linked-workspace block
+                                        if is_linked {
                                             lock.set_active_stalk("default");
                                         }
                                         }
@@ -301,6 +346,109 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
     });
 
     daemon
+}
+
+// ── Phase 3 Epoch IX: NREM Dream Consolidation ───────────────────────────────
+//
+// Called every 6 hours by the circadian timer inside spawn().
+//
+// Algorithm:
+//   1. List all concepts in the active manifold.
+//   2. For each concept, fetch_block() and inspect CRS.
+//   3. Blocks with CRS ≥ NREM_CRS_THRESHOLD contribute their q-vector to a
+//      running OP_ADD accumulator (equal weights — mass proportional to signal).
+//   4. L2-normalize the accumulated centroid to keep it on the unit hypersphere.
+//   5. Mint a fresh HolographicBlock (Leg3Pointer::mint()), write the centroid
+//      into its q-field, mark it ZEDOS_EPISODIC, and persist it to ego.leg3.
+//   6. Call StoreHandle::refresh_ego_q() — the live recall path immediately
+//      picks up the updated interpretive frame.
+//
+// Safety: the store mutex is released between fetches so the server stays
+// responsive. We accumulate into a CPU-side array, never holding the lock
+// across the (slow) list() traversal.
+
+const NREM_CRS_THRESHOLD: f32 = 0.85;
+
+fn run_nrem_consolidation(store: &crate::store::SharedStore) {
+    info!("[NREM] Starting dream consolidation pass (CRS threshold = {})…", NREM_CRS_THRESHOLD);
+
+    // Collect all concept names while holding the lock briefly.
+    let concepts: Vec<String> = {
+        let lock = store.lock().unwrap();
+        lock.list()
+    };
+
+    let mut accumulator = [engram_core::Complex32::new(0.0_f32, 0.0_f32); 8192];
+    let mut contributors: u32 = 0;
+
+    for concept in &concepts {
+        // Skip internal bookkeeping concepts.
+        if concept.starts_with('_') { continue; }
+
+        let block_opt: Option<engram_core::types::Leg3Pointer> = {
+            let lock = store.lock().unwrap();
+            lock.fetch_block(concept)
+        };
+
+        if let Some(block) = block_opt {
+            if block.crs_score >= NREM_CRS_THRESHOLD {
+                for i in 0..8192 {
+                    accumulator[i].re += block.q[i].re;
+                    accumulator[i].im += block.q[i].im;
+                }
+                contributors += 1;
+            }
+        }
+    }
+
+    if contributors == 0 {
+        info!("[NREM] No blocks above CRS threshold — ego.leg3 not updated.");
+        return;
+    }
+
+    // L2-normalize the accumulator onto the unit hypersphere.
+    let norm_sq: f32 = accumulator.iter().map(|c| c.re * c.re + c.im * c.im).sum();
+    let norm = norm_sq.sqrt();
+    if norm < f32::EPSILON {
+        info!("[NREM] Accumulator degenerate (zero norm) — ego.leg3 not updated.");
+        return;
+    }
+    let inv = 1.0 / norm;
+    for c in &mut accumulator {
+        c.re *= inv;
+        c.im *= inv;
+    }
+
+    // Mint a fresh 256KB block and write the NREM centroid into its q-field.
+    let mut ego_block = engram_core::types::Leg3Pointer::mint();
+    ego_block.q = accumulator;
+    ego_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+    ego_block.crs_score = 1.0; // Ego anchor — always pinned.
+    ego_block.energetics.crs = 1.0;
+    ego_block.superposition_count = contributors;
+
+    // Write to ~/.engram/ego.leg3 — the canonical ego narrative tensor path.
+    let ego_path = match std::env::var("HOME") {
+        Ok(h) => std::path::PathBuf::from(h).join(".engram").join("ego.leg3"),
+        Err(_) => {
+            error!("[NREM] HOME env var not set — cannot write ego.leg3");
+            return;
+        }
+    };
+
+    match engram_core::storage::write_block(&ego_path, &ego_block) {
+        Ok(_) => {
+            info!("[NREM] ego.leg3 updated from {} high-signal blocks (norm={:.4}). Refreshing live Ego gate…",
+                contributors, norm);
+            // Hot-swap the Ego q-vector into the live StoreHandle.
+            let mut lock = store.lock().unwrap();
+            lock.refresh_ego_q();
+            info!("[NREM] Ego gate refreshed.");
+        }
+        Err(e) => {
+            error!("[NREM] Failed to write ego.leg3: {}", e);
+        }
+    }
 }
 
 pub struct DaemonControl {
