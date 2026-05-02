@@ -34,6 +34,16 @@ pub fn op_bind(role: &[Complex32; 8192], filler: &[Complex32; 8192]) -> [Complex
     normalize(&bound)
 }
 
+/// **OP_BIND (Arena)** — Associate two concepts using Bumpalo.
+pub fn op_bind_arena<'a>(arena: &'a bumpalo::Bump, role: &[Complex32; 8192], filler: &[Complex32; 8192]) -> &'a mut [Complex32; 8192] {
+    let bound = arena.alloc([Complex32::default(); 8192]);
+    for i in 0..8192 {
+        bound[i] = role[i] * filler[i];
+    }
+    normalize_in_place(bound);
+    bound
+}
+
 /// **OP_ADD** — Superpose two memories (union / simultaneous coexistence).
 ///
 /// The resulting vector is similar to both inputs. Unlike classical OR,
@@ -48,6 +58,17 @@ pub fn op_add(a: &[Complex32; 8192], b: &[Complex32; 8192]) -> [Complex32; 8192]
         superposed[i].im = a[i].im + b[i].im;
     }
     normalize(&superposed)
+}
+
+/// **OP_ADD (Arena)** — Superpose two memories using Bumpalo.
+pub fn op_add_arena<'a>(arena: &'a bumpalo::Bump, a: &[Complex32; 8192], b: &[Complex32; 8192]) -> &'a mut [Complex32; 8192] {
+    let superposed = arena.alloc([Complex32::default(); 8192]);
+    for i in 0..8192 {
+        superposed[i].re = a[i].re + b[i].re;
+        superposed[i].im = a[i].im + b[i].im;
+    }
+    normalize_in_place(superposed);
+    superposed
 }
 
 /// **Stochastic OP_BIND** — Binding with injected phase variance.
@@ -122,6 +143,23 @@ pub fn normalize(vector: &[Complex32; 8192]) -> [Complex32; 8192] {
     out
 }
 
+/// **Normalize in-place**
+pub fn normalize_in_place(vector: &mut [Complex32; 8192]) {
+    let sq_sum: f32 = vector.iter().map(|v| v.re * v.re + v.im * v.im).sum();
+    let l2 = sq_sum.sqrt();
+    if l2 > 1e-8 {
+        for i in 0..8192 {
+            vector[i].re /= l2;
+            vector[i].im /= l2;
+        }
+    } else {
+        for v in vector.iter_mut() {
+            v.re = 1.0;
+            v.im = 0.0;
+        }
+    }
+}
+
 /// **Cosine similarity** between two 8192-D complex vectors.
 ///
 /// Returns a value in [−1.0, 1.0] where 1.0 is identical, 0.0 is orthogonal,
@@ -157,6 +195,25 @@ pub fn gram_schmidt(
         }
     }
     normalize(&result)
+}
+
+/// **Gram-Schmidt (Arena)**
+pub fn gram_schmidt_arena<'a>(
+    arena: &'a bumpalo::Bump,
+    target: &[Complex32; 8192],
+    basis: &[&[Complex32; 8192]],
+) -> &'a mut [Complex32; 8192] {
+    let result = arena.alloc([Complex32::default(); 8192]);
+    result.copy_from_slice(target);
+    for b in basis {
+        let proj = project(result, b);
+        for i in 0..8192 {
+            result[i].re -= proj[i].re;
+            result[i].im -= proj[i].im;
+        }
+    }
+    normalize_in_place(result);
+    result
 }
 
 /// **OP_INVERT** — Negate a concept via π phase rotation.
@@ -295,7 +352,7 @@ pub fn op_suspend(v: &[Complex32; 8192]) -> [Complex32; 8192] {
 /// - `dL < 0` → converging (new update moves toward equilibrium) → commit
 /// - `dL > 0` → diverging (new update pushes away from equilibrium) → penalise
 ///
-/// This is ported from CodeLand `monad_logophysics/src/adr.rs` (Phase 53.5).
+/// This implements the ADR (Adaptive Decay and Reinforcement) thermodynamic gate.
 #[derive(Debug, Clone, Copy)]
 pub struct StabilityTracker {
     pub alpha_a: f32,
@@ -322,9 +379,9 @@ impl StabilityTracker {
     /// - `h_in`  — dL = Φ_new − Φ_prev (convergence signal; negative = converging)
     pub fn update(&mut self, gradient_mag: f32, drift_mag: f32) -> (f32, f32, f32) {
         const EPSILON: f32 = 0.034; // decay rate (forget)
-        const ETA: f32 = 0.120;    // learning rate (same as CodeLand ADR)
+        const ETA: f32 = 0.120;    // learning rate
 
-        // Evidence signals matching CodeLand adr.rs::update()
+        // Evidence signals for ADR update
         let at = (1.0 - gradient_mag).max(0.0); // low gradient → affirming
         let dt = gradient_mag.min(1.0);          // high gradient → denial
         let rt = 1.0 - drift_mag.min(1.0);       // low drift → reconciling
@@ -377,7 +434,7 @@ fn compute_lyapunov(alpha_a: f32, alpha_d: f32, alpha_r: f32) -> f32 {
 /// apply_temporal_phase(&mut q, 30.0); // match memories from ~30 days ago
 /// ```
 ///
-/// Ported from CodeLand `monad_geometry/src/vsa.rs::apply_diachronic_phase_shift()`.
+/// Applies a diachronic phase shift to the momentum tensor.
 pub fn apply_temporal_phase(q: &mut [Complex32; 8192], age_days: f32) {
     const BASE_THETA: f32 = std::f32::consts::PI / 432.0;
     let theta = -age_days * BASE_THETA;
@@ -414,7 +471,7 @@ pub fn apply_temporal_phase(q: &mut [Complex32; 8192], age_days: f32) {
 ///
 /// Returns `true` if the vector passes (safe to write), `false` if corrupted.
 ///
-/// Ported concept from CodeLand `monad_logophysics/src/integrator.rs`.
+/// Applies a temporal phase integration step to the block.
 pub fn check_euler_characteristic(q: &[Complex32; 8192]) -> bool {
     // Check for NaN/Inf contamination first — these are unrecoverable.
     let has_bad_values = q.iter().any(|c| c.re.is_nan() || c.re.is_infinite()
@@ -448,7 +505,7 @@ pub fn check_euler_characteristic(q: &[Complex32; 8192]) -> bool {
 /// regardless of the original vector geometry — making Lloyd-Max B4 quantization
 /// much more accurate (reduces quantization MSE by ~40% vs raw vectors).
 ///
-/// Ported from CodeLand `monad_quant/src/srht.rs`. Uses LCG seeding (no external deps).
+/// Applies a Subsampled Randomized Hadamard Transform (SRHT) to a block. Uses LCG seeding (no external deps).
 pub fn apply_srht(v: &mut [f32], seed: u64) {
     let n = v.len();
     debug_assert!(n.is_power_of_two(), "SRHT requires power-of-2 length");

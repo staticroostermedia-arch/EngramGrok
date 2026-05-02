@@ -18,7 +18,7 @@ Every memory in Engram is a 256KB block. Exactly 256KB. Four thousand and ninety
 
 None of that is metaphor. It is engineering. The alignment to NVMe physical boundaries is so tensors can stream via DMA directly from SSD to VRAM without touching the OS page cache. The BLAKE3 chain is so an agent's accumulation of knowledge cannot be tampered with silently. The CRS score is so ungrounded blocks decay — not because a programmer decided to delete them, but because the geometry said they weren't coherent.
 
-We did not design this for Engram. We designed it for CodeLand OS — a full logophysical operating system where an AI agent reasons, learns, and persists across time using these primitives at their full depth. Engram is the extraction: the same geometry, the same block format, the same operators — packaged for anyone who wants to build on the foundation without needing the full system.
+We did not design this for Engram. We designed it for a full logophysical operating system — a research project where an AI agent reasons, learns, and persists across time using these primitives at their full depth. Engram is the extraction: the same geometry, the same block format, the same operators — packaged for anyone who wants to build on the foundation without needing the full system.
 
 ---
 
@@ -64,6 +64,6 @@ We make the same claim about ourselves.
 
 ---
 
-*Aric Goodman — Static Rooster Media*
-*CodeLand OS / Project Monad — Origin system*
+*Aric Goodman*
+*Logophysical AI Research — Origin system*
 *Engram — extracted and released as open infrastructure, 2026*

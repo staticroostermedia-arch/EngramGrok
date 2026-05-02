@@ -6,20 +6,22 @@ pub fn boot() {
     thread::spawn(|| {
         info!("[SCOUT_SUPERVISOR] Starting scout_daemon.py in background thread.");
         loop {
-            // Depending on where `engram` is run from, we should ideally resolve the absolute path.
-            // For now, assuming we're in the repository root or we fallback to an absolute path if it fails.
+            // Prefer a relative path from the binary; allow override via ENGRAM_SCOUT_DAEMON env var.
             let daemon_path = "integrations/scout_daemon.py";
-            let fallback_path = "/home/a/Documents/Engram/integrations/scout_daemon.py";
-
-            let path_to_run = if std::path::Path::new(daemon_path).exists() {
+            let env_path = std::env::var("ENGRAM_SCOUT_DAEMON").unwrap_or_default();
+            let path_to_run: &str = if !env_path.is_empty() && std::path::Path::new(&env_path).exists() {
+                &env_path
+            } else if std::path::Path::new(daemon_path).exists() {
                 daemon_path
             } else {
-                fallback_path
+                warn!("[SCOUT_SUPERVISOR] scout_daemon.py not found. Set ENGRAM_SCOUT_DAEMON to override path.");
+                thread::sleep(std::time::Duration::from_secs(30));
+                continue;
             };
 
             let mut child = match Command::new("python3")
                 .arg(path_to_run)
-                .stdout(Stdio::inherit())
+                .stdout(Stdio::null())
                 .stderr(Stdio::inherit())
                 .spawn()
             {

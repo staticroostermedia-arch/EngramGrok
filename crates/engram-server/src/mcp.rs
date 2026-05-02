@@ -210,7 +210,7 @@ fn tool_list() -> Value {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Absolute path to the workspace folder (e.g. /home/a/Documents/CodeLand)"
+                            "description": "Absolute path to the workspace folder (e.g. /home/user/Documents/MyProject)"
                         }
                     },
                     "required": ["path"]
@@ -396,7 +396,9 @@ fn tool_list() -> Value {
                                 WHEN TO USE: At the start of a new session when you need to rehydrate context fast. \
                                 Single call replaces multiple recall queries. Returns pinned blocks (CRS=1.0) first \
                                 because those are the load-bearing axioms of the project, followed by the \
-                                highest-confidence working memories. Ideal as a /wake_up replacement.",
+                                highest-confidence working memories. Also appends a ⬡ system_state_vector health line \
+                                (CRS, total memory count, active namespace) — updated every 60s by ki_hijacker. \
+                                Ideal as a /wake_up replacement.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -638,7 +640,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_track_user",
-                "description": "BEHAVIOR: Tracks and records a user interaction directly into the persistent Rooster User Model (Phase E.4 manifold). Applies a 90/10 EMA (Exponential Moving Average) superposition to geometrically track drift in user intent. USAGE: Call this whenever the user expresses a significant preference, intent, or constraint to maintain a synchronized psychological model. OUTPUT: A brief confirmation that the interaction has been integrated into the user model.",
+                "description": "BEHAVIOR: Tracks and records a user interaction directly into the persistent User Model manifold. Applies a 90/10 EMA (Exponential Moving Average) superposition to geometrically track drift in user intent. USAGE: Call this whenever the user expresses a significant preference, intent, or constraint to maintain a synchronized psychological model. OUTPUT: A brief confirmation that the interaction has been integrated into the user model.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -676,6 +678,37 @@ fn tool_list() -> Value {
 // ── Tool dispatch ─────────────────────────────────────────────────────────────
 
 fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
+    // ── Phase 70.2: Read system_state_vector ──────────────────────────────────
+    if name == "mcp_engram_read_system_state" {
+        let lock = store.lock().unwrap();
+        return if let Some(block) = lock.fetch_block("__system_state__") {
+            let crs = block.crs_score;
+            let pinned_count = lock.list().iter().filter(|n| {
+                let raw = n.split_once("::").map_or(n.as_str(), |(_, r)| r);
+                lock.fetch_block(raw).map_or(false, |b| b.crs_score >= 1.0)
+            }).count();
+            let total = lock.list().len();
+            let namespace = lock.active_stalk_name();
+            let provlog = engram_core::storage::read_provlog(&block);
+            json!({ "content": [{ "type": "text", "text": format!(
+                "✓ system_state_vector loaded\n\
+                 Manifold: {} memories | Pinned: {} | Active NS: {} | CRS: {:.3}\n\n\
+                 Provlog: {}\n\n\
+                 ─────────────────────────────────────────────────────\n\
+                 Use mcp_engram_recall(<query>) for semantic search.\n\
+                 Use mcp_engram_recall_recent for hot-session concepts.\n\
+                 Use mcp_engram_summarize for pinned + gold-tier overview.",
+                total, pinned_count, namespace, crs, provlog.trim()
+            )}]})
+        } else {
+            json!({ "content": [{ "type": "text", "text":
+                "⚠ No system_state_vector yet — ki_hijacker hasn't ticked.\n\
+                 Wait up to 60s after Engram server starts, then retry.\n\
+                 Alternatively call mcp_engram_summarize for an immediate overview."
+            }]})
+        };
+    }
+
     // ── Phase 4: Scout (async) — bridge into the tokio runtime ───────────────
     if name == "mcp_engram_scout" {
         let query = args["query"].as_str().unwrap_or("").trim().to_string();
@@ -908,7 +941,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             // MUST be loaded by exact concept name — do NOT use recall() here.
             const GENESIS_CONCEPTS: &[&str] = &[
                 "mission_stewardship",
-                "staticrooster_identity",
+                "project_identity",
                 "why_memory_system_exists__agent_perspective",
                 "three_part_work_plan_2026_04",
                 "nvsa_vs_antigravity_memory_gap",
@@ -930,7 +963,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             if genesis_section.is_empty() {
                 genesis_section.push_str(
                     "_No genesis blocks found. Run `mcp_engram_genesis reseed` or store \
-                     `mission_stewardship` and `staticrooster_identity` blocks._\n"
+                     `mission_stewardship` and `project_identity` blocks._\n"
                 );
             }
 
@@ -1021,6 +1054,77 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
             let avg_crs = if count > 0 { total_crs / count as f32 } else { 0.5 };
 
+            // ── Phase 70.1: Protocol Validator ────────────────────────────────────
+            // Run 4 mechanically-verifiable pre-flight checks before committing.
+            // On failure: mint a visible protocol_gap ZEDOS_PRAXIS block.
+            // NEVER abort the commit — the session record must always land.
+            {
+                let mut gaps: Vec<String> = Vec::new();
+
+                // Check 1: Was mcp_engram_session_start called this session?
+                let has_start = recent_accesses.iter()
+                    .any(|(c, _)| c.starts_with("session_start_"));
+                if !has_start {
+                    gaps.push("No session_start_ block found — call mcp_engram_session_start at session open.".to_string());
+                }
+
+                // Check 2: VSA operator forge intact (14 blocks expected)
+                let op_count = std::fs::read_dir(
+                    format!("{}/holograms/operators", lock.store_path())
+                ).map(|d| d.count()).unwrap_or(0);
+                if op_count < 14 {
+                    gaps.push(format!(
+                        "VSA operator forge incomplete ({}/14) — run: cargo run --release -p monad_forge --bin mint_operators",
+                        op_count
+                    ));
+                }
+
+                // Check 3: At least 1 non-session memory was touched this session
+                let has_non_session = recent_accesses.iter().any(|(c, _)| {
+                    !c.starts_with("session_start_")
+                        && !c.starts_with("session_end_")
+                        && !c.starts_with("protocol_gap_")
+                        && !c.starts_with("__system_state__")
+                });
+                if !has_non_session {
+                    gaps.push("No remember/recall calls detected — was any knowledge persisted this session?".to_string());
+                }
+
+                // Check 4: Summary is non-trivially long
+                if summary.len() < 200 {
+                    gaps.push(format!(
+                        "Session summary too short ({} chars, minimum 200) — expand with decisions made, files changed, next steps.",
+                        summary.len()
+                    ));
+                }
+
+                if !gaps.is_empty() {
+                    let timestamp_gap = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let gap_text = format!(
+                        "PROTOCOL GAP — session_end_{}\n\nFailed checks ({}):\n{}\n\nRemediation: address all items above before next session.",
+                        timestamp_gap,
+                        gaps.len(),
+                        gaps.iter().enumerate()
+                            .map(|(i, g)| format!("  {}. {}", i + 1, g))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    );
+                    let mut gap_block = lock.encode(&gap_text);
+                    gap_block.zedos_tag = engram_core::types::ZEDOS_PRAXIS;
+                    gap_block.crs_score = 0.75; // Visible but not immortal; autophagy can clean it
+                    let gap_key = format!("protocol_gap_{}", timestamp_gap);
+                    let _ = lock.store(&gap_key, gap_block);
+                    warn!("[SESSION_END] Protocol gaps detected ({}):\n{}", gaps.len(),
+                        gaps.iter().map(|g| format!("  • {}", g)).collect::<Vec<_>>().join("\n"));
+                } else {
+                    info!("[SESSION_END] Protocol validator: all checks passed ✓");
+                }
+            }
+            // ─────────────────────────────────────────────────────────────────────
+
             // --- PHASE 8.3: ADR THERMODYNAMICS ---
             let mut session_block = lock.encode(&summary);
             session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
@@ -1032,17 +1136,20 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 session_block.energetics.alpha_a = 0.2;
                 session_block.energetics.alpha_d = 0.7; // Deny (Frustration/Debugging)
             }
-            session_block.energetics.heat_dissipated += 5.47e-4 * count as f32; 
+            session_block.energetics.heat_dissipated += 5.47e-4 * count as f32;
             session_block.crs_score = 0.80; // Standard EPISODIC baseline
 
             let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
             let key = format!("session_end_{}", timestamp);
-            
+
             let alpha_a = session_block.energetics.alpha_a;
             let alpha_d = session_block.energetics.alpha_d;
-            
+
             match lock.store(&key, session_block) {
-                Ok(_) => json!({ "content": [{ "type": "text", "text": format!("✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})", avg_crs, alpha_a, alpha_d) }] }),
+                Ok(_) => json!({ "content": [{ "type": "text", "text": format!(
+                    "✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})",
+                    avg_crs, alpha_a, alpha_d
+                )}]}),
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
         }
@@ -1292,6 +1399,21 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             if pinned.is_empty() && ranked.is_empty() {
                 out.push_str("No memories stored yet.");
             }
+            // ── Phase 70.2: append system_state_vector health ──────────────────
+            {
+                let lock2 = store.lock().unwrap();
+                if let Some(sys) = lock2.fetch_block("__system_state__") {
+                    let total = lock2.list().len();
+                    let ns = lock2.active_stalk_name();
+                    out.push_str(&format!(
+                        "\n\n⬡ system_state_vector  CRS={:.3} | {} memories | NS={} (updated every 60s by ki_hijacker)",
+                        sys.crs_score, total, ns
+                    ));
+                } else {
+                    out.push_str("\n\n⬡ system_state_vector  not yet minted (wait up to 60s after server start)");
+                }
+            }
+            // ───────────────────────────────────────────────────────────────────
             info!("summarize: {} pinned, {} ranked", pinned.len(), ranked.len());
             json!({ "content": [{ "type": "text", "text": out.trim() }] })
         }
@@ -1605,7 +1727,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             match store.lock().unwrap().track_user_centroid(&interaction) {
                 Ok(_) => {
                     info!("tracked user interaction: {:.20}...", interaction);
-                    json!({ "content": [{ "type": "text", "text": "✓ Tracked user interaction in Rooster User Model." }] })
+                    json!({ "content": [{ "type": "text", "text": "✓ Tracked user interaction in User Model." }] })
                 },
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error tracking interaction: {e}") }], "isError": true }),
             }

@@ -30,7 +30,7 @@ use engram_gpu::metal_backend::MetalBackend;
 #[cfg(engram_backend_wgpu)]
 use engram_gpu::wgpu_backend::WgpuBackend;
 use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION, ZEDOS_USER_MODEL};
-use engram_core::ops::{op_add, op_bind, op_deduce};
+use engram_core::ops::{op_add, op_bind, op_add_arena, op_bind_arena, op_deduce};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -207,8 +207,7 @@ impl RelationIndex {
 // ── Reflexive Contract Assignment ────────────────────────────────────────────
 //
 // Maps ZEDOS tag → permitted transform string, stored in `allowed_transforms[0..64]`.
-// Called at remember() time. This is the Engram equivalent of CodeLand's
-// `assign_schema_transforms()` in `monad_forge/src/mint.rs`.
+// Called at remember() time.
 //
 // | Tag         | Contract              | Meaning                            |
 // |-------------|-----------------------|------------------------------------|
@@ -218,7 +217,87 @@ impl RelationIndex {
 // | RELATION    | op_bind,rollback      | Relational bonds rebound-able      |
 // | OPERATIONAL | evidence_update,rollb | Code memory correctable            |
 // | 0xFF / pin  | 0xFF                  | Full authority, genesis-tier       |
+// ── Transductive Oracle Fallthrough ─────────────────────────────────────────
+//
+// Optional: fires a synchronous POST to an external oracle API when the Engram
+// manifold cannot satisfy a query above MIN_SCORE_THRESHOLD.
+//
+// Enable by setting ENGRAM_ORACLE_URL in the environment:
+//   export ENGRAM_ORACLE_URL="http://localhost:8080/api/ask"
+//
+// Request body: `{ "query": "<text>", "k": 3 }`
+// Response: JSON with a top-level `assembled_prose` field.
+//
+// If the env var is not set, or the oracle is unreachable, returns None (silent fallback).
+fn oracle_fallthrough(query: &str) -> Option<Memory> {
+    let oracle_url = match std::env::var("ENGRAM_ORACLE_URL") {
+        Ok(url) => url,
+        Err(_) => return None,  // oracle disabled (env var not set)
+    };
+    const TIMEOUT_SECS: u64 = 3;
+
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("[oracle_fallthrough] Failed to build HTTP client: {}", e);
+            return None;
+        }
+    };
+
+    let body = serde_json::json!({ "query": query, "k": 3 });
+
+    let response = match client.post(&oracle_url).json(&body).send() {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!("[oracle_fallthrough] Oracle unavailable ({}). Returning empty recall.", e);
+            return None;
+        }
+    };
+
+    let json: serde_json::Value = match response.json() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("[oracle_fallthrough] Could not parse oracle response as JSON: {}", e);
+            return None;
+        }
+    };
+
+    let prose = json
+        .get("assembled_prose")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if prose.is_empty() {
+        tracing::debug!("[oracle_fallthrough] Oracle returned empty assembled_prose.");
+        return None;
+    }
+
+    tracing::info!("[oracle_fallthrough] Oracle hit: {} chars of assembled_prose returned.", prose.len());
+
+    Some(Memory {
+        concept:             "oracle_fallthrough".to_string(),
+        score:               0.29, // Just below MIN_SCORE_THRESHOLD — callers detect oracle provenance.
+        crs:                 0.74,
+        provlog:             prose,
+        explain:             "Transductive[oracle=LBVH]".to_string(),
+        // physics / spatial fields zeroed — synthetic oracle result
+        drift_velocity:      0.0,
+        superposition_depth: 0,
+        zedos_tag:           engram_core::types::ZEDOS_DECLARATIVE,
+        alpha_a:             0.0,
+        alpha_d:             0.0,
+        aabb_min:            [0.0; 3],
+        aabb_max:            [0.0; 3],
+        l2_norm_residual:    0.0,
+    })
+}
+
 fn assign_reflexive_contract(block: &mut engram_core::types::Leg3Pointer) {
+
     use engram_core::types::{
         ZEDOS_PRAXIS, ZEDOS_RELATION, ZEDOS_EPISODIC, ZEDOS_DECLARATIVE,
     };
@@ -402,7 +481,7 @@ impl Backend {
             Backend::Sheaf(b) => b.verify_hypothesis(concept, success),
         }
     }
-    /// Phase E.4 Rooster User Model: 90/10 EMA superposition of user interaction centroid.
+    /// User Model: 90/10 EMA superposition of user interaction centroid.
     /// Implemented inline on the Backend enum so all backend variants are covered without
     /// requiring `track_user_centroid` to be a concrete method on each backend struct.
     fn track_user_centroid(&self, interaction: &str) -> Result<()> {
@@ -442,6 +521,11 @@ pub struct StoreHandle {
     pub access_index: AccessIndex,
     pub relation_index: RelationIndex,
     pub daemon: Option<Arc<crate::daemon::DaemonControl>>,
+    /// Phase 88-Engram Bridge: The reconciled Ego q-vector, loaded from
+    /// `data/holograms/static/self/ego.leg3` at startup and refreshed by
+    /// the NREM pass. Used to gate initial CRS for new blocks via Ego resonance.
+    /// `None` if the ego.leg3 file is missing (Engram still works, CRS=0.74 default).
+    pub ego_q: Option<Box<[engram_core::Complex32; 8192]>>,
 }
 
 impl StoreHandle {
@@ -512,7 +596,18 @@ impl StoreHandle {
             }
         };
 
-        Self { backend, path: expanded, access_index, relation_index, daemon: None }
+        // ── Phase 88-Engram Bridge: Load Ego q-vector ─────────────────────────
+        // Try standard paths in priority order: self/ego.leg3 (reconciled reconc
+        // snapshot), then static/ego.leg3 (Dirichlet narrative accumulator).
+        // On failure, ego_q = None and remember() uses the 0.74 floor.
+        let ego_q = load_ego_q();
+        if ego_q.is_some() {
+            tracing::info!("[EGO GATE] Ego q-vector loaded — new memories will be CRS-gated by Ego resonance.");
+        } else {
+            tracing::warn!("[EGO GATE] ego.leg3 not found — Ego-gated CRS disabled. Memories start at CRS=0.74.");
+        }
+
+        Self { backend, path: expanded, access_index, relation_index, daemon: None, ego_q }
     }
 
     pub fn boot_daemon(store_arc: SharedStore) {
@@ -549,6 +644,27 @@ impl StoreHandle {
             ));
         }
 
+        // ── Phase 88-Engram Bridge: Ego-Gated CRS Initialization ─────────────
+        //
+        // New block CRS is determined by its geometric resonance with the
+        // living Ego state (ego.leg3). This implements the interpretive memory
+        // model: content that resonates with who we ARE gets higher initial
+        // confidence. Orthogonal content starts near the autophagy floor.
+        //
+        //   resonance  = (cosine(q_new, q_ego) + 1.0) / 2.0   ∈ [0, 1]
+        //   CRS_init   = 0.50 + resonance × 0.44              ∈ [0.50, 0.94]
+        //
+        // `mcp_engram_pin()` still grants CRS=1.0 (genesis-tier, explicit only).
+        // If ego_q is missing, falls back to encode.rs default (0.74).
+        if let Some(ego_q) = &self.ego_q {
+            let resonance = engram_core::ops::cosine_similarity(&block.q, ego_q);
+            let resonance_norm = (resonance + 1.0) / 2.0;  // shift [-1,1] → [0,1]
+            let crs_ego = 0.50 + resonance_norm * 0.44;    // range: [0.50, 0.94]
+            block.crs_score = crs_ego;
+            block.energetics.crs = crs_ego;
+            tracing::debug!("[EGO GATE] '{}' — resonance: {:.3} → CRS: {:.3}", concept, resonance, crs_ego);
+        }
+
         // ── Assign reflexive contract by ZEDOS tag ────────────────────────────
         assign_reflexive_contract(&mut block);
 
@@ -562,22 +678,80 @@ impl StoreHandle {
         if r.is_ok() { self.access_index.touch(concept); }
         r
     }
+
+    /// Reload the Ego q-vector from disk — called by the NREM pass after
+    /// `accumulate_narrative()` updates ego.leg3.
+    pub fn refresh_ego_q(&mut self) {
+        self.ego_q = load_ego_q();
+        if self.ego_q.is_some() {
+            tracing::info!("[EGO GATE] Ego q-vector refreshed from disk.");
+        }
+    }
     pub fn recall(&mut self, query: &str, k: usize) -> Vec<Memory> {
         // MIN_SCORE_THRESHOLD: Dirichlet composite score floor.
-        // With 3000+ pinned blocks at CRS=1.0 the scorer's CRS term lifts all
-        // blocks to ~0.27 minimum, causing noise blocks to top the ranking.
-        // Any result below 0.30 is semantically irrelevant — drop it so callers
+        // With 23,000+ pinned blocks at CRS=1.0 the scorer's CRS term lifts all
+        // blocks to ~0.65 minimum, causing noise blocks to top the ranking.
+        // Any result below 0.67 is semantically irrelevant — drop it so callers
         // get an empty result rather than plausible-looking noise.
-        const MIN_SCORE_THRESHOLD: f32 = 0.30;
+        const MIN_SCORE_THRESHOLD: f32 = 0.67;
 
-        let results = self.backend.recall(query, k);
+        let mut results = self.backend.recall(query, k);
+
+        // ── Phase 88-Engram Bridge: Ego-Modulated Recall ──────────────────────
+        //
+        // Post-process results with a small symmetrical ego recognition nudge:
+        //   ego_norm  = (cos(block.q, ego_q) + 1.0) / 2.0   ∈ [0, 1]
+        //   score_adj = score + (ego_norm - 0.5) × 0.04      (±0.02 max shift)
+        //
+        // This preserves the Dirichlet base ranking but floats Ego-resonant
+        // blocks slightly above Ego-orthogonal blocks at equal base scores.
+        // Zero-cost when ego_q is None (no block fetches, no computation).
+        if let Some(ego_q) = &self.ego_q {
+            let ego_q_clone: Box<[engram_core::Complex32; 8192]> = ego_q.clone();
+            for result in &mut results {
+                let raw = result.concept.split_once("::").map_or(result.concept.as_str(), |(_, r)| r);
+                if let Some(q) = self.backend.fetch(raw) {
+                    let ego_cos = engram_core::ops::cosine_similarity(&q, &ego_q_clone);
+                    let ego_norm = (ego_cos + 1.0) / 2.0;
+                    result.score += (ego_norm - 0.5) * 0.04;
+                    result.explain = format!("{} [ego={:.3}]", result.explain, ego_norm);
+                }
+            }
+            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.truncate(k);
+        }
+
         let filtered: Vec<Memory> = results
             .into_iter()
             .filter(|m| m.score >= MIN_SCORE_THRESHOLD)
             .collect();
         for m in &filtered { self.access_index.touch(&m.concept); }
+
+        // ── Phase 4 Epoch IX: Transductive Oracle Fallthrough ─────────────────
+        //
+        // When the Engram manifold returns nothing above the score floor, delegate
+        // When the Engram manifold returns nothing above the score floor, optionally delegate
+        // the query to an external transductive oracle (set ENGRAM_ORACLE_URL to enable).
+        // This allows integration with a larger corpus oracle running alongside Engram.
+        //
+        // Safety:
+        //   - reqwest::blocking is used (non-async) so we don't need to spawn a
+        //     separate tokio task from inside the store mutex critical section.
+        //   - A short timeout (3s) prevents manifold misses from stalling callers.
+        //   - If the oracle is unavailable (server down, timeout, env var unset) we
+        //     fall back silently to an empty result — no panic, no error propagation.
+        //   - The synthetic Memory result is tagged with concept="oracle_fallthrough"
+        //     and score=0.29 (just below MIN_SCORE_THRESHOLD) so callers can
+        //     distinguish oracle results from local hits.
+        if filtered.is_empty() {
+            if let Some(oracle_memory) = oracle_fallthrough(query) {
+                return vec![oracle_memory];
+            }
+        }
+
         filtered
     }
+
     /// Delete a concept from the manifold.
     ///
     /// **Autophagy Protection**: A hard-coded set of foundational blocks can NEVER be
@@ -585,7 +759,7 @@ impl StoreHandle {
     /// These are load-bearing anchors whose removal would corrupt longitudinal continuity.
     ///
     /// Current protected concepts:
-    /// - `_user_centroid`  — Phase E.4 Rooster User Model (90/10 EMA centroid)
+    /// - `_user_centroid`  — User Model (90/10 EMA centroid, geometric intent tracker)
     pub fn forget(&self, concept: &str) -> Result<()> {
         // Strip sheaf prefix for comparison
         let raw = concept.split_once("::").map_or(concept, |(_, r)| r);
@@ -593,7 +767,7 @@ impl StoreHandle {
         if PROTECTED.contains(&raw) {
             return Err(anyhow::anyhow!(
                 "Cannot delete protected concept '{}'. \
-                 This block anchors longitudinal manifold continuity (Rooster User Model). \
+                 This block anchors longitudinal manifold continuity (User Model). \
                  To reset user intent, use mcp_engram_update instead.",
                 concept
             ));
@@ -803,8 +977,7 @@ impl StoreHandle {
     /// Genesis blocks (CRS=1.0 pinned) are protected — scars bounce off them.
     ///
     /// Called by `mcp_engram_scar` (public MCP tool, security: stdio/localhost-bounded).
-    /// Also called by CodeLand's consciousness loop when it emits `InjectScar`
-    /// and routes it through the Engram MCP bridge.
+    /// Also callable by external integrations routing through the Engram MCP bridge.
     pub fn scar(&mut self, concept: &str, magnitude: f32) -> Result<String> {
         let mut block = self.fetch_block(concept)
             .ok_or_else(|| anyhow::anyhow!("Concept '{}' not found", concept))?;
@@ -1163,7 +1336,7 @@ impl StoreHandle {
     pub fn build_hydration_payload(&mut self) -> serde_json::Value {
         const GENESIS_CONCEPTS: &[&str] = &[
             "mission_stewardship",
-            "staticrooster_identity",
+            "project_identity",
             "why_memory_system_exists__agent_perspective",
             "three_part_work_plan_2026_04",
             "nvsa_vs_antigravity_memory_gap",
@@ -1236,6 +1409,37 @@ impl StoreHandle {
                 "session_count":  session_count
             }
         })
+    }
+}
+
+/// Load the Ego q-vector from the canonical ego.leg3 block on disk.
+///
+/// The `ego.leg3` block is written by `monad_logophysics::ego::EgoFrame` during
+/// the NREM pass — it contains the reconciled narrative tensor (weighted sum of
+/// the five domain centroids: Semantic, Episodic, Procedural, Affective, Social).
+///
+/// Returns `Some(Box<[Complex32; 8192]>)` on success, `None` if:
+///   - `$HOME/.engram/ego.leg3` does not exist (ego not yet seeded), or
+///   - The file is corrupt / unreadable (logged as WARN, non-fatal).
+///
+/// The Ego q-vector is intentionally NOT cached beyond the `StoreHandle` lifetime —
+/// call `StoreHandle::refresh_ego_q()` after the NREM pass to pick up updates.
+fn load_ego_q() -> Option<Box<[engram_core::Complex32; 8192]>> {
+    let home = std::env::var("HOME").ok()?;
+    let ego_path = std::path::Path::new(&home).join(".engram").join("ego.leg3");
+    if !ego_path.exists() {
+        tracing::debug!("[EGO GATE] ego.leg3 not found — Ego gate running in passthrough mode.");
+        return None;
+    }
+    match engram_core::storage::read_block(&ego_path) {
+        Ok(block) => {
+            tracing::info!("[EGO GATE] Ego q-vector loaded from {:?}", ego_path);
+            Some(Box::new(block.q))
+        }
+        Err(e) => {
+            tracing::warn!("[EGO GATE] Failed to read ego.leg3: {} — Ego gate disabled.", e);
+            None
+        }
     }
 }
 
