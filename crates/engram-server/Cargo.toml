@@ -46,6 +46,7 @@ tracing-subscriber = { workspace = true }
 # Error handling
 anyhow    = { workspace = true }
 thiserror = { workspace = true }
+reqwest   = { workspace = true }
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 flume = "0.12.0"

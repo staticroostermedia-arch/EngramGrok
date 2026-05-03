@@ -721,6 +721,7 @@ dependencies = [
  "notify",
  "notify-debouncer-full",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "shellexpand",
