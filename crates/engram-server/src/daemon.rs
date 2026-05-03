@@ -122,6 +122,18 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
         std::fs::create_dir_all(&inbox_dir).ok();
         info!("Integration inbox watching: {}", inbox_dir.display());
 
+        // ── NREM Consolidation Cycle (Phase 3) ──────────────────────────────────
+        // Every 4 hours, harvest high-CRS episodic/operational memories and
+        // superimpose them into the ego narrative tensor (ego.leg3).
+        // This implements the nocturnal memory consolidation loop described in
+        // IMPLEMENTATION-PLAN.md § Phase 3: NREM Consolidation.
+        let mut nrem_interval = tokio::time::interval(Duration::from_secs(4 * 60 * 60));
+        nrem_interval.tick().await; // skip immediate first tick on startup
+
+        let ego_leg3_path = std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".engram").join("ego.leg3"))
+            .unwrap_or_else(|_| PathBuf::from("/tmp/ego.leg3"));
+
         loop {
             if ctrl.shutdown.load(Ordering::Relaxed) {
                 break;
@@ -142,6 +154,99 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                     // Flush hot access timestamps to disk every 60 seconds
                     let mut lock = store.lock().unwrap();
                     lock.access_index.flush_if_dirty();
+                }
+
+                _ = nrem_interval.tick() => {
+                    // ── NREM Phase 3: Ego Narrative Consolidation ────────────────
+                    info!("[NREM] Starting ego consolidation pass...");
+
+                    // 1. Harvest high-CRS episodic + operational memories
+                    let harvest_queries = [
+                        "session progress decisions architecture crate",
+                        "bug fix solution praxis crystallized error",
+                        "agent identity mission memory manifold",
+                    ];
+
+                    let mut ego_accumulator: Vec<engram_core::Complex32> = vec![
+                        engram_core::Complex32::new(0.0, 0.0); 8192
+                    ];
+                    let mut harvested = 0usize;
+
+                    {
+                        let mut lock = store.lock().unwrap();
+                        for query in &harvest_queries {
+                            let results = lock.recall(query, 10);
+                            for mem in results {
+                                // Only consume blocks above the silver tier (≥0.85)
+                                if mem.crs >= 0.85 {
+                                    if let Some(block) = lock.fetch_block(&mem.concept) {
+                                        // OP_ADD superposition into accumulator
+                                        for i in 0..8192 {
+                                            ego_accumulator[i].re += block.q[i].re;
+                                            ego_accumulator[i].im += block.q[i].im;
+                                        }
+                                        harvested += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if harvested == 0 {
+                        info!("[NREM] No high-CRS memories found for consolidation — skipping.");
+                    } else {
+                        // 2. L2-normalize the accumulated ego vector
+                        let norm: f32 = ego_accumulator.iter()
+                            .map(|c| c.re * c.re + c.im * c.im)
+                            .sum::<f32>()
+                            .sqrt();
+                        if norm > f32::EPSILON {
+                            for c in ego_accumulator.iter_mut() {
+                                c.re /= norm;
+                                c.im /= norm;
+                            }
+                        }
+
+                        // 3. Write updated ego.leg3 to disk
+                        // Build a minimal HolographicBlock using encode then swap q
+                        {
+                            let lock = store.lock().unwrap();
+                            let mut ego_block = lock.encode("ego_narrative_tensor NREM consolidated");
+                            // Overwrite q with the freshly consolidated vector
+                            for i in 0..8192 {
+                                ego_block.q[i] = ego_accumulator[i];
+                            }
+                            ego_block.zedos_tag = 0xFF; // GENESIS tier
+                            ego_block.crs_score = 1.0;
+                            if let Err(e) = engram_core::storage::write_block(
+                                ego_leg3_path.to_str().unwrap_or("/tmp/ego.leg3"),
+                                &ego_block,
+                            ) {
+                                error!("[NREM] Failed to write ego.leg3: {}", e);
+                            } else {
+                                info!("[NREM] ego.leg3 updated ({} blocks consolidated, norm={:.4})", harvested, norm);
+                                // Hot-reload the updated ego tensor into the store
+                                store.lock().unwrap().refresh_ego_q();
+                            }
+                        }
+
+                        // 4. Mint NREM episodic summary into manifold
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let nrem_concept = format!("nrem_cycle_{}", ts);
+                        let nrem_text = format!(
+                            "NREM Consolidation @ ts={} — {} high-CRS blocks superimposed into ego narrative tensor. ego.leg3 updated. Ego narrative absorbing: session praxis, architectural decisions, mission continuity.",
+                            ts, harvested
+                        );
+                        let mut lock = store.lock().unwrap();
+                        if let Err(e) = lock.remember(&nrem_concept, &nrem_text) {
+                            error!("[NREM] Failed to mint episodic summary: {}", e);
+                        } else {
+                            info!("[NREM] Episodic summary minted: '{}'", nrem_concept);
+                        }
+                    }
                 }
 
                 _ = inbox_interval.tick() => {

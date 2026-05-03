@@ -382,6 +382,21 @@ impl Backend {
     }
 }
 
+// ── Ego Gate Helpers ──────────────────────────────────────────────────────────
+
+/// Load the ego narrative tensor from `~/.engram/ego.leg3`.
+/// Returns `None` gracefully if the file is missing or corrupt (passthrough mode).
+fn load_ego_q() -> Option<Box<[engram_core::Complex32; 8192]>> {
+    let ego_path = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".engram").join("ego.leg3"))
+        .ok()?;
+    let block = engram_core::storage::read_block(&ego_path).ok()?;
+    // Copy 8192 Complex32 values from block.q into a boxed array
+    let mut arr = Box::new([engram_core::Complex32::new(0.0, 0.0); 8192]);
+    arr.copy_from_slice(&block.q);
+    Some(arr)
+}
+
 // ── StoreHandle ───────────────────────────────────────────────────────────────
 
 pub struct StoreHandle {
@@ -390,6 +405,9 @@ pub struct StoreHandle {
     pub access_index: AccessIndex,
     pub relation_index: RelationIndex,
     pub daemon: Option<Arc<crate::daemon::DaemonControl>>,
+    /// NREM ego narrative tensor — loaded from ~/.engram/ego.leg3 at startup
+    /// and refreshed after each NREM consolidation pass.
+    pub ego_q: Option<Box<[engram_core::Complex32; 8192]>>,
 }
 
 impl StoreHandle {
@@ -459,13 +477,30 @@ impl StoreHandle {
             }
         };
 
-        Self { backend, path: expanded, access_index, relation_index, daemon: None }
+        let ego_q = load_ego_q();
+        if ego_q.is_some() {
+            tracing::info!("[EgoGate] ego.leg3 loaded — Ego-gated CRS initialization active");
+        } else {
+            tracing::info!("[EgoGate] ego.leg3 not found — passthrough mode (run NREM to seed)");
+        }
+
+        Self { backend, path: expanded, access_index, relation_index, daemon: None, ego_q }
     }
 
     pub fn boot_daemon(store_arc: SharedStore) {
         let control = crate::daemon::spawn(store_arc.clone());
         let mut lock = store_arc.lock().unwrap();
         lock.daemon = Some(control);
+    }
+
+    /// Reload ego.leg3 from disk into the ego_q field.
+    /// Called by the NREM daemon after each consolidation pass.
+    pub fn refresh_ego_q(&mut self) {
+        self.ego_q = load_ego_q();
+        match &self.ego_q {
+            Some(_) => tracing::info!("[EgoGate] ego_q refreshed from ego.leg3"),
+            None    => tracing::warn!("[EgoGate] ego.leg3 missing after NREM write — check daemon logs"),
+        }
     }
 
     // ── Passthrough ───────────────────────────────────────────────────────────
