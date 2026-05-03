@@ -134,6 +134,23 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
             .map(|h| PathBuf::from(h).join(".engram").join("ego.leg3"))
             .unwrap_or_else(|_| PathBuf::from("/tmp/ego.leg3"));
 
+        // ── System Health Watchdog (Track 1 Autonomy) ───────────────────────────
+        // Every 5 minutes, ping each system service. If a service is unreachable,
+        // write a SYSTEM_HEALTH healing proposal to the agency proposals file so the
+        // human (or auto-exec layer) can approve a restart.
+        let mut health_interval = tokio::time::interval(Duration::from_secs(5 * 60));
+        health_interval.tick().await; // skip first tick on startup
+
+        let agency_proposals_path = std::env::var("CODELAND_ROOT")
+            .map(|r| PathBuf::from(r).join("data").join("agency_proposals.json"))
+            .unwrap_or_else(|_| {
+                // Auto-discover: look relative to HOME
+                std::env::var("HOME")
+                    .map(|h| PathBuf::from(h).join("Documents").join("CodeLand")
+                        .join("data").join("agency_proposals.json"))
+                    .unwrap_or_else(|_| PathBuf::from("/tmp/agency_proposals.json"))
+            });
+
         loop {
             if ctrl.shutdown.load(Ordering::Relaxed) {
                 break;
@@ -245,6 +262,142 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                             error!("[NREM] Failed to mint episodic summary: {}", e);
                         } else {
                             info!("[NREM] Episodic summary minted: '{}'", nrem_concept);
+                        }
+                    }
+                }
+
+
+                _ = health_interval.tick() => {
+                    // ── System Health Watchdog ───────────────────────────────────────
+                    info!("[HEALTH] Running system health check...");
+
+                    // Services to monitor: (name, url, restart_cmd, plain_english)
+                    let services: &[(&str, &str, &str, &str)] = &[
+                        (
+                            "LLM Server (llama.cpp)",
+                            "http://localhost:11434/v1/models",
+                            "bash -c 'cd ~/Documents/CodeLand && nohup scripts/start_llama_server.sh > logs/llm.log 2>&1 &'",
+                            "The local LLM server (Gemma 26B / llama.cpp) is not responding. Restarting it will restore autonomous reasoning, agency proposals, and chess analysis.",
+                        ),
+                        (
+                            "Monad Runtime",
+                            "http://localhost:8080/api/status",
+                            "bash -c 'cd ~/Documents/CodeLand && nohup target/release/monad_runtime > logs/runtime.log 2>&1 &'",
+                            "The Monad Runtime (NVSA oracle + transductive API) is not responding. Restarting it will restore /api/ask lookups, VSA recall, and the semantic CLI.",
+                        ),
+                        (
+                            "Moltbook Hub",
+                            "http://localhost:6090/api/moltbook/status",
+                            "bash -c 'cd ~/Documents/CodeLand && nohup python3 data/web_ui/serve.py > logs/hub.log 2>&1 &'",
+                            "The Moltbook Hub (Cockpit UI + Rooster daemon) is not responding. Restarting it will restore the web interface, draft queue, and Moltbook posting.",
+                        ),
+                    ];
+
+                    let http_client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(4))
+                        .build()
+                        .unwrap_or_default();
+
+                    for (name, url, restart_cmd, plain_english) in services {
+                        let ok = http_client.get(*url).send().await
+                            .map(|r| r.status().is_success() || r.status().as_u16() < 500)
+                            .unwrap_or(false);
+
+                        if !ok {
+                            error!("[HEALTH] {} is DOWN — filing healing proposal", name);
+
+                            // Build a SYSTEM_HEALTH proposal
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default().as_secs();
+                            let prop_id = format!("health_{}_{}", name.replace(' ', "_").to_lowercase(), ts);
+
+                            let proposal = serde_json::json!({
+                                "id": prop_id,
+                                "action_type": "restart_daemon",
+                                "risk_level": "low",
+                                "plain_english": plain_english,
+                                "if_approved": format!("I will run: `{}`. The service should be back online within 15 seconds.", restart_cmd),
+                                "if_rejected": format!("{} will remain offline until manually restarted. Functionality depending on it will be degraded.", name),
+                                "action": restart_cmd,
+                                "reason": format!("Health check to {} returned no response (timeout or connection refused).", url),
+                                "confidence": 0.95,
+                                "source_topic": "system_health",
+                                "status": "pending",
+                                "created_at": ts as f64,
+                            });
+
+                            // Append to agency_proposals.json
+                            let existing_raw = std::fs::read_to_string(&agency_proposals_path)
+                                .unwrap_or_else(|_| "[]".to_string());
+                            if let Ok(mut arr) = serde_json::from_str::<serde_json::Value>(&existing_raw) {
+                                if let Some(list) = arr.as_array_mut() {
+                                    // Avoid duplicate pending proposals for the same service
+                                    let already_pending = list.iter().any(|p|
+                                        p["action_type"] == "restart_daemon"
+                                        && p["source_topic"] == "system_health"
+                                        && p["action"] == *restart_cmd
+                                        && p["status"] == "pending"
+                                    );
+                                    if !already_pending {
+                                        list.push(proposal);
+                                        if let Ok(out) = serde_json::to_string_pretty(&arr) {
+                                            std::fs::write(&agency_proposals_path, out).ok();
+                                            info!("[HEALTH] Filed restart proposal for {}", name);
+                                        }
+                                    } else {
+                                        info!("[HEALTH] Restart proposal for {} already pending — skipping", name);
+                                    }
+                                }
+                            }
+                        } else {
+                            info!("[HEALTH] {} OK", name);
+                        }
+                    }
+
+                    // Also check Circadian via pgrep
+                    let circadian_ok = std::process::Command::new("pgrep")
+                        .args(["-x", "circadian"])
+                        .output()
+                        .map(|o| !o.stdout.is_empty())
+                        .unwrap_or(false);
+
+                    if !circadian_ok {
+                        error!("[HEALTH] Circadian daemon is DOWN — filing restart proposal");
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default().as_secs();
+                        let prop_id = format!("health_circadian_{}", ts);
+                        let proposal = serde_json::json!({
+                            "id": prop_id,
+                            "action_type": "restart_daemon",
+                            "risk_level": "low",
+                            "plain_english": "The Circadian daemon (which runs the nightly NREM memory consolidation cycle) has stopped. Restarting it ensures the ego narrative tensor continues to evolve overnight.",
+                            "if_approved": "I will run: `nohup ~/Documents/CodeLand/target/release/circadian > ~/Documents/CodeLand/logs/circadian.log 2>&1 &`. NREM cycles resume.",
+                            "if_rejected": "Circadian stays offline. NREM consolidation will not run. The ego tensor (ego.leg3) will not be updated until manually restarted.",
+                            "action": "bash -c 'nohup ~/Documents/CodeLand/target/release/circadian > ~/Documents/CodeLand/logs/circadian.log 2>&1 &'",
+                            "reason": "pgrep -x circadian returned empty — process is not running.",
+                            "confidence": 0.97,
+                            "source_topic": "system_health",
+                            "status": "pending",
+                            "created_at": ts as f64,
+                        });
+                        let existing_raw = std::fs::read_to_string(&agency_proposals_path)
+                            .unwrap_or_else(|_| "[]".to_string());
+                        if let Ok(mut arr) = serde_json::from_str::<serde_json::Value>(&existing_raw) {
+                            if let Some(list) = arr.as_array_mut() {
+                                let already = list.iter().any(|p|
+                                    p["id"].as_str().unwrap_or("").starts_with("health_circadian")
+                                    && p["status"] == "pending"
+                                );
+                                if !already {
+                                    list.push(proposal);
+                                    if let Ok(out) = serde_json::to_string_pretty(&arr) {
+                                        std::fs::write(&agency_proposals_path, out).ok();
+                                        info!("[HEALTH] Filed Circadian restart proposal");
+                                    }
+                                }
+                            }
                         }
                     }
                 }
