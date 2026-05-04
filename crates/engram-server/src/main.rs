@@ -20,6 +20,7 @@ mod serve;
 mod store;
 pub mod daemon;
 pub mod ki_hijacker;
+pub mod watchdog;
 pub mod scout;
 pub mod scout_supervisor;
 

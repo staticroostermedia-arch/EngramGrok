@@ -76,7 +76,10 @@ fn load_engramignore() -> Vec<String> {
 /// Starts the global agentic background daemon attached to the MCP / REST Server.
 ///
 /// Autophagy GC is DISABLED. Nothing is ever evicted automatically.
-/// The daemon runs purely as a workspace file watcher — auto-ingesting saved files.
+/// The daemon runs three autonomous loops:
+///   1. File watcher  — inotify/fsevents → AST extraction → live project indexing
+///   2. NREM cycle    — periodic ego narrative tensor consolidation (ego.leg3)
+///   3. Health watchdog — config-driven process monitor (~/.engram/watchdog.toml)
 pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
     // Load shadow basis vectors at spawn time (once — not per file event)
     let shadow_cybernetics: Option<Vec<f32>> = load_shadow_vector("cybernetics");
@@ -88,6 +91,19 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
     if !engramignore.is_empty() {
         info!("[.engramignore] Excluding {} path patterns from watch", engramignore.len());
     }
+
+    // ── Load health watchdog config (~/.engram/watchdog.toml) ────────────────
+    // This is the ONLY place Engram learns about consumer-specific processes.
+    // If the file doesn't exist, the watchdog is a no-op — zero coupling.
+    let watchdog_cfg = crate::watchdog::WatchdogConfig::load();
+    let watchdog_proposals_path = watchdog_cfg.resolved_proposals_path();
+    if watchdog_cfg.watch.is_empty() {
+        info!("[Watchdog] No processes configured — health watchdog is a no-op.");
+    } else {
+        info!("[Watchdog] Monitoring {} process(es). Proposals → {}",
+            watchdog_cfg.watch.len(), watchdog_proposals_path.display());
+    }
+
     let (watch_tx, watch_rx) = flume::unbounded::<PathBuf>();
 
     let daemon = Arc::new(DaemonControl {
@@ -150,21 +166,11 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
         std::fs::create_dir_all(&inbox_dir).ok();
         info!("Integration inbox watching: {}", inbox_dir.display());
 
-        // ── System Health Watchdog (Track 1 Autonomy) ───────────────────────────
-        // Every 5 minutes, ping each system service. If a service is unreachable,
-        // write a SYSTEM_HEALTH healing proposal to the agency proposals file so the
-        // human (or auto-exec layer) can approve a restart.
+        // ── System Health Watchdog ────────────────────────────────────────────
+        // Every 5 minutes, check each process in ~/.engram/watchdog.toml.
+        // If the file doesn't exist, watch list is empty and this is a no-op.
         let mut health_interval = tokio::time::interval(Duration::from_secs(5 * 60));
         health_interval.tick().await; // skip first tick on startup
-
-        let agency_proposals_path = std::env::var("CODELAND_ROOT")
-            .map(|r| PathBuf::from(r).join("data").join("agency_proposals.json"))
-            .unwrap_or_else(|_| {
-                std::env::var("HOME")
-                    .map(|h| PathBuf::from(h).join("Documents").join("CodeLand")
-                        .join("data").join("agency_proposals.json"))
-                    .unwrap_or_else(|_| PathBuf::from("/tmp/agency_proposals.json"))
-            });
 
         loop {
             if ctrl.shutdown.load(Ordering::Relaxed) {
@@ -193,7 +199,7 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                 }
 
                 _ = health_interval.tick() => {
-                    run_health_watchdog(&store, &agency_proposals_path);
+                    run_health_watchdog(&watchdog_cfg, &watchdog_proposals_path);
                 }
 
                 _ = inbox_interval.tick() => {
@@ -473,77 +479,30 @@ fn run_nrem_consolidation(store: &crate::store::SharedStore) {
 
 // ── System Health Watchdog ────────────────────────────────────────────────────
 //
-// Checks whether the Circadian daemon process is alive. If it is unreachable,
-// mints a SYSTEM_HEALTH agency proposal into the proposals file. The Cockpit
-// UI or auto-exec layer can then approve the restart command.
+// Config-driven: reads ~/.engram/watchdog.toml for process names to monitor
+// and where to write agency proposals. If the config file doesn't exist this
+// function is a no-op — Engram has zero coupling to any consumer project.
 //
 // Called every 5 minutes from the daemon select! loop.
 
-fn run_health_watchdog(_store: &crate::store::SharedStore, proposals_path: &std::path::Path) {
-    // Check if the circadian binary is running (look for `circadian` in /proc)
-    let circadian_alive = std::fs::read_dir("/proc")
-        .ok()
-        .map(|entries| {
-            entries.flatten().any(|e| {
-                let comm = e.path().join("comm");
-                std::fs::read_to_string(comm)
-                    .ok()
-                    .map(|s| s.trim() == "circadian")
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(true); // if /proc unreadable, assume alive (non-Linux)
-
-    if circadian_alive {
-        return; // healthy — nothing to do
+fn run_health_watchdog(
+    cfg: &crate::watchdog::WatchdogConfig,
+    proposals_path: &std::path::Path,
+) {
+    if cfg.watch.is_empty() {
+        return; // no-op — watchdog.toml absent or empty
     }
 
-    info!("[HEALTH] Circadian daemon not detected — minting agency proposal.");
-
-    let proposal = serde_json::json!({
-        "id": format!("health_{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default().as_secs()),
-        "type": "SYSTEM_HEALTH",
-        "severity": "HIGH",
-        "title": "Circadian daemon offline",
-        "plain_english": "The Circadian daemon (which runs the nightly NREM memory consolidation cycle) has stopped. Restarting it ensures the ego narrative tensor continues to evolve overnight.",
-        "if_approved": "I will run: `nohup ~/Documents/CodeLand/target/release/circadian > ~/Documents/CodeLand/logs/circadian.log 2>&1 &`. NREM cycles resume.",
-        "if_rejected": "Circadian stays offline. NREM consolidation will not run. The ego tensor (ego.leg3) will not be updated until manually restarted.",
-        "timestamp": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default().as_secs(),
-    });
-
-    // Read existing proposals (or start fresh), append, write back atomically.
-    let mut proposals: Vec<serde_json::Value> = proposals_path
-        .exists()
-        .then(|| std::fs::read_to_string(proposals_path).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-
-    // Deduplicate: don't spam the same proposal every 5 minutes.
-    let already_pending = proposals.iter().any(|p| {
-        p.get("type").and_then(|t| t.as_str()) == Some("SYSTEM_HEALTH")
-            && p.get("title").and_then(|t| t.as_str()) == Some("Circadian daemon offline")
-    });
-
-    if already_pending {
-        return;
-    }
-
-    proposals.push(proposal);
-
-    match serde_json::to_string_pretty(&proposals) {
-        Ok(json) => {
-            if let Err(e) = std::fs::write(proposals_path, json) {
-                error!("[HEALTH] Failed to write agency proposal: {}", e);
-            } else {
-                info!("[HEALTH] Agency proposal written to {}", proposals_path.display());
-            }
+    for process in &cfg.watch {
+        if !crate::watchdog::is_process_alive(&process.name) {
+            info!(
+                "[Watchdog] '{}' not detected — minting agency proposal.",
+                process.name
+            );
+            crate::watchdog::mint_proposal(process, proposals_path);
+        } else {
+            tracing::trace!("[Watchdog] '{}' alive ✓", process.name);
         }
-        Err(e) => error!("[HEALTH] Failed to serialize proposals: {}", e),
     }
 }
 
