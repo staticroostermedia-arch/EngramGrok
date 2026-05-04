@@ -3,20 +3,28 @@
 [![Build Status](https://github.com/staticroostermedia-arch/engram/actions/workflows/rust.yml/badge.svg)](https://github.com/staticroostermedia-arch/engram/actions)
 [![MCP](https://img.shields.io/badge/MCP-Native-blue)](https://github.com/modelcontextprotocol)
 [![Glama](https://glama.ai/mcp/servers/staticroostermedia-arch/engram/badge)](https://glama.ai/mcp/servers/staticroostermedia-arch/engram)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-purple)](LICENSE)
+[![Patent Pending](https://img.shields.io/badge/Patent-Pending-orange)](PATENT-NOTICE.md)
 
-> **Hardware-native geometric memory for AI agents — 21 MCP tools.**  
+> **Hardware-native geometric memory for AI agents — 31 MCP tools.**
 
-Engram is not a vector database. It is a persistent geometric memory engine designed for AI agents. It bypasses conventional database software layers by storing information in fixed, mathematically rigorous 256KB tensors directly on NVMe drives. No cloud, no API keys, no deserialization overhead. Runs entirely on your machine via the Model Context Protocol (MCP).
+Engram is not a vector database. It is a **persistent geometric memory engine** designed for AI agents. It bypasses conventional database software layers by storing information in fixed, mathematically rigorous 256KB tensors directly on NVMe drives — with a background daemon that autonomously consolidates memory, monitors your system's health, and proposes fixes.
+
+No cloud. No API keys. No deserialization overhead. Runs entirely on your machine via the Model Context Protocol (MCP).
 
 ---
 
 ## 🚀 Quick Start
 
-By default, Engram uses internal geometric hashing. To enable massive-scale semantic code search, point it to any OpenAI-compatible embeddings endpoint (e.g., local llama.cpp or ONNX):
-
 ```bash
-export ENGRAM_EMBED_URL="http://localhost:8080/v1/embeddings"
-cargo install engram --git https://github.com/staticroostermedia-arch/engram
+# Clone and install from source
+git clone https://github.com/staticroostermedia-arch/engram.git
+cd engram
+cargo install --path crates/engram-server
+
+# Verify install
+engram --version
+# engram-server 0.4.x
 ```
 
 Add to your MCP config and restart your IDE:
@@ -26,41 +34,148 @@ Add to your MCP config and restart your IDE:
   "mcpServers": {
     "engram": {
       "command": "engram",
-      "args": ["mcp", "--store", "~/.engram/manifold"]
+      "args": ["mcp", "--store", "~/.engram/stalks/"]
     }
   }
 }
 ```
 
-Your agent immediately has access to all 21 tools. See [`integrations/`](integrations/) for IDE-specific configs.
+Your agent immediately has access to all 31 tools. See [`integrations/`](integrations/) for IDE-specific configs (Antigravity, Claude Desktop, Cursor, VS Code).
 
 > 📖 **New here?** Read the **[First Run Guide](FIRST_RUN.md)** — it walks you through verifying every feature works, activating the file watcher daemon, and seeding your manifold with your codebase.
+
+> 🔌 **Optional — enable neural semantic search:** set `ENGRAM_EMBED_URL=http://localhost:8086/v1/embeddings` to point at any OpenAI-compatible local embedding server (llama.cpp, ONNX, nomic-embed). Without it, Engram falls back to BLAKE3 spiral-phase encoding — everything still works.
 
 ---
 
 ## ⚡ Why 256KB? The Hardware-Native Advantage
 
-Engram maps your project's memory into strict 262,144 byte (256KB) containers called **HolographicBlocks**. This size is non-arbitrary.
+Engram maps your project's memory into strict 262,144-byte (256KB) containers called **HolographicBlocks**. This size is non-arbitrary.
 
-- **Native Tensor Load:** 256KB perfectly aligns to 64× 4KB hardware pages. Because the `.leg` format is a strict C-struct, it requires zero JSON decoding or Protobuf parsing.
-- **O_DIRECT and GPUDirect Storage (GDS):** Engram bypasses the operating system's page-cache. When your agent searches for a memory, the tensor streams via Direct Memory Access (DMA) from the physical NVMe SSD straight into CPU registers or directly into GPU VRAM using NVIDIA cuFile APIs.
-- **Zero-Copy Architecture:** By leveraging GPUDirect Storage, Engram eliminates the CPU bounce buffer entirely. Tensors are transferred directly over the PCIe bus to the GPU for massive parallel distance calculations, enabling scan rates of gigabytes per second with near-zero CPU overhead.
+- **Native Tensor Load:** 256KB aligns perfectly to 64× 4KB hardware pages. The `.leg3` format is a strict C-struct — zero JSON decoding, zero Protobuf parsing.
+- **O_DIRECT and GPUDirect Storage (GDS):** Engram bypasses the OS page-cache. When your agent searches for a memory, the tensor streams via DMA from NVMe directly into CPU registers or GPU VRAM via NVIDIA cuFile APIs.
+- **Zero-Copy Architecture:** GPUDirect Storage eliminates the CPU bounce buffer. Tensors transfer directly over PCIe to the GPU for parallel distance calculations — scan rates in the GB/s range with near-zero CPU overhead.
 
-Every block mathematically fuses the full original source code, 8192-dimensional semantic tensors, spatial 3D bounds (for code placement), and cryptographic BLAKE3 Merkle chain proofs.
+Every block fuses the full source text, an 8192-dimensional semantic tensor, spatial 3D bounds (for code placement), a BLAKE3 Merkle chain proof, and a thermodynamic confidence score (CRS).
 
-*(See [docs/architecture.md](docs/architecture.md) for a deep dive into the container format, cuFile integration, and LBVH scaling).*
+*(See [docs/architecture.md](docs/architecture.md) for a deep dive into the container format, cuFile integration, and LBVH scaling.)*
 
 ---
 
-## 🛡️ Hallucination & Loop Protection (Volatility Tracker)
+## 🛡️ Hallucination & Loop Protection
 
-Traditional vector databases are "dumb" append-logs: if an LLM hallucinates or gets stuck in a debugging loop, it will spam the database with hundreds of slightly-different, broken code snippets, destroying the context window.
+Traditional vector databases are append-logs: if an LLM hallucinates or loops, it spams the database with broken snippets, destroying context quality.
 
-Engram does not blindly accept every update as equally valid. It features a built-in mathematical volatility tracker (using Lyapunov stability equations) that monitors how much a concept "shifts" between updates:
-- **Low Drift:** If an agent updates a memory and the semantic meaning barely changes, the system recognizes it as stable/converging. The block's **Coherence-Reliability Score (CRS)** goes up.
-- **High Drift:** If an agent rapidly overwrites a memory with wildly different concepts (a hallucination loop), the system recognizes the volatility. The block's CRS is penalized.
+Engram uses a built-in **Lyapunov stability tracker** (the Coherence-Reliability Score, CRS) that monitors how much a concept drifts between updates:
 
-Memories must mathematically prove their stability over time. If a block's CRS drops too low, agents know not to trust it.
+- **Low Drift → CRS rises:** The system recognizes convergence and increases trust.
+- **High Drift → CRS penalized:** Rapid contradictory overwrites are flagged as hallucination. Agents learn not to trust low-CRS blocks.
+
+Memories must mathematically prove their stability. High-CRS blocks are automatically promoted to permanent `ZEDOS_PRAXIS` status during NREM consolidation. Low-CRS blocks decay and are swept by autophagy.
+
+---
+
+## 🧠 The Agentic Daemon
+
+When Engram boots as an MCP server, it launches a **background daemon** that runs three autonomous loops:
+
+### 1. File Watcher
+Auto-ingests saved files via `inotify`/`fsevents` kernel hooks. Every time you save a `.rs`, `.py`, `.ts`, or any other supported file, the AST pipeline extracts new semantic blocks and updates the manifold without any agent intervention.
+
+### 2. NREM Consolidation (Phase 3)
+On a periodic cycle (~every 10 minutes), the daemon performs a **sleep-cycle memory consolidation pass**:
+- Harvests all memories above CRS ≥ 0.74 (grounded fact tier)
+- Superimposes them via `OP_ADD` into a unified **ego narrative tensor**
+- Writes the result to `ego.leg3` — the agent's persistent self-model
+- Mints a ZEDOS_EPISODIC block summarizing the consolidation
+
+This is the equivalent of REM sleep for the agent's memory. Knowledge crystallized in one session is absorbed into the ego tensor and becomes available as prior context in all future sessions.
+
+### 3. System Health Watchdog
+The daemon continuously monitors critical background processes (e.g., the Circadian daemon that drives nightly consolidation). If a watched process dies, it automatically mints an **Agency Proposal** in the `agency_proposals.json` queue — a human-readable explanation of what failed and exactly what command it wants to run to fix it. The operator can approve or reject the proposal via the Cockpit UI or API.
+
+> **Autophagy is disabled by default.** An agent's memory should outlive sessions. Use `mcp_engram_forget_old` to trigger manual GC when needed.
+
+---
+
+## 🌳 AST-Aware Semantic Distillation
+
+Traditional RAG chunks text arbitrarily, destroying function boundaries. Engram's ingest pipeline uses a universal **AST-extraction layer** powered by **Tree-Sitter**, parsing **Rust, Python, TypeScript, JavaScript, Go, Java, C, and C++**.
+
+It mints exactly **one memory block per public semantic item** (functions, structs, classes, traits):
+
+- **The Tensor (`q`):** Encodes the doc comment and signature — what it is and what it does.
+- **The Provlog:** Carries the raw, full-length source code — verbatim retrieval at any time.
+- **Spatial Embodiment:** Maps the precise 2D row/column coordinates (AABB) of each AST node into the block's physical bounds. Agents know *where* code lives, not just *what* it does.
+
+---
+
+## 🧰 MCP Tools Reference (31 Tools)
+
+### Core Memory (4)
+
+| Tool | Description |
+|---|---|
+| `remember` | Encode text and store as a persistent memory block |
+| `recall` | Semantic similarity search — returns top-k. Optional `time_decay` for time-targeted search and `zedos_filter` for type filtering |
+| `forget` | Delete a specific memory by concept name |
+| `list_concepts` | List all stored concept names |
+
+### Memory Management (9)
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_update` | Re-encode an existing memory in place with Lyapunov drift tracking — **use this, never forget+remember** |
+| `mcp_engram_pin` | Lock a memory at CRS=1.0 — protects foundational axioms permanently |
+| `mcp_engram_stats` | Manifold health report: total count, pinned, avg/min/max CRS, disk usage |
+| `mcp_engram_recall_recent` | Return N most recently accessed memories, sorted by access time |
+| `mcp_engram_summarize` | Project-state digest: pinned memories + top-N by CRS. Single-call wake-up replacement |
+| `mcp_engram_forget_old` | On-demand autophagy: sweep out blocks below a CRS threshold |
+| `mcp_engram_read_concept` | Fetch the full un-truncated text of a specific memory by exact concept name |
+| `mcp_engram_export` | Serialize the entire manifold (or a CRS-filtered subset) to a portable JSON array |
+| `mcp_engram_import` | Ingest a JSON array of `{concept, text}` objects into the manifold |
+
+### Workspace & Agentic (8)
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_watch_workspace` | Bind a directory to the daemon's inotify watcher — auto-re-ingests saves via AST pipeline |
+| `mcp_engram_context_for_file` | Surface top-5 relevant memories for a file path (proactive loading before editing) |
+| `mcp_engram_recall_in_file` | Spatial code search: find all AST concepts defined within a specific line range |
+| `mcp_engram_batch_remember` | Store multiple `{concept, text}` pairs in a single call — faster than N sequential `remember` calls |
+| `mcp_engram_session_start` | **Mandatory at session start.** Validates manifold integrity and initializes epistemic state |
+| `mcp_engram_session_end` | **Mandatory at session end.** Commits session summary + computes ADR thermodynamics |
+| `mcp_engram_scar` | Create a geometric repeller (Apeiron binding) to mark a rejected approach as hostile — prevents re-hallucination |
+| `mcp_engram_remember_solution` | Store a crystallized error→solution pair as a permanent `ZEDOS_PRAXIS` block. Auto-pinned at CRS=1.0 |
+
+### Knowledge Graph (3)
+
+Every `mcp_engram_relate` call stores a `ZEDOS_RELATION` block via `OP_BIND`. Edges are mathematical memory vectors — no external graph database required.
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_relate` | Bind two concepts via `OP_BIND` to create a directed knowledge graph edge |
+| `mcp_engram_search_by_relation` | Traverse the graph by seed concept, edge direction, and optional label |
+| `mcp_engram_visualize` | BFS from a seed concept → renders a Mermaid diagram of the subgraph |
+
+### Physics & Alignment (5)
+
+| Tool | Description |
+|---|---|
+| `mcp_engram_genesis` | Inspect or re-seed the foundational alignment genesis blocks (CRS=1.0, pinned, never decay) |
+| `mcp_engram_verify_behavior` | Report empirical success/failure against a ZEDOS_HYPOTHESIS block. Repeated success promotes to PRAXIS |
+| `mcp_engram_query_with_momentum` | Momentum-assisted recall: blends semantic similarity (80%) with concept trajectory (20%) |
+| `mcp_engram_set_namespace` | Switch to a project-specific memory namespace (stalk). Creates it if it doesn't exist |
+| `mcp_engram_list_namespaces` | List all available namespaces and the currently active one |
+
+### Autonomy & Orchestration (2)
+
+These tools expose Engram's deeper integration with the Monad OS oracle layer, enabling agent self-reflection and multi-step workflow orchestration.
+
+| Tool | Description |
+|---|---|
+| `mcp_self_trace` | Route a query through the Monad Oracle (Operator_LBR anchor) for deep logophysical self-reflection |
+| `mcp_orchestrate_workflow_chain` | Chain multiple MCP tool calls into a single autonomous workflow execution |
 
 ---
 
@@ -74,82 +189,24 @@ Beyond the MCP server, Engram ships a standalone CLI for direct manifold managem
 | `engram recall <query>` | Semantic search, returns top-k |
 | `engram forget <concept>` | Delete a memory |
 | `engram list` | List all stored concept names |
-| `engram ingest <path>` | Recursively ingest a directory of text/code files |
+| `engram ingest <path>` | Recursively ingest a directory (AST extraction for code + chunking for docs) |
 | `engram trace <A> <OP> <B>` | VSA geometry: query the result of ADD or BIND on two concepts |
 | `engram distill` | **Crystallize** — cluster episodic memories into durable ZEDOS_PRAXIS blocks |
-
----
-
-## 🌳 AST-Aware Semantic Distillation
-
-Traditional RAG chunks text arbitrarily, destroying function boundaries and context. Engram's ingest pipeline uses a universal **AST-extraction layer** powered natively by **Tree-Sitter**.
-
-It natively parses **Rust, Python, TypeScript, JavaScript, Go, Java, C, and C++**.
-Engram mints exactly **one memory block per public semantic item** (functions, structs, classes).
-
-- **The Tensor (`q`):** Encodes the doc comment and signature.
-- **The Provlog:** Carries the raw, full-length source code.
-- **Spatial Embodiment:** Maps the precise 2D row/column coordinates of the AST node directly into the memory block's physical bounds, allowing the agent to know *where* code lives, not just *what* it does.
-
----
-
-## 🧰 MCP Tools Reference
-
-Engram exposes **21 tools** across 5 capability groups.
-
-### Core Memory
-
-| Tool | Description |
-|---|---|
-| `remember` | Encode text and store as a persistent memory block |
-| `recall` | Semantic similarity search — returns top-k memories. Optional `time_decay` param for time-targeted search |
-| `forget` | Delete a specific memory by concept name |
-| `list_concepts` | List all stored concept names |
-| `mcp_engram_update` | Re-encode an existing memory in place (uses `op_add` superposition) |
-| `mcp_engram_pin` | Lock a memory at CRS=1.0 — protects foundational constraints forever. |
-
-### Memory Intelligence
-
-| Tool | Description |
-|---|---|
-| `mcp_engram_stats` | Manifold health report: total count, pinned, avg/min/max CRS, disk usage |
-| `mcp_engram_recall_recent` | Return N most recently accessed memories, sorted by access time |
-| `mcp_engram_summarize` | Project-state digest: pinned memories + top-N by CRS. Single-call `/wake_up` replacement |
-| `mcp_engram_forget_old` | On-demand autophagy: manually sweep out low-CRS blocks |
-
-### Workspace & Agentic
-
-| Tool | Description |
-|---|---|
-| `mcp_engram_watch_workspace` | Tell the daemon to watch a directory; automatically extracts and re-ingests file-saves through the Tree-Sitter AST pipeline |
-| `mcp_engram_context_for_file` | Surface top-5 relevant memories for a file path (proactive loading) |
-| `mcp_engram_session_end` | Commit session context and natively compute ADR Thermodynamics based on memory coherence |
-| `mcp_engram_scar` | Create a geometric repeller using the maximum-entropy Apeiron primitive to mark a rejected thought or dead-end. |
-
-### Knowledge Graph
-
-Every `mcp_engram_relate` call stores a ZEDOS_RELATION block using `op_bind`. Edges are mathematical memory vectors, meaning no external graph database is required.
-
-| Tool | Description |
-|---|---|
-| `mcp_engram_relate` | Bind two concepts via `op_bind` to build the graph |
-| `mcp_engram_search_by_relation` | Traverse the graph by edge direction and label |
-| `mcp_engram_visualize` | BFS from a seed concept → outputs a Mermaid diagram |
-
----
-
-## 🧠 The Agentic Daemon & Autophagy
-
-When Engram boots as an MCP server, it also launches a **background Agentic Daemon** that manages autonomous file system watching via `inotify`/`fsevents` kernel integration. When you save a file, the daemon re-ingests the changed AST components instantly.
-
-> [!NOTE]
-> **Autophagy (GC) is Disabled by Default:** We believe an agent's memory should outlive its sessions. If a user steps away from a project for 3 months, their contextual memory shouldn't spontaneously decay. Engram calculates Coherence-Reliability Scores (CRS) continuously, but we deliberately disabled automatic eviction. You must use the `mcp_engram_forget_old` tool to instruct the agent to run manual garbage collection.
+| `engram build-index` | Build the LBVH O(log N) index for large manifolds (>10K blocks) |
 
 ---
 
 ## 🌐 Multi-Project Namespaces
 
-Use sheaf mode to isolate memories by project. Create `~/.engram/sheaf.toml`:
+Engram isolates memories by project via namespaced stalks. No config file required — just call:
+
+```
+mcp_engram_set_namespace("my_project")   # creates + switches to this namespace
+mcp_engram_set_namespace("work_project") # switch to another project
+mcp_engram_list_namespaces()             # see all namespaces
+```
+
+Or configure via `~/.engram/sheaf.toml`:
 
 ```toml
 active_stalk = "codeland"
@@ -163,16 +220,24 @@ name = "personal"
 path = "~/.engram/stalks/personal"
 ```
 
-Then switch namespaces via MCP at any time:
-```
-mcp_engram_set_namespace("personal")
-```
+---
+
+## ⚙️ Hardware Support
+
+| Backend | Feature Flag | Status | Notes |
+|---|---|---|---|
+| CPU (Rayon O_DIRECT) | Default | ✅ | Exact linear scan. 10K memories → ~2.5 GB scanned in <0.4s via NVMe DMA bypass |
+| CPU (LBVH index) | `bvh` | ✅ | O(log N) CSRP-projected tree. ~64 bytes RAM per concept. Build with `engram build-index` |
+| CUDA (NVIDIA) | `cuda-kernels` | ✅ | GPU BVH O(log N), NVMe→VRAM parallel DMA via cuFile GDS |
+| ROCm (AMD) | `rocm-kernels` | ✅ | Wavefront HIP execution |
+| Metal (Apple) | `metal` | ✅ | MSL dynamic runtime compilation via metal-rs |
+| WebGPU | `wgpu-backend` | ✅ | INT8 Poincaré hyperbolic search · 170× VRAM reduction · cross-platform |
 
 ---
 
 ## 💻 IDE Integration
 
-> Integration configs for all supported IDEs: [`integrations/`](integrations/)
+Integration configs for all supported IDEs: [`integrations/`](integrations/)
 
 ### Google Antigravity IDE
 ```json
@@ -180,7 +245,7 @@ mcp_engram_set_namespace("personal")
   "mcpServers": {
     "engram": {
       "command": "engram",
-      "args": ["mcp", "--store", "~/.engram/manifold"],
+      "args": ["mcp", "--store", "~/.engram/stalks/"],
       "disabled": false
     }
   }
@@ -193,7 +258,7 @@ mcp_engram_set_namespace("personal")
   "mcpServers": {
     "engram": {
       "command": "engram",
-      "args": ["mcp", "--store", "~/.engram/manifold"]
+      "args": ["mcp", "--store", "~/.engram/stalks/"]
     }
   }
 }
@@ -201,24 +266,11 @@ mcp_engram_set_namespace("personal")
 
 ---
 
-## ⚙️ Hardware Support
-
-| Backend | Feature Flag | Status | Notes |
-|---|---|---|---|
-| CPU (Rayon O_DIRECT) | Default | ✅ | Exact linear scan. At 10K memories scans 2.5 GB in < 0.4s via NVMe DMA bypass |
-| CPU (LBVH index) | `bvh` feature | ✅ | O(log N) CSRP-projected tree. ~64 bytes RAM per concept. Build with `engram build-index` |
-| CUDA (NVIDIA) | `cuda-kernels` | ✅ | GPU BVH O(log N), NVMe→VRAM parallel DMA |
-| ROCm (AMD) | `rocm-kernels` | ✅ | Wavefront HIP execution |
-| Metal (Apple) | `metal` | ✅ | MSL dynamic runtime compilation via metal-rs |
-| **WebGPU** | **`wgpu-backend`** | ✅ | INT8 Poincaré hyperbolic search · 170× VRAM reduction · cross-platform |
-
----
-
 ## 📄 License & Patent
 
 This software is licensed under **AGPL-3.0-only**.
 
-The `.LEG` container format is covered by **U.S. Patent Application No. 19/372,256** (pending),  
+The `.LEG3` container format is covered by **U.S. Patent Application No. 19/372,256** (pending),  
 *Self-Contained Variable File System (.LEG Container Format)*,  
 Applicant: **Aric Goodman**, Oregon, USA — Static Rooster Media.
 

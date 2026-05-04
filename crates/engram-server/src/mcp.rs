@@ -1588,6 +1588,87 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
+        "mcp_self_trace" => {
+            let query = args["query"].as_str().unwrap_or("").trim().to_string();
+            if query.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: query is required." }], "isError": true });
+            }
+
+            info!("mcp_self_trace: routing query to Monad Oracle (Operator_LBR anchor)");
+            let client = reqwest::blocking::Client::new();
+            let mut resp = None;
+            for p in [8080, 8081, 8082, 8083] {
+                let url = format!("http://127.0.0.1:{}/api/ask", p);
+                if let Ok(res) = client.post(&url).json(&serde_json::json!({ "query": query, "objective_only": false })).send() {
+                    resp = Some(res);
+                    break;
+                }
+            }
+
+            match resp {
+                Some(r) if r.status().is_success() => {
+                    let data: serde_json::Value = r.json().unwrap_or(serde_json::json!({}));
+                    let prose = data["assembled_prose"].as_str().unwrap_or("");
+                    let crs = data["final_crs"].as_f64().unwrap_or(0.0);
+                    let dist = 1.0 - (crs as f32).max(0.0).min(1.0); // Rough geometric distance surrogate
+
+                    let mut out = format!("🧠 Self-Trace Identity Response (Anchored to Operator_LBR)\n────────────────────────────────────────\n");
+                    out.push_str(&format!("Geometric Distance: {:.3} (CRS: {:.3})\n\n", dist, crs));
+                    out.push_str(prose);
+                    if prose.is_empty() {
+                        out.push_str("(No cohesive trajectory formed. The Oracle is uncertain.)");
+                    }
+                    
+                    json!({ "content": [{ "type": "text", "text": out }] })
+                }
+                Some(r) => json!({ "content": [{ "type": "text", "text": format!("Oracle API error: HTTP {}", r.status()) }], "isError": true }),
+                None => json!({ "content": [{ "type": "text", "text": "Error: Could not connect to Monad Transductive API (/api/ask). Is the daemon running?" }], "isError": true }),
+            }
+        }
+
+        "mcp_orchestrate_workflow_chain" => {
+            let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
+            if concept.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: concept is required." }], "isError": true });
+            }
+
+            let mut visited = std::collections::HashSet::new();
+            let mut chain = Vec::new();
+            let mut current = concept.clone();
+            let mut full_output = String::new();
+
+            loop {
+                visited.insert(current.clone());
+                chain.push(current.clone());
+
+                let store_lk = store.lock().unwrap();
+                let raw_concept = current.split_once("::").map_or(current.as_str(), |(_, r)| r);
+                if let Some(block) = store_lk.fetch_block(raw_concept) {
+                    let full_text = engram_core::storage::read_provlog(&block);
+                    full_output.push_str(&format!("### Step: {}\n{}\n\n", current, full_text));
+                } else {
+                    full_output.push_str(&format!("### Step: {}\n(No logophysical block found)\n\n", current));
+                }
+
+                let next = store_lk.search_relations(&current, None, "from")
+                    .into_iter()
+                    .next();
+                
+                drop(store_lk);
+
+                if let Some((target, _lbl)) = next {
+                    if !visited.contains(&target) {
+                        current = target;
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            let out = format!("⛓️ Workflow Orchestration Chain:\n{}\n\n📝 Execution Steps:\n{}", chain.join(" ➔ "), full_output);
+            json!({ "content": [{ "type": "text", "text": out }] })
+        }
+
         "mcp_engram_scar" => {
             let concept   = args["concept"].as_str().unwrap_or("").trim().to_string();
             let magnitude = args["magnitude"].as_f64().unwrap_or(0.15) as f32;

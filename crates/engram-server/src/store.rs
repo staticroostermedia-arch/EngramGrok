@@ -616,6 +616,16 @@ impl StoreHandle {
         lock.daemon = Some(control);
     }
 
+    /// Reload ego.leg3 from disk into the ego_q field.
+    /// Called by the NREM daemon after each consolidation pass.
+    pub fn refresh_ego_q(&mut self) {
+        self.ego_q = load_ego_q();
+        match &self.ego_q {
+            Some(_) => tracing::info!("[EgoGate] ego_q refreshed from ego.leg3"),
+            None    => tracing::warn!("[EgoGate] ego.leg3 missing after NREM write — check daemon logs"),
+        }
+    }
+
     // ── Passthrough ───────────────────────────────────────────────────────────
 
     pub fn store_path(&self) -> &str { &self.path }
@@ -679,14 +689,6 @@ impl StoreHandle {
         r
     }
 
-    /// Reload the Ego q-vector from disk — called by the NREM pass after
-    /// `accumulate_narrative()` updates ego.leg3.
-    pub fn refresh_ego_q(&mut self) {
-        self.ego_q = load_ego_q();
-        if self.ego_q.is_some() {
-            tracing::info!("[EGO GATE] Ego q-vector refreshed from disk.");
-        }
-    }
     pub fn recall(&mut self, query: &str, k: usize) -> Vec<Memory> {
         // MIN_SCORE_THRESHOLD: Dirichlet composite score floor.
         // With 23,000+ pinned blocks at CRS=1.0 the scorer's CRS term lifts all

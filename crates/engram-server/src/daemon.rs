@@ -76,7 +76,10 @@ fn load_engramignore() -> Vec<String> {
 /// Starts the global agentic background daemon attached to the MCP / REST Server.
 ///
 /// Autophagy GC is DISABLED. Nothing is ever evicted automatically.
-/// The daemon runs purely as a workspace file watcher — auto-ingesting saved files.
+/// The daemon runs three autonomous loops:
+///   1. File watcher  — inotify/fsevents → AST extraction → live project indexing
+///   2. NREM cycle    — periodic ego narrative tensor consolidation (ego.leg3)
+///   3. Health watchdog — config-driven process monitor (~/.engram/watchdog.toml)
 pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
     // Load shadow basis vectors at spawn time (once — not per file event)
     let shadow_cybernetics: Option<Vec<f32>> = load_shadow_vector("cybernetics");
@@ -88,6 +91,19 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
     if !engramignore.is_empty() {
         info!("[.engramignore] Excluding {} path patterns from watch", engramignore.len());
     }
+
+    // ── Load health watchdog config (~/.engram/watchdog.toml) ────────────────
+    // This is the ONLY place Engram learns about consumer-specific processes.
+    // If the file doesn't exist, the watchdog is a no-op — zero coupling.
+    let watchdog_cfg = crate::watchdog::WatchdogConfig::load();
+    let watchdog_proposals_path = watchdog_cfg.resolved_proposals_path();
+    if watchdog_cfg.watch.is_empty() {
+        info!("[Watchdog] No processes configured — health watchdog is a no-op.");
+    } else {
+        info!("[Watchdog] Monitoring {} process(es). Proposals → {}",
+            watchdog_cfg.watch.len(), watchdog_proposals_path.display());
+    }
+
     let (watch_tx, watch_rx) = flume::unbounded::<PathBuf>();
 
     let daemon = Arc::new(DaemonControl {
@@ -150,6 +166,12 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
         std::fs::create_dir_all(&inbox_dir).ok();
         info!("Integration inbox watching: {}", inbox_dir.display());
 
+        // ── System Health Watchdog ────────────────────────────────────────────
+        // Every 5 minutes, check each process in ~/.engram/watchdog.toml.
+        // If the file doesn't exist, watch list is empty and this is a no-op.
+        let mut health_interval = tokio::time::interval(Duration::from_secs(5 * 60));
+        health_interval.tick().await; // skip first tick on startup
+
         loop {
             if ctrl.shutdown.load(Ordering::Relaxed) {
                 break;
@@ -174,6 +196,10 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
 
                 _ = nrem_interval.tick() => {
                     run_nrem_consolidation(&store);
+                }
+
+                _ = health_interval.tick() => {
+                    run_health_watchdog(&watchdog_cfg, &watchdog_proposals_path);
                 }
 
                 _ = inbox_interval.tick() => {
@@ -450,6 +476,36 @@ fn run_nrem_consolidation(store: &crate::store::SharedStore) {
         }
     }
 }
+
+// ── System Health Watchdog ────────────────────────────────────────────────────
+//
+// Config-driven: reads ~/.engram/watchdog.toml for process names to monitor
+// and where to write agency proposals. If the config file doesn't exist this
+// function is a no-op — Engram has zero coupling to any consumer project.
+//
+// Called every 5 minutes from the daemon select! loop.
+
+fn run_health_watchdog(
+    cfg: &crate::watchdog::WatchdogConfig,
+    proposals_path: &std::path::Path,
+) {
+    if cfg.watch.is_empty() {
+        return; // no-op — watchdog.toml absent or empty
+    }
+
+    for process in &cfg.watch {
+        if !crate::watchdog::is_process_alive(&process.name) {
+            info!(
+                "[Watchdog] '{}' not detected — minting agency proposal.",
+                process.name
+            );
+            crate::watchdog::mint_proposal(process, proposals_path);
+        } else {
+            tracing::trace!("[Watchdog] '{}' alive ✓", process.name);
+        }
+    }
+}
+
 
 pub struct DaemonControl {
     pub active_watch: Arc<tokio::sync::RwLock<Option<PathBuf>>>,

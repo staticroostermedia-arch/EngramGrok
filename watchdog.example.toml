@@ -1,0 +1,43 @@
+# ~/.engram/watchdog.toml
+#
+# Engram System Health Watchdog Configuration
+# ─────────────────────────────────────────────
+# Place this file at ~/.engram/watchdog.toml to enable the health watchdog.
+# If this file does not exist, the watchdog loop is a no-op.
+#
+# ENV OVERRIDES:
+#   ENGRAM_WATCHDOG_CONFIG   — override the path to this config file
+#   ENGRAM_PROPOSALS_PATH    — override where proposals are written
+#
+# Proposals are written to: ~/.engram/proposals.json (default)
+# Engram's Cockpit UI reads this file to surface healing suggestions.
+
+# Where to write agency healing proposals.
+# Defaults to ~/.engram/proposals.json if omitted.
+# proposals_path = "~/.engram/proposals.json"
+
+# ── Processes to monitor ───────────────────────────────────────────────────────
+# Each [[watch]] entry specifies a process to check every 5 minutes.
+# `name` must match the value in /proc/<pid>/comm (Linux) — typically the
+# binary name truncated to 15 characters.
+
+# Example: CodeLand's circadian NREM driver
+[[watch]]
+name        = "circadian"
+severity    = "HIGH"
+description = "Nightly NREM memory consolidation driver. Keeps ego.leg3 updated."
+restart_hint = "nohup ~/Documents/CodeLand/target/release/circadian > ~/Documents/CodeLand/logs/circadian.log 2>&1 &"
+
+# Example: a custom embedding server
+# [[watch]]
+# name        = "ollama"
+# severity    = "MEDIUM"
+# description = "Local embedding server used for semantic recall."
+# restart_hint = "ollama serve &"
+
+# Example: a systemd-managed service
+# [[watch]]
+# name        = "my-rag"
+# severity    = "LOW"
+# description = "Custom RAG pipeline."
+# restart_hint = "systemctl start my-rag"
