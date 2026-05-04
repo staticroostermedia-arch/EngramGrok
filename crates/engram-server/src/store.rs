@@ -526,6 +526,12 @@ pub struct StoreHandle {
     /// the NREM pass. Used to gate initial CRS for new blocks via Ego resonance.
     /// `None` if the ego.leg3 file is missing (Engram still works, CRS=0.74 default).
     pub ego_q: Option<Box<[engram_core::Complex32; 8192]>>,
+    /// Phase 111-B: Cached W projection matrix (src_dim × 8192 f32, row-major).
+    /// Loaded once at startup from ENGRAM_EMBED_W_PATH (default: ~/Documents/CodeLand/data/models/embed_projection_W.bin).
+    /// When Some, remember() replaces the Helical Baptism q-vector with a Gemma 4-projected
+    /// vector, making new agent memories geometrically commensurate with oracle blocks.
+    embed_w: Option<Vec<f32>>,
+    embed_src_dim: usize,
 }
 
 impl StoreHandle {
@@ -607,7 +613,89 @@ impl StoreHandle {
             tracing::warn!("[EGO GATE] ego.leg3 not found — Ego-gated CRS disabled. Memories start at CRS=0.74.");
         }
 
-        Self { backend, path: expanded, access_index, relation_index, daemon: None, ego_q }
+        // ── Phase 111-B: Load embedding projection W matrix ────────────────────
+        let (embed_w, embed_src_dim) = load_embed_w()
+            .map(|(w, dim)| (Some(w), dim))
+            .unwrap_or((None, 0));
+
+        Self { backend, path: expanded, access_index, relation_index, daemon: None, ego_q, embed_w, embed_src_dim }
+    }
+
+    /// Phase 111-B: Project text through Gemma 4 embeddings → W matrix → complex phase vector.
+    ///
+    /// Returns None (falling back to Helical Baptism) if:
+    /// - W matrix is not loaded (ENGRAM_EMBED_W_PATH not set or file missing)
+    /// - Embedding server is unreachable (llama-server not running)
+    /// - Embedding dimension doesn't match W source dimension
+    ///
+    /// When Some is returned, the q-vector is geometrically commensurate with
+    /// oracle blocks in the Monad manifold (Phase 111 encoding unification).
+    fn try_project_text(&self, text: &str) -> Option<[engram_core::Complex32; 8192]> {
+        let w = self.embed_w.as_ref()?;
+        let src_dim = self.embed_src_dim;
+        const DST_DIM: usize = 8192;
+
+        let embed_url = std::env::var("ENGRAM_EMBED_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:11434/v1/embeddings".to_string());
+
+        // ── Call Gemma 4 /v1/embeddings ──────────────────────────────────────
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build().ok()?;
+
+        let body = serde_json::json!({ "model": "gemma4", "input": text });
+        let resp: serde_json::Value = client.post(&embed_url).json(&body).send()
+            .and_then(|r| r.json())
+            .map_err(|e| {
+                tracing::debug!("[EMBED PROJ] Server unreachable ({}) — Helical Baptism fallback", e);
+                e
+            }).ok()?;
+
+        let embedding: Vec<f32> = resp
+            .get("data").and_then(|d| d.get(0))
+            .and_then(|e| e.get("embedding"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())?;
+
+        if embedding.len() != src_dim {
+            tracing::warn!(
+                "[EMBED PROJ] Embedding dim mismatch: got {} expected {} — Helical Baptism fallback",
+                embedding.len(), src_dim
+            );
+            return None;
+        }
+
+        // ── Matrix multiply: projected[j] = Σ_i embed[i] * W[i*8192+j] ─────
+        let mut projected = vec![0f32; DST_DIM];
+        for i in 0..src_dim {
+            let e = embedding[i];
+            if e.abs() < 1e-9 { continue; } // Skip negligible components
+            let row_start = i * DST_DIM;
+            for j in 0..DST_DIM {
+                projected[j] += e * w[row_start + j];
+            }
+        }
+
+        // ── L2-normalize the projected vector ─────────────────────────────────
+        let norm: f32 = projected.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
+        for x in projected.iter_mut() { *x /= norm; }
+
+        // ── Map to complex phase vector on U(1)^8192 ─────────────────────────
+        // theta_i = projected_i * π ∈ [-π, π]
+        // q[i] = exp(i·theta_i) = cos(theta_i) + i·sin(theta_i)
+        // Result lives on the unit torus, commensurate with oracle block geometry.
+        let mut q = [engram_core::Complex32::default(); DST_DIM];
+        for (i, &p) in projected.iter().enumerate() {
+            let theta = p * std::f32::consts::PI;
+            q[i] = engram_core::Complex32::new(theta.cos(), theta.sin());
+        }
+
+        // Final L2-normalization of the full 8192D complex vector
+        let q_norm: f32 = q.iter().map(|z| z.norm_sqr()).sum::<f32>().sqrt().max(1e-9);
+        for z in q.iter_mut() { *z /= q_norm; }
+
+        tracing::debug!("[EMBED PROJ] '{}...' projected via Gemma 4 → W ({}×{})",
+            &text.chars().take(40).collect::<String>(), src_dim, DST_DIM);
+        Some(q)
     }
 
     pub fn boot_daemon(store_arc: SharedStore) {
@@ -637,6 +725,26 @@ impl StoreHandle {
     pub fn remember(&mut self, concept: &str, text: &str) -> Result<()> {
         // Encode via backend (sets spin_state=0x01, energetics floor in encode.rs)
         let mut block = self.backend.encode(text);
+
+        // ── Phase 111-B: Calibrated Projection Override ───────────────────────
+        //
+        // If the W matrix is loaded and the Gemma 4 embedding server is reachable,
+        // replace the hash-based Helical Baptism q-vector with a semantically
+        // grounded Gemma 4-projected vector. This makes new agent memories
+        // geometrically commensurate with oracle blocks in the Monad manifold,
+        // closing the Encoding Commutativity Gap (Phase 111).
+        //
+        // Falls back silently to Helical Baptism if:
+        //   - W.bin not loaded (ENGRAM_EMBED_W_PATH not set)
+        //   - llama-server unreachable (e.g., not started with --embeddings)
+        // The Euler gate below will still validate the fallback vector.
+        if let Some(projected_q) = self.try_project_text(text) {
+            block.q = projected_q;
+            // Mark as calibrated in the first bytes of payload (for observability)
+            let marker = b"[CAL]";
+            let len = marker.len().min(block.payload.len());
+            block.payload[..len].copy_from_slice(&marker[..len]);
+        }
 
         // ── Euler characteristic gate — reject topologically corrupted vectors ─
         if !engram_core::ops::check_euler_characteristic(&block.q) {
@@ -1445,7 +1553,60 @@ fn load_ego_q() -> Option<Box<[engram_core::Complex32; 8192]>> {
     }
 }
 
-/// Create a new SharedStore from a path string.
+/// Phase 111-B: Load the Procrustes projection W matrix from disk.
+///
+/// W.bin is a raw f32 little-endian file written by `calibrate_projection`.
+/// Layout: row-major (src_dim × 8192). src_dim inferred from file size.
+///
+/// Path resolution order:
+///   1. ENGRAM_EMBED_W_PATH env var (absolute path)
+///   2. ~/Documents/CodeLand/data/models/embed_projection_W.bin (default)
+///
+/// Returns None silently if the file is missing — Engram continues operating
+/// in Helical Baptism mode without disruption.
+fn load_embed_w() -> Option<(Vec<f32>, usize)> {
+    const DST_DIM: usize = 8192;
+
+    let w_path = std::env::var("ENGRAM_EMBED_W_PATH").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        format!("{}/Documents/CodeLand/data/models/embed_projection_W.bin", home)
+    });
+
+    let bytes = match std::fs::read(&w_path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::info!(
+                "[EMBED PROJ] W matrix not found at {} ({}) — Helical Baptism active",
+                w_path, e
+            );
+            return None;
+        }
+    };
+
+    let row_bytes = DST_DIM * 4; // 4 bytes per f32
+    if bytes.len() % row_bytes != 0 {
+        tracing::warn!(
+            "[EMBED PROJ] W.bin size {} not divisible by {}×4 — skipping",
+            bytes.len(), DST_DIM
+        );
+        return None;
+    }
+
+    let src_dim = bytes.len() / row_bytes;
+    let n_floats = bytes.len() / 4;
+    let mut w = vec![0f32; n_floats];
+    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+        w[i] = f32::from_le_bytes(chunk.try_into().unwrap());
+    }
+
+    tracing::info!(
+        "[EMBED PROJ] W matrix loaded: {}×{} ({:.1} MB) — Calibrated encoding ACTIVE",
+        src_dim, DST_DIM, bytes.len() as f64 / 1_048_576.0
+    );
+    Some((w, src_dim))
+}
+
+
 pub fn open_store(path: &str) -> SharedStore {
     Arc::new(Mutex::new(StoreHandle::new(path)))
 }
