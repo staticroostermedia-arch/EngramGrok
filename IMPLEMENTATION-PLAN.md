@@ -1,236 +1,91 @@
-# Engram Implementation Plan
+# IMPLEMENTATION PLAN: Monad Agent Memory Pre-Contextualization System
+# See full plan: /home/a/.gemini/antigravity/brain/306c13e9-3cea-4a77-99c1-27497f667441/agent_precontextualization_plan.md
 
-## Phases 1–4: Completed ✅
+## Phase Sequence
 
-- [x] Headless conversion, Autophagy GC, TurboQuant BVH, NVSA operator ports, documentation audit (see git history)
+1. **Phase 1** (~2h) — `mcp_engram_session_start` returns full hydration payload on first call
+   - Files: `engram-server/src/mcp.rs`, `engram-server/src/store.rs`
+   - Gate: one call = full context. Agent is not blind after session_start.
 
----
+2. **Phase 2** (~3h) — `/api/hydrate` REST endpoint on port 8087, alongside MCP
+   - Files: `engram-server/src/main.rs`, `engram-server/src/serve.rs`
+   - Gate: `curl http://localhost:8087/api/hydrate` returns JSON hydration payload
 
-## Phase 5: MCP Tool Expansion — Full Feature Parity
+3. **Phase 3** (~2h) — ki_hijacker: immediate bake, name-based genesis, session trigger
+   - Files: `engram-server/src/ki_hijacker.rs`
+   - Gate: KI file exists within 1s of server spawn, includes genesis blocks by name
 
-### Discovery
-Audit confirmed the following store-layer functionality **already exists** but is **not yet wired as MCP tools**:
-- `AccessIndex.recent(n)` → temporal recall is implemented
-- `StoreHandle.update()` → in-place memory update
-- `StoreHandle.export_context()` → context export exists
-- `SheafConfig` + stalk system → namespace/project isolation is fully implemented
-- `HolographicBlock.crs_score` + timestamps → all data for stats is in every block
+4. **Phase 4** (~1d) — Gemma 4B scout pipeline (DuckDuckGo/Brave → 27B → manifold)
+   - Files: `engram-server/src/bin/scout.rs` (new), or extend `monad_nemo`
+   - Gate: `mcp_engram_scout({query})` dispatches scout, results appear in KI within 30s
 
-This means Phase 5 is largely **MCP wiring + aggregation logic**, not new backend work.
+5. **Phase 5** (~1d) — Moltbook episodic memory integration
+   - Files: `engram-server/src/moltbook.rs` (new)
+   - Gate: every post → ZEDOS_EPISODIC block; history retrievable via MCP
 
----
+## Key Invariants
+- FHRR is lexical (BLAKE3). Use read_concept(name), NOT recall(query) for genesis blocks.
+- SharedStore is Arc<Mutex<Store>>. REST + MCP share one lock.
+- D1=0.74, D4=0.02. Do not revert D4 to 0.05 (Moltbook depth inflation).
+- BVH builds are async. Never call rebuild_bvh() in any query hot path.
+- Pinned blocks (CRS=1.0) survive autophagy. Genesis blocks must be pinned.
 
-### Phase 5A: Quick Wins (MCP wiring only)
-*All store logic exists — just needs `mcp.rs` handlers.*
+## Deployment Notes
+- Binary installed at: `/home/a/.local/bin/engram` (IDE MCP path — must update this one)
+- `cargo install` writes to `~/.cargo/bin/engram` — **always copy to `.local/bin` too**
+- Command: `cargo build --release -p engram-server && cp target/release/engram ~/.local/bin/engram`
+- IDE must be restarted to unlock the binary before copying (Text file busy otherwise)
 
-- [ ] **`mcp_engram_stats`** — Aggregate manifold health report
-  - Total concept count, pinned count, avg/min/max CRS, oldest block timestamp, newest block timestamp, disk usage of manifold path
-  - No new store logic needed — iterate `list()`, call `fetch_block()` per concept
-
-- [ ] **`mcp_engram_recall_recent`** — Temporal recall
-  - Args: `n_concepts: usize` (default 10), optional `since_hours: f64`
-  - Wraps existing `StoreHandle.recent(n)` → returns concepts sorted by `last_accessed_timestamp`
-  - Enables session rehydration without knowing concept names in advance
-
-- [ ] **`mcp_engram_set_namespace`** — Switch active project/stalk
-  - Args: `namespace: String`
-  - Wraps `Backend.set_active_stalk()` — sheaf system already implemented
-  - Creates namespace if it doesn't exist
-
-- [ ] **`mcp_engram_list_namespaces`** — List all project namespaces
-  - Wraps `StoreHandle.stalk_names()` + `active_stalk_name()`
-
-- [ ] **`mcp_engram_update`** — Update an existing memory in place
-  - Args: `concept: String`, `new_text: String`
-  - Wraps `StoreHandle.update()` which already handles re-encoding + CRS bump
-
----
-
-### Phase 5B: Core New Features
-*Requires new store logic + MCP handlers.*
-
-- [ ] **`mcp_engram_summarize`** — Project state digest
-  - Returns all pinned memories (`CRS = 1.0`) + top N by CRS score as a formatted summary
-  - New `StoreHandle.summarize(top_n: usize)` method that iterates blocks, sorts by CRS, formats output
-  - This replaces the manual multi-recall `/wake_up` pattern
-
-- [ ] **`mcp_engram_batch_remember`** — Bulk memory ingestion
-  - Args: `entries: Vec<{concept: String, text: String}>`
-  - Single MCP call, sequential writes to manifold
-  - Critical for initializing Engram from an existing knowledge dump
-
-- [ ] **`mcp_engram_export`** — Export manifold to portable JSON
-  - Args: optional `namespace: String`, optional `min_crs: f32`
-  - Returns: `Vec<{concept, text (ProvLog), crs, created_at, last_accessed, tags}>`
-  - Uses `fetch_block()` to read `LegFooter` source text per concept
-
-- [ ] **`mcp_engram_import`** — Import from exported JSON
-  - Args: `entries: Vec<{concept, text}>`, optional `namespace: String`
-  - Batch writes — enables cross-machine sync and backup restore
-
-- [ ] **`mcp_engram_forget_old`** — On-demand autophagy
-  - Args: `min_crs_threshold: f32` (e.g. 0.2), optional `older_than_days: u64`
-  - Triggers manual eviction of blocks below threshold without waiting for the daemon
-  - Returns count of evicted concepts
+## Status
+- [x] Recall latency fix (D4 rebalance + async BVH) — commit d605235
+- [x] Phase 1 — `session_start` hydration payload (genesis + history + stats)
+- [x] Phase 2 — `GET /api/hydrate` REST endpoint
+     - `build_hydration_payload()` shared method in StoreHandle — no duplication
+     - Verified: 3690 memories | 5/5 genesis | 2 session records | <500ms
+- [x] Phase 3 — ki_hijacker immediate bake on spawn, Genesis Layer by name
+     - Verified: KI baked in <2s, 29KB, 5/5 genesis, 8 gold, 6 hot, 1 episodic
+     - Binary deployment fix: .local/bin PATH collision resolved
+- [ ] Phase 4 — Gemma 4B scout
+- [ ] Phase 5 — Moltbook integration
 
 ---
 
-### Phase 5C: Knowledge Graph Query Layer
-*New index structure required for relation queries.*
+## Ego Integration (Epoch IX) — Engram Manifold → Interpretive Substrate
 
-The `relate` tool stores relation blocks but there is no inverted index for querying them. This phase builds the read side of the knowledge graph.
+### Goals
+- Transition Engram from flat 25k-block thermodynamic collapse to Ego-gated interpretive memory.
+- Implement NREM circadian consolidation of high-signal memories into the Ego narrative tensor.
+- Implement Phase 4 Transductive oracle fallthrough for low-confidence recall misses.
 
-- [ ] **Relation index** — `relations.json` sidecar file in manifold root
-  - Schema: `{ concept_a: { label: [concept_b, ...] } }`
-  - Updated atomically on every `relate` call (append-only, no rewrite)
-  - Loaded into memory on boot for O(1) relation lookup
+### Phase E1 — Thermodynamic Baseline Fix
+- **File**: `engram-core/src/encode.rs`
+- **Change**: `crs_score` default lowered from `1.0` → `0.74` (grounded-tier).
+- **Status**: ✅ Complete (verified clean build)
 
-- [ ] **`mcp_engram_search_by_relation`** — Knowledge graph traversal
-  - Args: `concept: String`, optional `label: String`, optional `direction: "from"|"to"|"both"`
-  - Returns all concepts related to the seed by the given label
-  - Example: `search_by_relation("authentication", "depends_on")` → all things that depend on auth
+### Phase E2 — Ego-gated CRS Initialization
+- **File**: `engram-server/src/store.rs`
+- **Change**: `StoreHandle` gains `ego_q: Box<[Complex32; 8192]>`. `load_ego_q()` resolves
+  `~/.engram/ego.leg3` at runtime. `remember()` initializes new blocks at
+  `CRS = 0.50 + ego_resonance * 0.44` (range [0.50, 0.94]).
+- **Status**: ✅ Complete
 
-- [ ] **`mcp_engram_visualize`** — Render concept graph as Mermaid
-  - Args: `seed_concept: String`, `depth: usize` (default 2)
-  - BFS traversal of relation index from seed
-  - Returns a Mermaid `graph LR` block the agent can embed in markdown
-  - No external dependencies — pure string generation
+### Phase E3 — NREM Dream Consolidation (Phase 3)
+- **File**: `engram-server/src/daemon.rs`
+- **Change**: Circadian timer fires every 6h. Scans all blocks with CRS ≥ 0.85,
+  OP_ADD-superposes their q-vectors, L2-normalizes, mints `ego.leg3`, calls
+  `StoreHandle::refresh_ego_q()` for live hot-swap.
+- **Status**: ✅ Complete
 
----
+### Phase E4 — Transductive Oracle Fallthrough (Phase 4)
+- **File**: `engram-server/src/store.rs`
+- **Change**: `recall()` triggers `oracle_fallthrough()` when results are empty or all
+  scores < `MIN_SCORE_THRESHOLD` (0.30). POSTs `{ query, k:3 }` to
+  `http://localhost:8080/api/ask`, maps `assembled_prose` to a synthetic `Memory`
+  with `score=0.29`, `provlog=prose`, `explain="Transductive[oracle=LBVH]"`.
+  Silent fallback (3s timeout) if oracle unreachable.
+- **Status**: ✅ Complete (Memory struct field fix applied 2026-04-28)
 
-### Phase 5D: Session Hooks (Advanced)
-*Integrates Engram into the agent session lifecycle.*
-
-- [ ] **`mcp_engram_session_start`** — Snapshot session context
-  - Creates a pinned memory: `session_{timestamp}` with a summary of active namespace state
-  - Returns the executive digest (replaces manual `/wake_up` recall sequence)
-
-- [ ] **`mcp_engram_session_end`** — Commit session to long-term memory
-  - Args: `summary: String` (agent writes what happened this session)
-  - Stores with moderate CRS, promotes anything accessed >3 times this session to higher CRS
-  - Enables automatic knowledge consolidation between sessions
-
----
-
-## Phase 6: CLI Enhancements ✅
-
-All core CLI subcommands shipped:
-- [x] `engram distill` — cluster manifold memories into ZEDOS_PRAXIS centroids via `bundle()` superposition
-- [ ] `engram stats` — print manifold health to stdout
-- [ ] `engram export > backup.json` — dump to stdout
-- [ ] `engram import backup.json` — restore from file
-- [ ] `engram visualize <concept>` — print Mermaid graph to stdout
-
----
-
-## Phase 5D: Session Hooks 🟡 NEXT
-
-Integrates Engram into the agent session lifecycle. Two new MCP tools:
-
-- [ ] **`mcp_engram_session_start`**
-  - Loads manifold digest (summarize internally)
-  - Computes session anchor: OP_ADD superposition of top-5 recently accessed blocks
-  - Writes `SESSION_START::timestamp` as ZEDOS_EPISODIC (naturally decays)
-  - Returns full digest so agent rehydrates in one call — no manual recall loop
-
-- [ ] **`mcp_engram_session_end`** `summary: String`
-  - Stores agent-written session summary as ZEDOS_PRAXIS at CRS=0.80
-  - CRS promotion sweep: bump all blocks accessed this session by `+0.05 × access_count`
-  - Computes session centroid: `bundle(all accessed q-vectors)` → written as `SESSION_CENTROID::timestamp`
-  - Session centroid becomes the seed for the *next* session_start
-  - Decays the session_start block from this session (now stale)
-
----
-
-## Phase 7: Ouroboros AST Pipeline 🔴 TODO
-
-Port CodeLand's tree-sitter → phase-vector pipeline as a standalone `engram-ast` crate.
-Gives Engram **native code structure awareness** — the AST topology is encoded geometrically,
-not as raw text. `mcp_engram_watch_workspace` would automatically use it for `.rs`, `.py`, `.ts` files.
-
-- [ ] `engram-ast` crate: tree-sitter → 8192D phase vector encoder per language
-- [ ] Wire into `mcp_engram_watch_workspace` as opt-in backend (`--ast-mode`)
-- [ ] `engram-cli ingest --ast` flag to AST-encode a directory instead of chunking by character
-
----
-
-| Priority | Feature | Effort | Impact |
-|---|---|---|---|
-| 1 | `stats` | Low (MCP wire only) | High |
-| 2 | `recall_recent` | Low (MCP wire only) | High |
-| 3 | `summarize` | Medium (new store logic) | High |
-| 4 | `set_namespace` / `list_namespaces` | Low (MCP wire only) | High |
-| 5 | `update` | Low (MCP wire only) | Medium |
-| 6 | `export` / `import` | Medium | High |
-| 7 | `batch_remember` | Low | Medium |
-| 8 | `forget_old` | Low | Medium |
-| 9 | Relation index | Medium | Medium |
-| 10 | `search_by_relation` | Medium | Medium |
-| 11 | `visualize` | Medium | Medium |
-| 12 | Session hooks | High | High |
-| 13 | CLI subcommands | Low | Medium |
-
----
-
-## Phase E (Rooster Integration) — Geometric Error Residuals ✅ SHIPPED 2026-04-21
-
-This phase extends `HolographicBlock` and `VsaBackend` to support prediction error residual
-tracking, enabling the Rooster (Moltbook) agent to preserve the divergence between its
-prior belief and factual learning outcomes — preventing state-space collapse.
-
-### E.1 — `types.rs`: Residual Fields in HolographicBlock ✅
-
-Carved 136 bytes from `_pad_energetics` (4,032B dead zone). Block remains exactly 256KB.
-
-```
-0x21040  err_residual_16d:   [Complex32; 16]  — geometric direction of error (128B)
-0x210C0  l2_norm_residual:   f32              — full-space L2 surprise magnitude (4B)
-0x210C4  residual_dims_used: u8               — reserved for adaptive compression (1B)
-         _pad_residual_align:[u8; 3]          — alignment padding (3B)
-         _pad_energetics:    [u8; 3896]       — remaining dead pad
-```
-
-- Compile-time `offset_of!` assertions verify layout at `0x21040`.
-- Old blocks have `l2_norm_residual = 0.0` (zero pad) — valid backward-compatible sentinel.
-- All 12 existing tests continue to pass.
-
-### E.2 — `backend.rs`: VsaBackend Extension ✅
-
-- Added `l2_norm_residual: f32` to `Memory` struct (exposed on every recall result).
-- Added `VsaBackend::remember_with_residual(concept, text, prior_q)` default trait method.
-  Computes `actual_q − prior_q`, stores 16D projection + L2 norm into the new fields.
-
-### E.3 — Rooster `knowledge_loop.rs`: Prior Centroid + Residual Storage ✅
-
-- `jit_learn_concept()` now runs a Stage 2.5: fetches top-3 Engram hits before learning,
-  averages their q-vectors into a prior centroid, passes it to `remember_with_residual`.
-- Zero-vector prior used for completely novel topics (maximum surprise sentinel).
-- First production block with non-zero residual: `jit_denominational` (2026-04-21).
-
-### E.4 — Rooster User Model / Theory of P (PLANNED — Phase 4)
-
-Per-user phase-vector blocks accumulate each Moltbook user's conceptual centroid over time.
-Uses existing `update()` path (Lyapunov drift tracking already built-in).
-Unlocks geometrically grounded claims: worldview similarity, drift detection, surprise tracking.
-See: `/home/a/.gemini/antigravity/brain/306c13e9-*/implementation_plan.md` for full spec.
-
-### E.5 — M-NOL Geometric Denial Field (FUTURE — Phase 5)
-
-Integration point: `CodeLand/crates/monad_runtime/src/geodesic.rs`.
-Residual centroids from failing trajectories become a continuous geometric repulsion field,
-replacing the current binary label-based `mnol_deny` list.
-Formula: `repulsion = cosine_sim(oracle_q[0..16], denial_centroid) × mean_surprise`.
-
----
-
-## Versioning
-
-- `v0.1.0` — Initial release
-- `v0.2.0` — Phase 5A: stats, recall_recent, namespace, update tools
-- `v0.3.0` — Phase 5B: summarize, batch_remember, export, import, forget_old tools
-- `v0.4.0` — Phase 5C: relation index, search_by_relation, visualize tools
-- `v0.5.0` — Phase 6: `engram distill` CLI command
-- `v0.5.1` — **Phase E.1–E.3: Geometric error residuals (Rooster integration)** ← **current**
-- `v0.6.0` — Phase E.4: User model / Theory of P (Rooster Phase 4)
-- `v0.7.0` — Phase 5D: session_start / session_end MCP tools
-- `v1.0.0` — Phase 7: Ouroboros AST pipeline (stable API)
+### Deployment
+- Restart engram-server to activate: `StoreHandle::new()` loads `ego.leg3` on startup.
+- NREM fires automatically at 6h intervals from daemon spawn.
+- Oracle fallthrough is transparent — no config needed.

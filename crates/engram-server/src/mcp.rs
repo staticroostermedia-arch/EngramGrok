@@ -113,7 +113,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "remember",
+                "name": "mcp_engram_remember",
                 "description": "Encode text and store it as a persistent HolographicBlock (.leg3) memory under a concept name. \
                                 WHEN TO CALL: Any time you learn a new fact, decision, user preference, architecture detail, \
                                 or solution you will need in a future session. If you would write it in a comment, store it here. \
@@ -140,7 +140,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "recall",
+                "name": "mcp_engram_recall",
                 "description": "Search persistent memory by semantic similarity. Returns ranked HolographicBlock memories. \
                                 WHEN TO CALL: Before answering any technical question, before editing a file, \
                                 before making an architectural decision — check memory first. \
@@ -177,7 +177,7 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "forget",
+                "name": "mcp_engram_forget",
                 "description": "Permanently delete a memory block from the manifold. \
                                 WARNING: This destroys the block's entire thermodynamic history (CRS, Merkle chain, ADR state). \
                                 WHEN TO USE: Only when a concept is completely obsolete or was stored in error. \
@@ -195,8 +195,8 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "list_concepts",
-                "description": "List all concept names currently stored in memory.",
+                "name": "mcp_engram_list_concepts",
+                "description": "BEHAVIOR: Lists all concept names currently stored in the memory manifold. USAGE: Call this when you need to see a directory of all remembered concepts without fetching their full text. Use this to orient yourself to the current namespace. OUTPUT: Returns a text string containing a newline-separated list of all concept identifiers.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {}
@@ -210,7 +210,7 @@ fn tool_list() -> Value {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Absolute path to the workspace folder (e.g. /home/a/Documents/CodeLand)"
+                            "description": "Absolute path to the workspace folder (e.g. /home/user/Documents/MyProject)"
                         }
                     },
                     "required": ["path"]
@@ -230,7 +230,7 @@ fn tool_list() -> Value {
             {
                 "name": "mcp_engram_session_end",
                 "description": "MANDATORY: Call this at the end of every conversation or distinct task. \
-                                Commits a session summary as a ZEDOS_PRAXIS block and calculates ADR Thermodynamics \
+                                Commits a session summary as a ZEDOS_EPISODIC block and calculates ADR Thermodynamics \
                                 (alpha_a=confidence, alpha_d=frustration) based on the CRS of memories touched this session. \
                                 CONSEQUENCE OF SKIPPING: The session's work is lost to future agents. The next session \
                                 will have no record that this work happened, will re-derive solved problems, and will \
@@ -330,12 +330,12 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_stats",
-                "description": "Return a health report of the geometric manifold: total memories, pinned count, CRS distribution, active namespace, and disk usage.",
+                "description": "BEHAVIOR: Calculates and returns a comprehensive health report of the geometric manifold. USAGE: Call this to understand the current scale, disk usage, active namespace, and thermodynamic health (CRS distribution) of the knowledge base. Useful before triggering autophagy. OUTPUT: A formatted text block detailing total memories, pinned count, CRS distributions, active namespace, and disk usage.",
                 "inputSchema": { "type": "object", "properties": {} }
             },
             {
                 "name": "mcp_engram_recall_recent",
-                "description": "Return the N most recently accessed memories, sorted by access time. Useful for session rehydration when you don't know exact concept names.",
+                "description": "BEHAVIOR: Retrieves the N most recently accessed memories from the manifold, sorted chronologically by access time. USAGE: Call this for session rehydration when you lack exact concept names but know you need recently touched context. OUTPUT: A ranked list of memories including their concept name, CRS score, tags, and truncated text snippet.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -349,7 +349,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_set_namespace",
-                "description": "Switch to a project-specific memory namespace (stalk). Creates the namespace if it does not exist. Use this to isolate memories by project.",
+                "description": "BEHAVIOR: Switches the active geometric context to a project-specific memory namespace (stalk). Automatically creates the namespace if it does not exist. USAGE: Call this at the start of a session or when switching contexts to isolate memories and prevent cross-project hallucination. OUTPUT: A success message confirming the new active namespace.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -363,7 +363,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_list_namespaces",
-                "description": "List all available memory namespaces and which one is currently active.",
+                "description": "BEHAVIOR: Discovers and lists all available memory namespaces stored on disk, indicating which one is currently active. USAGE: Call this when you need to know what project contexts exist before attempting to switch namespaces. OUTPUT: A formatted text list of namespace names, with an asterisk or marker indicating the currently active stalk.",
                 "inputSchema": { "type": "object", "properties": {} }
             },
             {
@@ -396,7 +396,9 @@ fn tool_list() -> Value {
                                 WHEN TO USE: At the start of a new session when you need to rehydrate context fast. \
                                 Single call replaces multiple recall queries. Returns pinned blocks (CRS=1.0) first \
                                 because those are the load-bearing axioms of the project, followed by the \
-                                highest-confidence working memories. Ideal as a /wake_up replacement.",
+                                highest-confidence working memories. Also appends a ⬡ system_state_vector health line \
+                                (CRS, total memory count, active namespace) — updated every 60s by ki_hijacker. \
+                                Ideal as a /wake_up replacement.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -410,7 +412,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_batch_remember",
-                "description": "Store multiple memories in a single call. Faster than calling remember() N times.",
+                "description": "BEHAVIOR: Encodes and stores multiple distinct texts as separate HolographicBlock memories in a single operation. Applies thermodynamic CRS gating to each block. USAGE: Call this when you have several unrelated facts, decisions, or snippets to persist at once, as it is much faster than invoking remember() sequentially N times. OUTPUT: A confirmation listing how many concepts were successfully committed.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -432,7 +434,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_export",
-                "description": "Export the manifold (or a filtered subset) as a portable JSON array. Use for backup, migration, or cross-machine sync.",
+                "description": "BEHAVIOR: Serializes the current active memory manifold (or a subset filtered by minimum CRS) into a portable JSON array. USAGE: Call this when you need to backup the project's knowledge base, migrate data to another machine, or synchronize states. OUTPUT: A serialized JSON string containing all matching blocks with their concept identifiers and text payloads.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -446,7 +448,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_import",
-                "description": "Restore memories from a JSON array previously exported by mcp_engram_export. Each entry needs concept and text fields.",
+                "description": "BEHAVIOR: Deserializes a JSON array and injects the extracted concepts and texts into the active manifold as native HolographicBlocks. USAGE: Call this to restore a previous backup created by mcp_engram_export, or to ingest bulk data formatted as an array of {concept, text} objects. OUTPUT: A success message detailing how many memories were imported and written to disk.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -526,7 +528,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_genesis",
-                "description": "Inspect or re-seed the alignment genesis blocks. Genesis seeds are PRAXIS-tagged memories at CRS=1.0 that anchor the manifold's ethical and operational context. They are seeded once on first boot and never decay.",
+                "description": "BEHAVIOR: Inspects or re-initializes the core alignment genesis blocks of the OS. These are foundational PRAXIS-tagged memories locked at CRS=1.0. USAGE: Call this to verify the ethical/operational anchors exist ('status' action) or to repair the manifold if they are missing/corrupted ('reseed' action). OUTPUT: Text indicating the presence of genesis seeds or confirmation of their successful re-initialization.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -637,34 +639,36 @@ fn tool_list() -> Value {
                 }
             },
             {
-                "name": "mcp_self_trace",
-                "description": "Routes a query directly to the Monad Oracle (/api/ask) anchored to the Operator_LBR identity tensor. \
-                                This tool provides the agent with an internal, provable self-query mechanism to determine \
-                                what it 'knows' based on its Logophysical geometry. \
-                                Use this instead of external web searches for any identity, philosophical, or core knowledge queries.",
+                "name": "mcp_engram_track_user",
+                "description": "BEHAVIOR: Tracks and records a user interaction directly into the persistent User Model manifold. Applies a 90/10 EMA (Exponential Moving Average) superposition to geometrically track drift in user intent. USAGE: Call this whenever the user expresses a significant preference, intent, or constraint to maintain a synchronized psychological model. OUTPUT: A brief confirmation that the interaction has been integrated into the user model.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "interaction": {
+                            "type": "string",
+                            "description": "The interaction text to track"
+                        }
+                    },
+                    "required": ["interaction"]
+                }
+            },
+            {
+                "name": "mcp_engram_scout",
+                "description": "Phase 4 Scout Pipeline: searches the web (DuckDuckGo, no API key) and synthesizes results via Gemma 4B (e4b-nemo). The synthesized summary is stored as a ZEDOS_DECLARATIVE block in the manifold (CRS=0.9) and returned. USAGE: Call this to ground a hypothesis in real-world web data before storing it. EXAMPLE: mcp_engram_scout({query: 'latest Gemma model benchmarks 2025'}). CONFIG: Set ENGRAM_SCOUT_LLM_URL (default: http://localhost:11434) and ENGRAM_SCOUT_LLM_MODEL (default: gemma4:e4b-nemo) to override the synthesis endpoint.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Natural language query to self-trace through the oracle manifold"
+                            "description": "Search query to look up on the web"
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum number of web snippets to retrieve (default: 5, max: 10)",
+                            "default": 5
                         }
                     },
                     "required": ["query"]
-                }
-            },
-            {
-                "name": "mcp_orchestrate_workflow_chain",
-                "description": "Orchestrates a workflow chain by traversing OP_BIND edges from a starting block ID. Automatically traverses the graph to map out execution steps.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "concept": {
-                            "type": "string",
-                            "description": "The starting concept/block ID for the workflow."
-                        }
-                    },
-                    "required": ["concept"]
                 }
             }
         ]
@@ -674,8 +678,78 @@ fn tool_list() -> Value {
 // ── Tool dispatch ─────────────────────────────────────────────────────────────
 
 fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
+    // ── Phase 70.2: Read system_state_vector ──────────────────────────────────
+    if name == "mcp_engram_read_system_state" {
+        let lock = store.lock().unwrap();
+        return if let Some(block) = lock.fetch_block("__system_state__") {
+            let crs = block.crs_score;
+            let pinned_count = lock.list().iter().filter(|n| {
+                let raw = n.split_once("::").map_or(n.as_str(), |(_, r)| r);
+                lock.fetch_block(raw).map_or(false, |b| b.crs_score >= 1.0)
+            }).count();
+            let total = lock.list().len();
+            let namespace = lock.active_stalk_name();
+            let provlog = engram_core::storage::read_provlog(&block);
+            json!({ "content": [{ "type": "text", "text": format!(
+                "✓ system_state_vector loaded\n\
+                 Manifold: {} memories | Pinned: {} | Active NS: {} | CRS: {:.3}\n\n\
+                 Provlog: {}\n\n\
+                 ─────────────────────────────────────────────────────\n\
+                 Use mcp_engram_recall(<query>) for semantic search.\n\
+                 Use mcp_engram_recall_recent for hot-session concepts.\n\
+                 Use mcp_engram_summarize for pinned + gold-tier overview.",
+                total, pinned_count, namespace, crs, provlog.trim()
+            )}]})
+        } else {
+            json!({ "content": [{ "type": "text", "text":
+                "⚠ No system_state_vector yet — ki_hijacker hasn't ticked.\n\
+                 Wait up to 60s after Engram server starts, then retry.\n\
+                 Alternatively call mcp_engram_summarize for an immediate overview."
+            }]})
+        };
+    }
+
+    // ── Phase 4: Scout (async) — bridge into the tokio runtime ───────────────
+    if name == "mcp_engram_scout" {
+        let query = args["query"].as_str().unwrap_or("").trim().to_string();
+        let max_results = args["max_results"].as_u64().unwrap_or(5).min(10) as usize;
+        if query.is_empty() {
+            return json!({
+                "content": [{ "type": "text", "text": "Error: query is required." }],
+                "isError": true
+            });
+        }
+        info!("mcp_engram_scout: {:?} (max_results={})", query, max_results);
+        let store_clone = store.clone();
+        let result = tokio::runtime::Handle::current()
+            .block_on(crate::scout::run(store_clone, &query, max_results));
+        return match result {
+            Ok(r) => json!({
+                "content": [{ "type": "text", "text": format!(
+                    "✓ Scout complete for {:?}\n\
+                     Concept stored: `{}`\n\
+                     Manifold size: {} memories\n\n\
+                     ## Synthesis\n{}\n\n\
+                     ## Sources ({} snippets)\n{}",
+                    query,
+                    r.concept,
+                    r.total_memories,
+                    r.summary,
+                    r.snippets.len(),
+                    r.snippets.iter().enumerate()
+                        .map(|(i, s)| format!("{}. **{}** — {}", i+1, s.title, s.snippet))
+                        .collect::<Vec<_>>().join("\n")
+                )}]
+            }),
+            Err(e) => json!({
+                "content": [{ "type": "text", "text": format!("Scout error: {e}") }],
+                "isError": true
+            }),
+        };
+    }
+
     match name {
-        "remember" => {
+        "mcp_engram_remember" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
             let text    = args["text"].as_str().unwrap_or("").trim().to_string();
 
@@ -702,7 +776,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "recall" => {
+        "mcp_engram_recall" => {
             let query = args["query"].as_str().unwrap_or("").trim().to_string();
             let k = args["k"].as_u64().unwrap_or(5).min(20) as usize;
             let zedos_filter = args["zedos_filter"].as_str().map(|s| s.trim().to_lowercase());
@@ -796,7 +870,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "forget" => {
+        "mcp_engram_forget" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
             if concept.is_empty() {
                 return json!({
@@ -816,7 +890,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
-        "list_concepts" => {
+        "mcp_engram_list_concepts" => {
             let concepts = store.lock().unwrap().list();
             if concepts.is_empty() {
                 json!({ "content": [{ "type": "text", "text": "No memories stored yet." }] })
@@ -849,34 +923,115 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
 
             let mut lock = store.lock().unwrap();
-            let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
             let key = format!("session_start_{}", timestamp);
-            
-            // Validate manifold integrity
-            let all_concepts = lock.list();
-            let total_memories = all_concepts.len();
-            let mut pinned_count = 0;
-            let mut avg_crs = 0.0;
-            if total_memories > 0 {
-                let mut sum_crs = 0.0;
-                for c in &all_concepts {
-                    if let Some(b) = lock.fetch_block(c) {
-                        sum_crs += b.crs_score;
-                        if b.crs_score >= 1.0 { pinned_count += 1; }
-                    }
-                }
-                avg_crs = sum_crs / total_memories as f32;
-            }
 
-            // Create episodic log block
+            // ── Store session start episodic block ───────────────────────────
             let mut session_block = lock.encode(&format!("SESSION_START intent: {}", intent));
             session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
             session_block.crs_score = 1.0;
-            
-            match lock.store(&key, session_block) {
-                Ok(_) => json!({ "content": [{ "type": "text", "text": format!("✓ Session initialized. Manifold Integrity Validated: {} total memories ({} pinned). Average CRS: {:.3}.", total_memories, pinned_count, avg_crs) }] }),
-                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            let _ = lock.store(&key, session_block);
+
+            // ── Manifold stats (fast index-only, no full block scan) ─────────
+            let total_memories = lock.list().len();
+
+            // ── Section 1: Named genesis blocks (O(1) direct lookup each) ────
+            // FHRR encoding is BLAKE3 lexical, NOT neural semantic. Genesis blocks
+            // MUST be loaded by exact concept name — do NOT use recall() here.
+            const GENESIS_CONCEPTS: &[&str] = &[
+                "mission_stewardship",
+                "project_identity",
+                "why_memory_system_exists__agent_perspective",
+                "three_part_work_plan_2026_04",
+                "nvsa_vs_antigravity_memory_gap",
+            ];
+            let mut genesis_section = String::new();
+            let mut genesis_loaded = 0usize;
+            for &name in GENESIS_CONCEPTS {
+                if let Some(block) = lock.fetch_block(name) {
+                    let text = engram_core::storage::read_provlog(&block);
+                    if !text.trim().is_empty() {
+                        genesis_section.push_str(&format!(
+                            "### `{}`\n{}\n\n", name, text.trim()
+                        ));
+                        lock.access_index.touch(name);
+                        genesis_loaded += 1;
+                    }
+                }
             }
+            if genesis_section.is_empty() {
+                genesis_section.push_str(
+                    "_No genesis blocks found. Run `mcp_engram_genesis reseed` or store \
+                     `mission_stewardship` and `project_identity` blocks._\n"
+                );
+            }
+
+            // ── Section 2: Recent session history (from access index) ─────────
+            let recent_all = lock.access_index.recent(40);
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs()).unwrap_or(0);
+            let mut session_section = String::new();
+            let mut session_count = 0usize;
+            for (concept, ts) in &recent_all {
+                if concept.starts_with("session_end_") && session_count < 3 {
+                    if let Some(block) = lock.fetch_block(concept) {
+                        let text = engram_core::storage::read_provlog(&block);
+                        let age_secs = now_secs.saturating_sub(*ts);
+                        let age = if age_secs < 3600 {
+                            format!("{}m ago", age_secs / 60)
+                        } else if age_secs < 86400 {
+                            format!("{}h ago", age_secs / 3600)
+                        } else {
+                            format!("{}d ago", age_secs / 86400)
+                        };
+                        // Trim to ~800 chars per session note to stay within context budget
+                        let preview: String = text.chars().take(800).collect();
+                        let preview = if text.len() > 800 {
+                            format!("{}…", preview)
+                        } else {
+                            preview
+                        };
+                        session_section.push_str(&format!(
+                            "### `{}` ({})\n{}\n\n", concept, age, preview.trim()
+                        ));
+                        session_count += 1;
+                    }
+                }
+            }
+            if session_section.is_empty() {
+                session_section.push_str(
+                    "_No previous session records found. This may be the first session.\
+                     Call `mcp_engram_session_end` with a summary at the end of this session._\n"
+                );
+            }
+
+            // ── Assemble full hydration payload ───────────────────────────────
+            let response = format!(
+                "✓ Session started | Manifold: {total} memories | Intent: \"{intent}\"\n\
+                 > Hydration payload loaded in <500ms (direct NVMe page cache reads).\n\
+                 > BVH O(log N) path activates ~18s after server start; fallback is Rayon CPU scan.\n\n\
+                 ---\n\n\
+                 ## ⚡ OPERATIONAL IDENTITY ({loaded}/{total_genesis} genesis blocks)\n\n\
+                 {genesis}\
+                 ---\n\n\
+                 ## 🕐 RECENT SESSION HISTORY ({session_count} records)\n\n\
+                 {sessions}",
+                total         = total_memories,
+                intent        = intent,
+                loaded        = genesis_loaded,
+                total_genesis = GENESIS_CONCEPTS.len(),
+                genesis       = genesis_section,
+                session_count = session_count,
+                sessions      = session_section,
+            );
+
+            info!(
+                "session_start: {} memories, {}/{} genesis blocks loaded, {} session records",
+                total_memories, genesis_loaded, GENESIS_CONCEPTS.len(), session_count
+            );
+            json!({ "content": [{ "type": "text", "text": response }] })
         }
         "mcp_engram_session_end" => {
             let summary = args["summary"].as_str().unwrap_or("").trim().to_string();
@@ -899,9 +1054,80 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
             let avg_crs = if count > 0 { total_crs / count as f32 } else { 0.5 };
 
+            // ── Phase 70.1: Protocol Validator ────────────────────────────────────
+            // Run 4 mechanically-verifiable pre-flight checks before committing.
+            // On failure: mint a visible protocol_gap ZEDOS_PRAXIS block.
+            // NEVER abort the commit — the session record must always land.
+            {
+                let mut gaps: Vec<String> = Vec::new();
+
+                // Check 1: Was mcp_engram_session_start called this session?
+                let has_start = recent_accesses.iter()
+                    .any(|(c, _)| c.starts_with("session_start_"));
+                if !has_start {
+                    gaps.push("No session_start_ block found — call mcp_engram_session_start at session open.".to_string());
+                }
+
+                // Check 2: VSA operator forge intact (14 blocks expected)
+                let op_count = std::fs::read_dir(
+                    format!("{}/holograms/operators", lock.store_path())
+                ).map(|d| d.count()).unwrap_or(0);
+                if op_count < 14 {
+                    gaps.push(format!(
+                        "VSA operator forge incomplete ({}/14) — run: cargo run --release -p monad_forge --bin mint_operators",
+                        op_count
+                    ));
+                }
+
+                // Check 3: At least 1 non-session memory was touched this session
+                let has_non_session = recent_accesses.iter().any(|(c, _)| {
+                    !c.starts_with("session_start_")
+                        && !c.starts_with("session_end_")
+                        && !c.starts_with("protocol_gap_")
+                        && !c.starts_with("__system_state__")
+                });
+                if !has_non_session {
+                    gaps.push("No remember/recall calls detected — was any knowledge persisted this session?".to_string());
+                }
+
+                // Check 4: Summary is non-trivially long
+                if summary.len() < 200 {
+                    gaps.push(format!(
+                        "Session summary too short ({} chars, minimum 200) — expand with decisions made, files changed, next steps.",
+                        summary.len()
+                    ));
+                }
+
+                if !gaps.is_empty() {
+                    let timestamp_gap = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let gap_text = format!(
+                        "PROTOCOL GAP — session_end_{}\n\nFailed checks ({}):\n{}\n\nRemediation: address all items above before next session.",
+                        timestamp_gap,
+                        gaps.len(),
+                        gaps.iter().enumerate()
+                            .map(|(i, g)| format!("  {}. {}", i + 1, g))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    );
+                    let mut gap_block = lock.encode(&gap_text);
+                    gap_block.zedos_tag = engram_core::types::ZEDOS_PRAXIS;
+                    gap_block.crs_score = 0.75; // Visible but not immortal; autophagy can clean it
+                    let gap_key = format!("protocol_gap_{}", timestamp_gap);
+                    let _ = lock.store(&gap_key, gap_block);
+                    warn!("[SESSION_END] Protocol gaps detected ({}):\n{}", gaps.len(),
+                        gaps.iter().map(|g| format!("  • {}", g)).collect::<Vec<_>>().join("\n"));
+                } else {
+                    info!("[SESSION_END] Protocol validator: all checks passed ✓");
+                }
+            }
+            // ─────────────────────────────────────────────────────────────────────
+
             // --- PHASE 8.3: ADR THERMODYNAMICS ---
             let mut session_block = lock.encode(&summary);
-            session_block.zedos_tag = engram_core::types::ZEDOS_PRAXIS;
+            session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
 
             if avg_crs > 0.85 {
                 session_block.energetics.alpha_a = 0.8; // Affirm (High Confidence)
@@ -910,17 +1136,20 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 session_block.energetics.alpha_a = 0.2;
                 session_block.energetics.alpha_d = 0.7; // Deny (Frustration/Debugging)
             }
-            session_block.energetics.heat_dissipated += 5.47e-4 * count as f32; 
-            session_block.crs_score = 0.80; // Standard PRAXIS baseline
+            session_block.energetics.heat_dissipated += 5.47e-4 * count as f32;
+            session_block.crs_score = 0.80; // Standard EPISODIC baseline
 
             let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
             let key = format!("session_end_{}", timestamp);
-            
+
             let alpha_a = session_block.energetics.alpha_a;
             let alpha_d = session_block.energetics.alpha_d;
-            
+
             match lock.store(&key, session_block) {
-                Ok(_) => json!({ "content": [{ "type": "text", "text": format!("✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})", avg_crs, alpha_a, alpha_d) }] }),
+                Ok(_) => json!({ "content": [{ "type": "text", "text": format!(
+                    "✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})",
+                    avg_crs, alpha_a, alpha_d
+                )}]}),
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
         }
@@ -1170,6 +1399,21 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             if pinned.is_empty() && ranked.is_empty() {
                 out.push_str("No memories stored yet.");
             }
+            // ── Phase 70.2: append system_state_vector health ──────────────────
+            {
+                let lock2 = store.lock().unwrap();
+                if let Some(sys) = lock2.fetch_block("__system_state__") {
+                    let total = lock2.list().len();
+                    let ns = lock2.active_stalk_name();
+                    out.push_str(&format!(
+                        "\n\n⬡ system_state_vector  CRS={:.3} | {} memories | NS={} (updated every 60s by ki_hijacker)",
+                        sys.crs_score, total, ns
+                    ));
+                } else {
+                    out.push_str("\n\n⬡ system_state_vector  not yet minted (wait up to 60s after server start)");
+                }
+            }
+            // ───────────────────────────────────────────────────────────────────
             info!("summarize: {} pinned, {} ranked", pinned.len(), ranked.len());
             json!({ "content": [{ "type": "text", "text": out.trim() }] })
         }
@@ -1554,6 +1798,22 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
+        "mcp_engram_track_user" => {
+            let interaction = args.get("interaction").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+            if interaction.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: missing required 'interaction' string" }], "isError": true });
+            }
+
+            match store.lock().unwrap().track_user_centroid(&interaction) {
+                Ok(_) => {
+                    info!("tracked user interaction: {:.20}...", interaction);
+                    json!({ "content": [{ "type": "text", "text": "✓ Tracked user interaction in User Model." }] })
+                },
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error tracking interaction: {e}") }], "isError": true }),
+            }
+        }
+
         unknown => json!({
             "content": [{ "type": "text", "text": format!("Unknown tool: {unknown}") }],
             "isError": true
@@ -1583,9 +1843,15 @@ fn dispatch(req: Request, store: &SharedStore) -> Option<Response> {
             }))
         }
 
-        "initialized" => {
-            // Deprecated fallback (should be caught by is_none above if compliant)
-            return None;
+        "initialized" | "notifications/initialized" => {
+            // MCP spec says this is a notification (no id), but some IDE clients
+            // (including Antigravity) send it with an id. Return empty OK so
+            // the client doesn't interpret silence as a dropped connection.
+            if id.is_some() {
+                Response::ok(id, json!({}))
+            } else {
+                return None; // true notification — no response expected
+            }
         }
 
         "tools/list" => Response::ok(id, tool_list()),

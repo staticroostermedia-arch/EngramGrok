@@ -53,9 +53,18 @@ pub fn from_text(text: &str) -> Leg3Pointer {
     // Phase 4: Normalize to unit hypersphere
     block.q = normalize(&q);
 
-    // Phase 5: CRS — new blocks start fully coherent; the manifold will update this
-    block.crs_score = 1.0;
-    block.energetics.crs = 1.0;
+    // Phase 5: CRS — new blocks start at 0.74 ("grounded" tier).
+    //
+    // The intent: only `mcp_engram_pin()` or the Ego-gated ingestion path in
+    // store.rs::remember() should ever grant CRS=1.0. Blocks born at 1.0 made
+    // every memory immortal by default, collapsing the thermodynamic gradient
+    // that autophagy depends on (Phase 70 / manifold repair, 2026-04-28).
+    //
+    // 0.74 = the "grounded fact" floor — above the autophagy default threshold
+    // (0.20) so new memories survive by default, but below the gold-tier (0.95)
+    // that requires Ego resonance or explicit verify_behavior() promotion.
+    block.crs_score = 0.74;
+    block.energetics.crs = 0.74;
     block.energetics.heat_dissipated = 5.47e-4; // Minimum action quantum
 
     // Store provenance identifier

@@ -115,7 +115,9 @@ mod inner {
             print_results("WgpuBackend (INT8 Poincaré)", &wgpu_res, wgpu_us);
         }
 
-        let genesis_path = "/home/a/Documents/CodeLand/data/holograms/static/genesis";
+        let genesis_path = std::env::var("ENGRAM_GENESIS_PATH")
+            .unwrap_or_else(|_| shellexpand::tilde("~/.engram/manifold").into_owned());
+        let genesis_path = genesis_path.as_str();
         if std::path::Path::new(genesis_path).exists() {
             separator("STEP 3 — Live Genesis Manifold");
             let cpu_live = CpuBackend::new(genesis_path);

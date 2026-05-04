@@ -1,9 +1,6 @@
 //! Core types for the LEG container format.
 //!
-//! The [`HolographicBlock`] is the triadic digital container described in
-//! **U.S. Patent Application No. 19/372,256** (pending), *Self-Contained Variable
-//! File System (.LEG Container Format)*, Applicant: Aric Goodman, Oregon, USA.
-//! Filed under 35 U.S.C. § 111(a) — Static Rooster Media.
+//! The [`HolographicBlock`] is the fundamental triadic digital container:
 //!
 //! ## Triadic Structure (FIG. 1)
 //!
@@ -49,6 +46,8 @@ pub const ZEDOS_PRAXIS: u8       = 0x50;
 pub const ZEDOS_HYPOTHESIS: u8   = 0xAA;
 /// Phase M: Relation block — links two concepts via OP_BIND (Merkle-chained).
 pub const ZEDOS_RELATION: u8     = 0xE1;
+/// Phase E.4: User Model block — tracks persistent centroid of user interaction.
+pub const ZEDOS_USER_MODEL: u8   = 0xC0;
 
 // ── Compile-time size seal ──────────────────────────────────────────────────────
 const _: () = assert!(

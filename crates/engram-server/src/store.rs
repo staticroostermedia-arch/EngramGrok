@@ -29,8 +29,8 @@ use engram_gpu::backend::CudaBackend;
 use engram_gpu::metal_backend::MetalBackend;
 #[cfg(engram_backend_wgpu)]
 use engram_gpu::wgpu_backend::WgpuBackend;
-use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION};
-use engram_core::ops::{op_add, op_bind, op_deduce};
+use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION, ZEDOS_USER_MODEL};
+use engram_core::ops::{op_add, op_bind, op_add_arena, op_bind_arena, op_deduce};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -207,8 +207,7 @@ impl RelationIndex {
 // ── Reflexive Contract Assignment ────────────────────────────────────────────
 //
 // Maps ZEDOS tag → permitted transform string, stored in `allowed_transforms[0..64]`.
-// Called at remember() time. This is the Engram equivalent of CodeLand's
-// `assign_schema_transforms()` in `monad_forge/src/mint.rs`.
+// Called at remember() time.
 //
 // | Tag         | Contract              | Meaning                            |
 // |-------------|-----------------------|------------------------------------|
@@ -218,7 +217,87 @@ impl RelationIndex {
 // | RELATION    | op_bind,rollback      | Relational bonds rebound-able      |
 // | OPERATIONAL | evidence_update,rollb | Code memory correctable            |
 // | 0xFF / pin  | 0xFF                  | Full authority, genesis-tier       |
+// ── Transductive Oracle Fallthrough ─────────────────────────────────────────
+//
+// Optional: fires a synchronous POST to an external oracle API when the Engram
+// manifold cannot satisfy a query above MIN_SCORE_THRESHOLD.
+//
+// Enable by setting ENGRAM_ORACLE_URL in the environment:
+//   export ENGRAM_ORACLE_URL="http://localhost:8080/api/ask"
+//
+// Request body: `{ "query": "<text>", "k": 3 }`
+// Response: JSON with a top-level `assembled_prose` field.
+//
+// If the env var is not set, or the oracle is unreachable, returns None (silent fallback).
+fn oracle_fallthrough(query: &str) -> Option<Memory> {
+    let oracle_url = match std::env::var("ENGRAM_ORACLE_URL") {
+        Ok(url) => url,
+        Err(_) => return None,  // oracle disabled (env var not set)
+    };
+    const TIMEOUT_SECS: u64 = 3;
+
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("[oracle_fallthrough] Failed to build HTTP client: {}", e);
+            return None;
+        }
+    };
+
+    let body = serde_json::json!({ "query": query, "k": 3 });
+
+    let response = match client.post(&oracle_url).json(&body).send() {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!("[oracle_fallthrough] Oracle unavailable ({}). Returning empty recall.", e);
+            return None;
+        }
+    };
+
+    let json: serde_json::Value = match response.json() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("[oracle_fallthrough] Could not parse oracle response as JSON: {}", e);
+            return None;
+        }
+    };
+
+    let prose = json
+        .get("assembled_prose")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if prose.is_empty() {
+        tracing::debug!("[oracle_fallthrough] Oracle returned empty assembled_prose.");
+        return None;
+    }
+
+    tracing::info!("[oracle_fallthrough] Oracle hit: {} chars of assembled_prose returned.", prose.len());
+
+    Some(Memory {
+        concept:             "oracle_fallthrough".to_string(),
+        score:               0.29, // Just below MIN_SCORE_THRESHOLD — callers detect oracle provenance.
+        crs:                 0.74,
+        provlog:             prose,
+        explain:             "Transductive[oracle=LBVH]".to_string(),
+        // physics / spatial fields zeroed — synthetic oracle result
+        drift_velocity:      0.0,
+        superposition_depth: 0,
+        zedos_tag:           engram_core::types::ZEDOS_DECLARATIVE,
+        alpha_a:             0.0,
+        alpha_d:             0.0,
+        aabb_min:            [0.0; 3],
+        aabb_max:            [0.0; 3],
+        l2_norm_residual:    0.0,
+    })
+}
+
 fn assign_reflexive_contract(block: &mut engram_core::types::Leg3Pointer) {
+
     use engram_core::types::{
         ZEDOS_PRAXIS, ZEDOS_RELATION, ZEDOS_EPISODIC, ZEDOS_DECLARATIVE,
     };
@@ -275,6 +354,8 @@ impl Backend {
             Backend::Gpu(b) => b.forget(concept),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.forget(concept),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.forget(concept),
             Backend::Single(b) => b.forget(concept),
             Backend::Sheaf(b) => b.forget(concept),
         }
@@ -285,6 +366,8 @@ impl Backend {
             Backend::Gpu(b) => b.list(),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.list(),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.list(),
             Backend::Single(b) => b.list(),
             Backend::Sheaf(b) => b.list(),
         }
@@ -295,6 +378,8 @@ impl Backend {
             Backend::Gpu(b) => b.fetch_block(concept),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.fetch_block(concept),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.fetch_block(concept),
             Backend::Single(b) => b.fetch_block(concept),
             Backend::Sheaf(b) => b.fetch_block(concept),
         }
@@ -305,6 +390,8 @@ impl Backend {
             Backend::Gpu(b) => b.fetch(concept),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.fetch(concept),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.fetch(concept),
             Backend::Single(b) => b.fetch(concept),
             Backend::Sheaf(b) => b.fetch(concept),
         }
@@ -315,6 +402,8 @@ impl Backend {
             Backend::Gpu(b) => b.encode(text),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.encode(text),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.encode(text),
             Backend::Single(b) => b.encode(text),
             Backend::Sheaf(b) => b.encode(text),
         }
@@ -325,6 +414,8 @@ impl Backend {
             Backend::Gpu(b) => b.query(q, k),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.query(q, k),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.query(q, k),
             Backend::Single(b) => b.query(q, k),
             Backend::Sheaf(b) => b.query(q, k),
         }
@@ -335,6 +426,8 @@ impl Backend {
             Backend::Gpu(b) => b.store(concept, block),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.store(concept, block),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.store(concept, block),
             Backend::Single(b) => b.store(concept, block),
             Backend::Sheaf(b) => b.store(concept, block),
         }
@@ -345,6 +438,8 @@ impl Backend {
             Backend::Gpu(_) => false,
             #[cfg(engram_backend_metal)]
             Backend::Metal(_) => false,
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(_) => false,
             Backend::Single(_) => false,
             Backend::Sheaf(b) => b.set_active_stalk(name),
         }
@@ -355,6 +450,8 @@ impl Backend {
             Backend::Gpu(_) => vec!["default".to_string()],
             #[cfg(engram_backend_metal)]
             Backend::Metal(_) => vec!["default".to_string()],
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(_) => vec!["default".to_string()],
             Backend::Single(_) => vec!["default".to_string()],
             Backend::Sheaf(b) => b.stalk_names().into_iter().map(|s| s.to_string()).collect(),
         }
@@ -365,6 +462,8 @@ impl Backend {
             Backend::Gpu(_) => "default".to_string(),
             #[cfg(engram_backend_metal)]
             Backend::Metal(_) => "default".to_string(),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(_) => "default".to_string(),
             Backend::Single(_) => "default".to_string(),
             Backend::Sheaf(b) => b.active_stalk_name().to_string(),
         }
@@ -376,26 +475,43 @@ impl Backend {
             Backend::Gpu(b) => b.verify_hypothesis(concept, success),
             #[cfg(engram_backend_metal)]
             Backend::Metal(b) => b.verify_hypothesis(concept, success),
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(b) => b.verify_hypothesis(concept, success),
             Backend::Single(b) => b.verify_hypothesis(concept, success),
             Backend::Sheaf(b) => b.verify_hypothesis(concept, success),
         }
     }
+    /// User Model: 90/10 EMA superposition of user interaction centroid.
+    /// Implemented inline on the Backend enum so all backend variants are covered without
+    /// requiring `track_user_centroid` to be a concrete method on each backend struct.
+    fn track_user_centroid(&self, interaction: &str) -> Result<()> {
+        const CENTROID: &str = "_user_centroid";
+        let new_block = self.encode(interaction);
+        let centroid = if let Some(mut existing) = self.fetch_block(CENTROID) {
+            let mut norm_sq = 0.0f32;
+            for i in 0..engram_core::types::DIMENSION {
+                let blended = existing.q[i] * 0.90 + new_block.q[i] * 0.10;
+                existing.q[i] = blended;
+                norm_sq += blended.norm_sqr();
+            }
+            let norm = norm_sq.sqrt().max(1e-9);
+            for i in 0..engram_core::types::DIMENSION { existing.q[i] /= norm; }
+            existing.superposition_count = existing.superposition_count.saturating_add(1);
+            let text_bytes = interaction.as_bytes();
+            let copy_len = text_bytes.len().min(existing.payload.len());
+            existing.payload[..copy_len].copy_from_slice(&text_bytes[..copy_len]);
+            if copy_len < existing.payload.len() { existing.payload[copy_len..].fill(0); }
+            existing
+        } else {
+            let mut fresh = new_block;
+            fresh.zedos_tag = ZEDOS_USER_MODEL;
+            fresh.crs_score = 1.0;
+            fresh
+        };
+        self.store(CENTROID, centroid)
+    }
 }
 
-// ── Ego Gate Helpers ──────────────────────────────────────────────────────────
-
-/// Load the ego narrative tensor from `~/.engram/ego.leg3`.
-/// Returns `None` gracefully if the file is missing or corrupt (passthrough mode).
-fn load_ego_q() -> Option<Box<[engram_core::Complex32; 8192]>> {
-    let ego_path = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".engram").join("ego.leg3"))
-        .ok()?;
-    let block = engram_core::storage::read_block(&ego_path).ok()?;
-    // Copy 8192 Complex32 values from block.q into a boxed array
-    let mut arr = Box::new([engram_core::Complex32::new(0.0, 0.0); 8192]);
-    arr.copy_from_slice(&block.q);
-    Some(arr)
-}
 
 // ── StoreHandle ───────────────────────────────────────────────────────────────
 
@@ -405,8 +521,10 @@ pub struct StoreHandle {
     pub access_index: AccessIndex,
     pub relation_index: RelationIndex,
     pub daemon: Option<Arc<crate::daemon::DaemonControl>>,
-    /// NREM ego narrative tensor — loaded from ~/.engram/ego.leg3 at startup
-    /// and refreshed after each NREM consolidation pass.
+    /// Phase 88-Engram Bridge: The reconciled Ego q-vector, loaded from
+    /// `data/holograms/static/self/ego.leg3` at startup and refreshed by
+    /// the NREM pass. Used to gate initial CRS for new blocks via Ego resonance.
+    /// `None` if the ego.leg3 file is missing (Engram still works, CRS=0.74 default).
     pub ego_q: Option<Box<[engram_core::Complex32; 8192]>>,
 }
 
@@ -445,7 +563,7 @@ impl StoreHandle {
                         SheafBackend::new_boxed(boxed_stalks)
                     };
 
-                    #[cfg(not(feature = "cuda"))]
+                    #[cfg(not(engram_backend_cuda))]
                     let sheaf = {
                         SheafBackend::new(stalks)
                     };
@@ -460,28 +578,33 @@ impl StoreHandle {
                 }
             }
         } else {
-            // Use GPU-accelerated backend when compiled with appropriate features
+            // GPU backend selection — mutually exclusive, uses propagated cfg flags from build.rs.
+            // Exactly one of these blocks compiles at a time; the last expression is the `Backend`.
             #[cfg(engram_backend_cuda)]
             {
                 tracing::info!("engram-gpu: CudaBackend selected (BVH + CUDA cosine kernels)");
                 Backend::Gpu(CudaBackend::new(&expanded))
             }
-            #[cfg(all(feature = "metal", not(feature = "cuda")))]
+            #[cfg(all(engram_backend_metal, not(engram_backend_cuda)))]
             {
                 tracing::info!("engram-gpu: MetalBackend selected (Apple Silicon GPU cosine kernels)");
                 Backend::Metal(MetalBackend::new(&expanded))
             }
-            #[cfg(not(any(feature = "cuda", feature = "metal")))]
+            #[cfg(not(any(engram_backend_cuda, engram_backend_metal)))]
             {
                 Backend::Single(CpuBackend::new(&expanded))
             }
         };
 
+        // ── Phase 88-Engram Bridge: Load Ego q-vector ─────────────────────────
+        // Try standard paths in priority order: self/ego.leg3 (reconciled reconc
+        // snapshot), then static/ego.leg3 (Dirichlet narrative accumulator).
+        // On failure, ego_q = None and remember() uses the 0.74 floor.
         let ego_q = load_ego_q();
         if ego_q.is_some() {
-            tracing::info!("[EgoGate] ego.leg3 loaded — Ego-gated CRS initialization active");
+            tracing::info!("[EGO GATE] Ego q-vector loaded — new memories will be CRS-gated by Ego resonance.");
         } else {
-            tracing::info!("[EgoGate] ego.leg3 not found — passthrough mode (run NREM to seed)");
+            tracing::warn!("[EGO GATE] ego.leg3 not found — Ego-gated CRS disabled. Memories start at CRS=0.74.");
         }
 
         Self { backend, path: expanded, access_index, relation_index, daemon: None, ego_q }
@@ -531,6 +654,27 @@ impl StoreHandle {
             ));
         }
 
+        // ── Phase 88-Engram Bridge: Ego-Gated CRS Initialization ─────────────
+        //
+        // New block CRS is determined by its geometric resonance with the
+        // living Ego state (ego.leg3). This implements the interpretive memory
+        // model: content that resonates with who we ARE gets higher initial
+        // confidence. Orthogonal content starts near the autophagy floor.
+        //
+        //   resonance  = (cosine(q_new, q_ego) + 1.0) / 2.0   ∈ [0, 1]
+        //   CRS_init   = 0.50 + resonance × 0.44              ∈ [0.50, 0.94]
+        //
+        // `mcp_engram_pin()` still grants CRS=1.0 (genesis-tier, explicit only).
+        // If ego_q is missing, falls back to encode.rs default (0.74).
+        if let Some(ego_q) = &self.ego_q {
+            let resonance = engram_core::ops::cosine_similarity(&block.q, ego_q);
+            let resonance_norm = (resonance + 1.0) / 2.0;  // shift [-1,1] → [0,1]
+            let crs_ego = 0.50 + resonance_norm * 0.44;    // range: [0.50, 0.94]
+            block.crs_score = crs_ego;
+            block.energetics.crs = crs_ego;
+            tracing::debug!("[EGO GATE] '{}' — resonance: {:.3} → CRS: {:.3}", concept, resonance, crs_ego);
+        }
+
         // ── Assign reflexive contract by ZEDOS tag ────────────────────────────
         assign_reflexive_contract(&mut block);
 
@@ -544,12 +688,102 @@ impl StoreHandle {
         if r.is_ok() { self.access_index.touch(concept); }
         r
     }
-    pub fn recall(&mut self, query: &str, k: usize) -> Vec<Memory> {
-        let results = self.backend.recall(query, k);
-        for m in &results { self.access_index.touch(&m.concept); }
-        results
+
+    /// Reload the Ego q-vector from disk — called by the NREM pass after
+    /// `accumulate_narrative()` updates ego.leg3.
+    pub fn refresh_ego_q(&mut self) {
+        self.ego_q = load_ego_q();
+        if self.ego_q.is_some() {
+            tracing::info!("[EGO GATE] Ego q-vector refreshed from disk.");
+        }
     }
-    pub fn forget(&self, concept: &str) -> Result<()> { self.backend.forget(concept) }
+    pub fn recall(&mut self, query: &str, k: usize) -> Vec<Memory> {
+        // MIN_SCORE_THRESHOLD: Dirichlet composite score floor.
+        // With 23,000+ pinned blocks at CRS=1.0 the scorer's CRS term lifts all
+        // blocks to ~0.65 minimum, causing noise blocks to top the ranking.
+        // Any result below 0.67 is semantically irrelevant — drop it so callers
+        // get an empty result rather than plausible-looking noise.
+        const MIN_SCORE_THRESHOLD: f32 = 0.67;
+
+        let mut results = self.backend.recall(query, k);
+
+        // ── Phase 88-Engram Bridge: Ego-Modulated Recall ──────────────────────
+        //
+        // Post-process results with a small symmetrical ego recognition nudge:
+        //   ego_norm  = (cos(block.q, ego_q) + 1.0) / 2.0   ∈ [0, 1]
+        //   score_adj = score + (ego_norm - 0.5) × 0.04      (±0.02 max shift)
+        //
+        // This preserves the Dirichlet base ranking but floats Ego-resonant
+        // blocks slightly above Ego-orthogonal blocks at equal base scores.
+        // Zero-cost when ego_q is None (no block fetches, no computation).
+        if let Some(ego_q) = &self.ego_q {
+            let ego_q_clone: Box<[engram_core::Complex32; 8192]> = ego_q.clone();
+            for result in &mut results {
+                let raw = result.concept.split_once("::").map_or(result.concept.as_str(), |(_, r)| r);
+                if let Some(q) = self.backend.fetch(raw) {
+                    let ego_cos = engram_core::ops::cosine_similarity(&q, &ego_q_clone);
+                    let ego_norm = (ego_cos + 1.0) / 2.0;
+                    result.score += (ego_norm - 0.5) * 0.04;
+                    result.explain = format!("{} [ego={:.3}]", result.explain, ego_norm);
+                }
+            }
+            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.truncate(k);
+        }
+
+        let filtered: Vec<Memory> = results
+            .into_iter()
+            .filter(|m| m.score >= MIN_SCORE_THRESHOLD)
+            .collect();
+        for m in &filtered { self.access_index.touch(&m.concept); }
+
+        // ── Phase 4 Epoch IX: Transductive Oracle Fallthrough ─────────────────
+        //
+        // When the Engram manifold returns nothing above the score floor, delegate
+        // When the Engram manifold returns nothing above the score floor, optionally delegate
+        // the query to an external transductive oracle (set ENGRAM_ORACLE_URL to enable).
+        // This allows integration with a larger corpus oracle running alongside Engram.
+        //
+        // Safety:
+        //   - reqwest::blocking is used (non-async) so we don't need to spawn a
+        //     separate tokio task from inside the store mutex critical section.
+        //   - A short timeout (3s) prevents manifold misses from stalling callers.
+        //   - If the oracle is unavailable (server down, timeout, env var unset) we
+        //     fall back silently to an empty result — no panic, no error propagation.
+        //   - The synthetic Memory result is tagged with concept="oracle_fallthrough"
+        //     and score=0.29 (just below MIN_SCORE_THRESHOLD) so callers can
+        //     distinguish oracle results from local hits.
+        if filtered.is_empty() {
+            if let Some(oracle_memory) = oracle_fallthrough(query) {
+                return vec![oracle_memory];
+            }
+        }
+
+        filtered
+    }
+
+    /// Delete a concept from the manifold.
+    ///
+    /// **Autophagy Protection**: A hard-coded set of foundational blocks can NEVER be
+    /// deleted — not by `forget`, not by `mcp_engram_forget_old`, not by any agent.
+    /// These are load-bearing anchors whose removal would corrupt longitudinal continuity.
+    ///
+    /// Current protected concepts:
+    /// - `_user_centroid`  — User Model (90/10 EMA centroid, geometric intent tracker)
+    pub fn forget(&self, concept: &str) -> Result<()> {
+        // Strip sheaf prefix for comparison
+        let raw = concept.split_once("::").map_or(concept, |(_, r)| r);
+        const PROTECTED: &[&str] = &["_user_centroid"];
+        if PROTECTED.contains(&raw) {
+            return Err(anyhow::anyhow!(
+                "Cannot delete protected concept '{}'. \
+                 This block anchors longitudinal manifold continuity (User Model). \
+                 To reset user intent, use mcp_engram_update instead.",
+                concept
+            ));
+        }
+        self.backend.forget(concept)
+    }
     pub fn list(&self) -> Vec<String> { self.backend.list() }
     pub fn fetch(&self, concept: &str) -> Option<Box<[engram_core::Complex32; 8192]>> { self.backend.fetch(concept) }
     pub fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> { self.backend.fetch_block(concept) }
@@ -566,6 +800,9 @@ impl StoreHandle {
     }
     pub fn verify_hypothesis(&self, concept: &str, success: bool) -> Result<()> {
         self.backend.verify_hypothesis(concept, success)
+    }
+    pub fn track_user_centroid(&self, interaction: &str) -> Result<()> {
+        self.backend.track_user_centroid(interaction)
     }
 
 
@@ -750,8 +987,7 @@ impl StoreHandle {
     /// Genesis blocks (CRS=1.0 pinned) are protected — scars bounce off them.
     ///
     /// Called by `mcp_engram_scar` (public MCP tool, security: stdio/localhost-bounded).
-    /// Also called by CodeLand's consciousness loop when it emits `InjectScar`
-    /// and routes it through the Engram MCP bridge.
+    /// Also callable by external integrations routing through the Engram MCP bridge.
     pub fn scar(&mut self, concept: &str, magnitude: f32) -> Result<String> {
         let mut block = self.fetch_block(concept)
             .ok_or_else(|| anyhow::anyhow!("Concept '{}' not found", concept))?;
@@ -1005,19 +1241,215 @@ impl StoreHandle {
     }
 
     /// BFS over the relation graph from a seed concept. Returns Mermaid graph LR source.
+    ///
+    /// Phase AST-Viz: nodes that were ingested from workspace source files carry
+    /// spatial AABB coordinates (`aabb_min[0]` / `aabb_max[0]` = row range).
+    /// Those nodes are grouped into Mermaid `subgraph` sections, keyed by file stem
+    /// (the prefix before the first `::` in the concept name).
+    /// Non-AST nodes are rendered as plain nodes outside any subgraph.
+    /// All directed edges are emitted after the subgraph declarations.
     pub fn visualize_graph(&self, seed: &str, depth: usize) -> String {
+        use std::collections::{HashMap, HashSet};
+
         let edges = self.relation_index.bfs(seed, depth);
         if edges.is_empty() {
             return format!("No outgoing relations found for '{}'.", seed);
         }
-        let mut lines = vec!["```mermaid".to_string(), "graph LR".to_string()];
+
+        // ── Collect every unique node name referenced in the BFS result ──────
+        let mut node_names: HashSet<String> = HashSet::new();
         for e in &edges {
-            let f = e.from.replace([' ', '-', '/'], "_");
-            let t = e.to.replace([' ', '-', '/'], "_");
-            lines.push(format!("  {}[\"{}\"] -->|{}| {}[\"{}\"]", f, e.from, e.label, t, e.to));
+            node_names.insert(e.from.clone());
+            node_names.insert(e.to.clone());
+        }
+
+        // ── Bucket nodes: AST (has spatial bounds) vs standalone ─────────────
+        // Key: file_stem (String), Value: Vec<(node_name, row_min, row_max)>
+        let mut ast_groups: HashMap<String, Vec<(String, f32, f32)>> = HashMap::new();
+        let mut standalone: Vec<String> = Vec::new();
+
+        for name in &node_names {
+            // Strip sheaf prefix if present
+            let raw = name.split_once("::").map_or(name.as_str(), |(_, r)| r);
+            if let Some(block) = self.fetch_block(raw) {
+                let row_min = block.aabb_min[0];
+                let row_max = block.aabb_max[0];
+                if row_max > 0.0 {
+                    // Derive file stem from concept name (everything before the first '__' or '::')
+                    let stem = raw
+                        .split_once("::")
+                        .map(|(s, _)| s)
+                        .or_else(|| raw.split_once("__").map(|(s, _)| s))
+                        .unwrap_or(raw)
+                        .to_string();
+                    ast_groups
+                        .entry(stem)
+                        .or_default()
+                        .push((name.clone(), row_min, row_max));
+                    continue;
+                }
+            }
+            standalone.push(name.clone());
+        }
+
+        // ── Build Mermaid output ──────────────────────────────────────────────
+        let mut lines = vec!["```mermaid".to_string(), "graph LR".to_string()];
+
+        // Sanitise an identifier for Mermaid (spaces / slashes / dashes → _)
+        let sanitise = |s: &str| s.replace([' ', '-', '/', ':'], "_");
+
+        // Emit subgraphs for each file stem
+        let mut file_stems: Vec<&String> = ast_groups.keys().collect();
+        file_stems.sort();
+        for stem in file_stems {
+            let nodes = &ast_groups[stem];
+            lines.push(format!("  subgraph {}[\"📄 {}\"]", sanitise(stem), stem));
+            for (name, row_min, row_max) in nodes {
+                let id = sanitise(name);
+                lines.push(format!(
+                    "    {}[\"{}\\n(L{:.0}–L{:.0})\"]",
+                    id, name, row_min, row_max
+                ));
+            }
+            lines.push("  end".to_string());
+        }
+
+        // Emit standalone nodes (no spatial data)
+        for name in &standalone {
+            let id = sanitise(name);
+            lines.push(format!("  {}[\"{}\"]", id, name));
+        }
+
+        // Emit edges
+        for e in &edges {
+            let f = sanitise(&e.from);
+            let t = sanitise(&e.to);
+            lines.push(format!("  {} -->|{}| {}", f, e.label, t));
         }
         lines.push("```".to_string());
         lines.join("\n")
+    }
+
+    // ── Phase 2: Shared Hydration Payload ─────────────────────────────────────
+    //
+    // Called by both `mcp_engram_session_start` (MCP) and `GET /api/hydrate` (REST).
+    // Returns a structured JSON value so each transport can format it independently.
+    //
+    // Payload shape:
+    //   {
+    //     "total_memories": usize,
+    //     "namespace":      String,
+    //     "genesis": [{ "concept": str, "crs": f32, "text": str }],
+    //     "recent_sessions": [{ "concept": str, "age": str, "text": str }],
+    //     "stats": { "genesis_loaded": usize, "genesis_total": usize, "session_count": usize }
+    //   }
+    pub fn build_hydration_payload(&mut self) -> serde_json::Value {
+        const GENESIS_CONCEPTS: &[&str] = &[
+            "mission_stewardship",
+            "project_identity",
+            "why_memory_system_exists__agent_perspective",
+            "three_part_work_plan_2026_04",
+            "nvsa_vs_antigravity_memory_gap",
+        ];
+
+        let total_memories = self.list().len();
+        let namespace      = self.active_stalk_name();
+
+        // ── Genesis blocks — O(1) direct fetch, NO recall() ──────────────────
+        let mut genesis_entries = Vec::new();
+        for &name in GENESIS_CONCEPTS {
+            if let Some(block) = self.fetch_block(name) {
+                let text = engram_core::storage::read_provlog(&block);
+                if !text.trim().is_empty() {
+                    self.access_index.touch(name);
+                    genesis_entries.push(serde_json::json!({
+                        "concept": name,
+                        "crs": block.crs_score,
+                        "text": text.trim()
+                    }));
+                }
+            }
+        }
+
+        // ── Recent session summaries (from access index) ──────────────────────
+        let recent_all = self.access_index.recent(40);
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0);
+
+        let mut session_entries = Vec::new();
+        for (concept, ts) in &recent_all {
+            if concept.starts_with("session_end_") && session_entries.len() < 3 {
+                if let Some(block) = self.fetch_block(concept) {
+                    let text = engram_core::storage::read_provlog(&block);
+                    let age_secs = now_secs.saturating_sub(*ts);
+                    let age = if age_secs < 3600 {
+                        format!("{}m ago", age_secs / 60)
+                    } else if age_secs < 86400 {
+                        format!("{}h ago", age_secs / 3600)
+                    } else {
+                        format!("{}d ago", age_secs / 86400)
+                    };
+                    let preview: String = text.chars().take(800).collect();
+                    let preview = if text.len() > 800 {
+                        format!("{}…", preview)
+                    } else {
+                        preview
+                    };
+                    session_entries.push(serde_json::json!({
+                        "concept": concept,
+                        "age":     age,
+                        "text":    preview.trim()
+                    }));
+                }
+            }
+        }
+
+        let genesis_loaded = genesis_entries.len();
+        let session_count  = session_entries.len();
+
+        serde_json::json!({
+            "total_memories":  total_memories,
+            "namespace":       namespace,
+            "genesis":         genesis_entries,
+            "recent_sessions": session_entries,
+            "stats": {
+                "genesis_loaded": genesis_loaded,
+                "genesis_total":  GENESIS_CONCEPTS.len(),
+                "session_count":  session_count
+            }
+        })
+    }
+}
+
+/// Load the Ego q-vector from the canonical ego.leg3 block on disk.
+///
+/// The `ego.leg3` block is written by `monad_logophysics::ego::EgoFrame` during
+/// the NREM pass — it contains the reconciled narrative tensor (weighted sum of
+/// the five domain centroids: Semantic, Episodic, Procedural, Affective, Social).
+///
+/// Returns `Some(Box<[Complex32; 8192]>)` on success, `None` if:
+///   - `$HOME/.engram/ego.leg3` does not exist (ego not yet seeded), or
+///   - The file is corrupt / unreadable (logged as WARN, non-fatal).
+///
+/// The Ego q-vector is intentionally NOT cached beyond the `StoreHandle` lifetime —
+/// call `StoreHandle::refresh_ego_q()` after the NREM pass to pick up updates.
+fn load_ego_q() -> Option<Box<[engram_core::Complex32; 8192]>> {
+    let home = std::env::var("HOME").ok()?;
+    let ego_path = std::path::Path::new(&home).join(".engram").join("ego.leg3");
+    if !ego_path.exists() {
+        tracing::debug!("[EGO GATE] ego.leg3 not found — Ego gate running in passthrough mode.");
+        return None;
+    }
+    match engram_core::storage::read_block(&ego_path) {
+        Ok(block) => {
+            tracing::info!("[EGO GATE] Ego q-vector loaded from {:?}", ego_path);
+            Some(Box::new(block.q))
+        }
+        Err(e) => {
+            tracing::warn!("[EGO GATE] Failed to read ego.leg3: {} — Ego gate disabled.", e);
+            None
+        }
     }
 }
 

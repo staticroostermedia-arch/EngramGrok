@@ -9,7 +9,7 @@ use num_complex::Complex32;
 use anyhow::Result;
 
 /// A retrieved memory with its concept name and similarity score.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Memory {
     /// The concept identifier (e.g. "krebs_cycle")
     pub concept: String,
@@ -247,6 +247,49 @@ pub trait VsaBackend: Send + Sync {
 
         self.store(concept, existing)
     }
+
+    /// Track the persistent centroid of user interaction.
+    ///
+    /// Applies the 90/10 EMA superposition formula:
+    /// Q_new = 0.9 * Q_old + 0.1 * Q_input
+    /// This tracks the geometric drift of user attention over time.
+    /// The resulting vector is stored under the `_user_centroid` concept with the
+    /// `ZEDOS_USER_MODEL` tag.
+    fn track_user_centroid(&self, interaction_text: &str) -> Result<()> {
+        let centroid_concept = "_user_centroid";
+        let new_block = self.encode(interaction_text);
+        
+        let centroid = if let Some(mut existing) = self.fetch_block(centroid_concept) {
+            let mut norm_sq = 0.0f32;
+            for i in 0..crate::types::DIMENSION {
+                let blended = existing.q[i] * 0.90 + new_block.q[i] * 0.10;
+                existing.q[i] = blended;
+                norm_sq += blended.norm_sqr();
+            }
+            let norm = norm_sq.sqrt().max(1e-9);
+            for i in 0..crate::types::DIMENSION {
+                existing.q[i] /= norm;
+            }
+            existing.superposition_count = existing.superposition_count.saturating_add(1);
+            
+            // Update payload with latest interaction for visibility
+            let text_bytes = interaction_text.as_bytes();
+            let copy_len = text_bytes.len().min(existing.payload.len());
+            existing.payload[..copy_len].copy_from_slice(&text_bytes[..copy_len]);
+            if copy_len < existing.payload.len() {
+                existing.payload[copy_len..].fill(0);
+            }
+            
+            existing
+        } else {
+            let mut fresh = new_block;
+            fresh.zedos_tag = crate::types::ZEDOS_USER_MODEL;
+            fresh.crs_score = 0.74; // Grounded-tier default; Ego gate will adjust at store time
+            fresh
+        };
+        
+        self.store(centroid_concept, centroid)
+    }
 }
 
 
@@ -319,7 +362,7 @@ impl VsaBackend for CpuBackend {
                     .filter_map(|concept| {
                         let path = self.manifold_dir.join(format!("{}.leg", concept));
                         let block = crate::storage::read_block(&path).ok()?;
-                        Some(score_block(concept.clone(), query, &*block))
+                        Some(score_block(concept.clone(), query, &*block, None))
                     })
                     .collect();
                 scored.sort_by(|a, b|
@@ -344,7 +387,7 @@ impl VsaBackend for CpuBackend {
                 if path.extension().and_then(|e| e.to_str()) != Some("leg") { return None; }
                 let concept = path.file_stem()?.to_str()?.to_string();
                 let block = crate::storage::read_block(&path).ok()?;
-                Some(score_block(concept, query, &*block))
+                Some(score_block(concept, query, &*block, None))
             })
             .collect();
 
@@ -487,33 +530,68 @@ impl VsaBackend for SheafBackend {
 
 /// Compute the physics-weighted composite score for a single block and return
 /// a fully populated `Memory`. Used by both the HNSW fast path and the linear scan.
+/// Phase 88-Engram Bridge: Ego-modulated Dirichlet scorer.
+///
+/// When `ego_q` is `Some`, the D3 term (Structural Stability) is split:
+///   - 60% → raw structural stability (1 - drift velocity)
+///   - 40% → Ego recognition: cos(block.q, ego_q), normalized to [0,1]
+///
+/// This means results that are BOTH query-relevant AND Ego-resonant surface
+/// above results that are merely query-relevant. The Ego acts as an
+/// interpretive lens: same cosine score, Ego-recognized content wins.
+///
+/// When `ego_q` is `None`, D3 is pure structural stability (backward compat).
 fn score_block(
     concept: String,
     query: &[Complex32; 8192],
     block: &crate::types::HolographicBlock,
+    ego_q: Option<&[Complex32; 8192]>,
 ) -> Memory {
     let base_sim = cosine_similarity(query, &block.q);
     
     // Normalize factors to [0.0, 1.0] for Dirichlet convex combination
     let base_sim_norm = (base_sim + 1.0) / 2.0; 
-    let crs_norm = block.crs_score.clamp(0.0, 1.0);
+    let crs_norm       = block.crs_score.clamp(0.0, 1.0);
     let stability_norm = (1.0 - block.energetics.dv).clamp(0.0, 1.0);
-    let depth_norm = (block.superposition_count.min(10) as f32 / 10.0).clamp(0.0, 1.0);
+    let depth_norm     = (block.superposition_count.min(10) as f32 / 10.0).clamp(0.0, 1.0);
+
+    // Phase 88-Engram Bridge: Ego recognition term
+    // ego_norm ∈ [0,1]: how much does the living Ego recognize this block?
+    // Computed from cosine(block.q, ego_reconc), shifted from [-1,1] → [0,1].
+    let ego_norm = ego_q
+        .map(|eq| (cosine_similarity(&block.q, eq) + 1.0) / 2.0)
+        .unwrap_or(stability_norm); // fallback: pure stability if no Ego loaded
 
     // Universal Dirichlet Governor Weights (must sum to 1.0)
-    const D1: f32 = 0.70; // Semantic Resonance
-    const D2: f32 = 0.15; // Epistemic Coherence
-    const D3: f32 = 0.10; // Structural Stability
-    const D4: f32 = 0.05; // Superposition Mass
+    //
+    // D1 (Semantic Resonance)  — drives meaningful recall. Primary term.
+    // D2 (Epistemic Coherence) — CRS confidence gate.
+    // D3 (Interpretive Frame)  — split: 60% stability + 40% Ego recognition.
+    //                            When Ego loaded: D3 = 0.6*stability + 0.4*ego_norm
+    //                            When no Ego:     D3 = stability (backward compat)
+    // D4 (Superposition Mass)  — kept small; deep blocks should NOT outrank
+    //                            semantically stronger fresh blocks.
+    const D1: f32 = 0.74; // Semantic Resonance
+    const D2: f32 = 0.14; // Epistemic Coherence
+    const D3: f32 = 0.10; // Interpretive Frame (stability + ego blend)
+    const D4: f32 = 0.02; // Superposition Mass
 
-    let score = (base_sim_norm * D1) + (crs_norm * D2) + (stability_norm * D3) + (depth_norm * D4);
+    // D3 composite: when ego available, blend stability with Ego recognition
+    let d3_value = if ego_q.is_some() {
+        0.60 * stability_norm + 0.40 * ego_norm
+    } else {
+        stability_norm
+    };
+
+    let score = (base_sim_norm * D1) + (crs_norm * D2) + (d3_value * D3) + (depth_norm * D4);
     
     let provlog_full = crate::storage::read_provlog(block);
     let provlog = provlog_full.chars().take(512).collect();
     
     let explain = format!(
-        "Additive Dirichlet: sim={:.4}*{} + crs={:.4}*{} + stab={:.4}*{} + mass={:.4}*{} => score={:.4}", 
-        base_sim_norm, D1, crs_norm, D2, stability_norm, D3, depth_norm, D4, score
+        "Dirichlet[ego={}]: sim={:.3}*{} + crs={:.3}*{} + frame={:.3}*{} + mass={:.3}*{} => {:.4}",
+        ego_q.is_some(),
+        base_sim_norm, D1, crs_norm, D2, d3_value, D3, depth_norm, D4, score
     );
     Memory {
         concept, score, crs: block.crs_score, provlog,

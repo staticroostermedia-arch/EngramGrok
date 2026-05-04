@@ -68,11 +68,19 @@ pub fn spawn(store: SharedStore) -> Arc<HijackerControl> {
             return;
         }
 
-        // Write initial metadata/timestamps on startup
+        // Write initial metadata on startup
         write_metadata(&ki_dir.parent().unwrap_or(&ki_dir));
 
+        // ── IMMEDIATE BAKE: write KI within ~1s of server spawn ─────────────
+        // Previously the first tick was consumed (discarded), causing a 60s
+        // blind window where Antigravity had no KI to read. Fix: bake once
+        // immediately, then enter the regular interval loop.
+        if let Err(e) = bake_ki(&store, &ki_dir).await {
+            warn!("[KI_HIJACKER] Failed to bake initial KI: {}", e);
+        }
+
         let mut ticker = interval(Duration::from_secs(TICK_SECS));
-        ticker.tick().await; // consume the immediate first tick
+        ticker.tick().await; // consume t=0 tick (immediate) for the loop
 
         loop {
             if ctrl_inner.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
@@ -91,20 +99,42 @@ pub fn spawn(store: SharedStore) -> Arc<HijackerControl> {
     ctrl
 }
 
+/// Named genesis concepts to always load by exact name.
+/// FHRR uses BLAKE3 lexical encoding — recall() cannot reliably surface these
+/// because lexical overlap is poor. Direct fetch is O(1) and deterministic.
+const GENESIS_NAMES: &[&str] = &[
+    "mission_stewardship",
+    "project_identity",
+    "why_memory_system_exists__agent_perspective",
+    "three_part_work_plan_2026_04",
+    "nvsa_vs_antigravity_memory_gap",
+];
+
 /// Generate the full KI context.md from the live manifold and write it to disk.
 async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
     // Collect memories while holding the lock as briefly as possible.
-    let (top_crs, recent, episodics, total, namespace) = {
+    let (genesis_blocks, top_crs, recent, episodics, total, namespace) = {
         let mut s = store.lock().unwrap();
+
+        // ── Genesis layer: load by exact name (O(1), BLAKE3 safe) ─────────────
+        let genesis_blocks: Vec<(String, f32, String)> = GENESIS_NAMES.iter().filter_map(|&name| {
+            s.fetch_block(name).map(|b| {
+                let text = engram_core::storage::read_provlog(&b);
+                s.access_index.touch(name);
+                (name.to_string(), b.crs_score, text)
+            })
+        }).collect();
 
         // Top-N by CRS score — queries on multiple conceptual axes to get breadth
         let mut top_crs = s.recall("current active work project architecture decisions blockers", TOP_N_BY_CRS * 2);
         let mut extra    = s.recall("session progress bugs fixed implementation", TOP_N_BY_CRS);
         top_crs.append(&mut extra);
 
-        // Deduplicate by concept name and sort by CRS score descending
+        // Deduplicate by concept name, exclude genesis concepts (already shown), sort by CRS desc
+        let genesis_set: std::collections::HashSet<&str> = GENESIS_NAMES.iter().copied().collect();
         top_crs.sort_by(|a, b| b.crs.partial_cmp(&a.crs).unwrap_or(std::cmp::Ordering::Equal));
         top_crs.dedup_by(|a, b| a.concept == b.concept);
+        top_crs.retain(|m| !genesis_set.contains(m.concept.as_str()));
         top_crs.truncate(TOP_N_BY_CRS);
 
         // Most-recently-accessed — the "hot session" layer
@@ -128,18 +158,18 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
         let total = s.list().len();
         let namespace = s.active_stalk_name();
 
-        (top_crs, recent, all, total, namespace)
+        (genesis_blocks, top_crs, recent, all, total, namespace)
     };
 
     // Check if there's actually anything to write
-    if top_crs.is_empty() && recent.is_empty() {
+    if genesis_blocks.is_empty() && top_crs.is_empty() && recent.is_empty() {
         debug!("[KI_HIJACKER] Manifold empty — skipping KI write.");
         return Ok(());
     }
 
     // Build the context.md content
     let now = chrono::Utc::now();
-    let mut md = String::with_capacity(4096);
+    let mut md = String::with_capacity(8192);
 
     md.push_str("# Engram Manifold Context\n\n");
     md.push_str(&format!(
@@ -147,12 +177,29 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
         now.format("%Y-%m-%d %H:%M:%S")
     ));
     md.push_str(&format!(
-        "> Namespace: `{}` | Total memories: {} | Showing top {}/{} by CRS + {} hot + {} episodic\n\n",
+        "> Namespace: `{}` | Total memories: {} | Genesis: {}/{} | Gold: {}/{} | Hot: {} | Episodic: {}\n\n",
         namespace, total,
+        genesis_blocks.len(), GENESIS_NAMES.len(),
         top_crs.len(), TOP_N_BY_CRS,
         recent.len(),
         episodics.len()
     ));
+    md.push_str("---\n\n");
+
+    // ── Section 0: Genesis Layer (identity anchors, always present) ───────────
+    md.push_str("## 🔒 Genesis Layer — Operational Identity (Pinned, CRS=1.0)\n\n");
+    md.push_str("*Loaded by exact concept name (BLAKE3 O(1) direct fetch — BVH-independent).*\n\n");
+    if genesis_blocks.is_empty() {
+        md.push_str(
+            "_No genesis blocks found. Run `mcp_engram_genesis reseed` or call \
+             `mcp_engram_remember` for `mission_stewardship` and `project_identity`._\n\n"
+        );
+    } else {
+        for (name, crs, text) in &genesis_blocks {
+            // Full text for genesis — these are the identity anchors, no truncation
+            md.push_str(&format!("### `{}`\n**CRS:** `{:.3}` 🔒 GENESIS\n\n{}\n\n", name, crs, text.trim()));
+        }
+    }
     md.push_str("---\n\n");
 
     // ── Section 1: Gold Layer (highest CRS — permanent architectural knowledge) ─
@@ -250,8 +297,8 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
     let self_model_paths = [
         // Wherever the Engram repo lives
         shellexpand::tilde("~/Documents/Engram/AGENT_SELF_MODEL.md").into_owned(),
-        // Fallback: same dir as the binary
-        "/home/a/Documents/Engram/AGENT_SELF_MODEL.md".to_string(),
+        // Fallback: search in XDG config
+        shellexpand::tilde("~/.config/engram/AGENT_SELF_MODEL.md").into_owned(),
     ];
 
     let self_model = self_model_paths.iter()
@@ -270,7 +317,7 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
         md.push_str("- `remember_solution` → CRS=1.0, immortal. Use for confirmed bug-fix pairs.\n");
         md.push_str("- `watch_workspace` → binds daemon inotify. AST auto-ingest active after this call.\n");
         md.push_str("- `scar` → geometric repeller. Call immediately on dead-end approaches.\n");
-        md.push_str("\nSee `/home/a/Documents/Engram/AGENT_SELF_MODEL.md` for the full brain documentation.\n");
+        md.push_str("\nRun `mcp_engram_summarize()` or check your `AGENT_SELF_MODEL.md` for full documentation.\n");
     }
 
     // Write to disk
@@ -286,12 +333,119 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
     });
     std::fs::write(ki_root.join("timestamps.json"), serde_json::to_string_pretty(&timestamps)?)?;
 
-    info!("[KI_HIJACKER] ✓ KI artifact baked — {} gold, {} hot, {} episodic | {} total memories",
-        top_crs.len(), recent.len(), episodics.len(), total);
+    info!("[KI_HIJACKER] ✓ KI artifact baked — {}/{} genesis, {} gold, {} hot, {} episodic | {} total memories",
+        genesis_blocks.len(), GENESIS_NAMES.len(), top_crs.len(), recent.len(), episodics.len(), total);
+
+    // ── Phase 70.2: system_state_vector ──────────────────────────────────────
+    // Compute the weighted OP_ADD centroid of all pinned blocks + recency-weighted
+    // recent blocks and store it as concept `__system_state__`.
+    // Gives cold-start agents instant geometric orientation without keyword guessing.
+    mint_system_state_vector(store).await;
+    // ─────────────────────────────────────────────────────────────────────────
 
     Ok(())
 }
 
+
+/// Phase 70.2 — Mint the manifold geometric centroid as `__system_state__`.
+///
+/// Computes a weighted OP_ADD superposition of:
+/// - All pinned (CRS=1.0) blocks (equal weight)
+/// - Top-16 recently-accessed blocks (linearly decaying recency weight)
+///
+/// Stored as ZEDOS_OPERATIONAL, CRS=0.99 so autophagy can eventually clean stale state.
+/// The concept name `__system_state__` is always overwritten — not versioned.
+async fn mint_system_state_vector(store: &SharedStore) {
+    use engram_core::ops::{op_add_arena, normalize_in_place};
+    use engram_core::Complex32;
+    let arena = bumpalo::Bump::new();
+
+    let (pinned_qs, recent_weighted): (Vec<[Complex32; 8192]>, Vec<([Complex32; 8192], f32)>) = {
+        let mut s = store.lock().unwrap();
+        let all_concepts = s.list();
+
+        // Collect pinned block phase vectors
+        let mut pinned: Vec<[Complex32; 8192]> = Vec::new();
+        for name in &all_concepts {
+            let raw = name.split_once("::").map_or(name.as_str(), |(_, r)| r);
+            if let Some(block) = s.fetch_block(raw) {
+                if block.crs_score >= 1.0 {
+                    if let Some(q) = s.fetch(raw) {
+                        pinned.push(*q);
+                    }
+                }
+            }
+        }
+
+        // Collect recent block phase vectors with linearly decaying weights
+        let recent_keys = s.access_index.recent(16);
+        let n = recent_keys.len();
+        let mut recent: Vec<([Complex32; 8192], f32)> = Vec::new();
+        for (i, (concept, _ts)) in recent_keys.iter().enumerate() {
+            let raw = concept.split_once("::").map_or(concept.as_str(), |(_, r)| r);
+            // Skip self-referential housekeeping concepts
+            if raw.starts_with("__") || raw.starts_with("session_") || raw.starts_with("protocol_gap_") {
+                continue;
+            }
+            if let Some(q) = s.fetch(raw) {
+                let weight = (n - i) as f32 / n as f32; // 1.0 → 1/n, newest first
+                recent.push((*q, weight));
+            }
+        }
+
+        (pinned, recent)
+    };
+
+    if pinned_qs.is_empty() && recent_weighted.is_empty() {
+        debug!("[KI_HIJACKER] system_state_vector: no vectors available, skipping.");
+        return;
+    }
+
+    // Accumulate weighted sum into an arena-allocated vector
+    let mut accum = arena.alloc([Complex32::default(); 8192]);
+
+    // Pinned blocks: equal weight 1.0
+    for q in &pinned_qs {
+        accum = op_add_arena(&arena, accum, q);
+    }
+    // Recent blocks: linearly decaying weight — scale by multiplying each element
+    for (q, w) in &recent_weighted {
+        let scaled: [Complex32; 8192] = std::array::from_fn(|i| q[i] * *w);
+        accum = op_add_arena(&arena, accum, &scaled);
+    }
+
+    // Final normalize to unit sphere
+    normalize_in_place(accum);
+    let state_q = *accum;
+
+    // Only mint if the centroid is non-degenerate
+    let mag: f32 = state_q.iter().map(|c: &Complex32| c.norm_sqr()).sum::<f32>().sqrt();
+    if mag < 1e-6 {
+        warn!("[KI_HIJACKER] system_state_vector degenerate (|q|={:.2e}), skipping mint.", mag);
+        return;
+    }
+
+    // Mint using the real store API: encode() gives a Leg3Pointer shell,
+    // then we overwrite its q-vector field before store().
+    let provlog_text = format!(
+        "Manifold geometric centroid — {} pinned + {} recent blocks. \
+         Regenerated every 60s by ki_hijacker.",
+        pinned_qs.len(), recent_weighted.len()
+    );
+    let mut s = store.lock().unwrap();
+    let mut sys_block = s.encode(&provlog_text);
+    sys_block.crs_score = 0.99;  // Below 1.0 so autophagy can evict stale state
+    sys_block.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+    // Overwrite the q-vector with our computed centroid
+    sys_block.q = state_q;
+    match s.store("__system_state__", sys_block) {
+        Ok(_) => info!(
+            "[KI_HIJACKER] system_state_vector minted ({} pinned + {} recent, |q|={:.4})",
+            pinned_qs.len(), recent_weighted.len(), mag
+        ),
+        Err(e) => warn!("[KI_HIJACKER] system_state_vector store failed: {}", e),
+    }
+}
 
 /// Write the static metadata.json — only needed once, but harmless to overwrite.
 fn write_metadata(ki_root: &std::path::Path) {
@@ -302,7 +456,7 @@ fn write_metadata(ki_root: &std::path::Path) {
             "Engram Geometric Manifold",
             "ki_hijacker.rs (Logophysical Antigravity Bridge)",
             "Procedural Context",
-            "CodeLand Bridge"
+            "Linked Workspace Bridge"
         ]
     });
     let path = ki_root.join("metadata.json");

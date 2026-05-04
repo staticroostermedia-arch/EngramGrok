@@ -43,14 +43,22 @@ fn apply_shadow_anchor(block: &mut engram_core::types::HolographicBlock, shadow:
     }
 }
 
-/// Read .engramignore from the Engram workspace root.
-/// Returns a list of path prefixes that the daemon should never watch or encode.
+/// Read .engramignore files from the watched workspace root and ~/.engram/.
+/// Returns a list of path patterns that the daemon should never watch or encode.
+/// To customise: create a `.engramignore` in your project root or in `~/.engram/`.
 fn load_engramignore() -> Vec<String> {
-    // Look for .engramignore in the Engram project root (adjacent to Cargo.toml)
-    let candidates = [
-        "/home/a/Documents/Engram/.engramignore",
-        "/home/a/Documents/CodeLand/.engramignore",
-    ];
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    // ~/.engram/.engramignore — user-level global ignore list
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(std::path::PathBuf::from(&home).join(".engram").join(".engramignore"));
+    }
+
+    // $ENGRAM_LINKED_WORKSPACE/.engramignore — project-level ignore list
+    if let Ok(ws) = std::env::var("ENGRAM_LINKED_WORKSPACE") {
+        candidates.push(std::path::PathBuf::from(&ws).join(".engramignore"));
+    }
+
     let mut ignored = Vec::new();
     for path in &candidates {
         if let Ok(text) = std::fs::read_to_string(path) {
@@ -105,6 +113,26 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
 
         // Flush hot access timestamps to disk every 60 seconds (Mac hardening)
         let mut flush_interval = tokio::time::interval(Duration::from_secs(60));
+
+        // ── Phase 3 Epoch IX: NREM Dream Consolidation ───────────────────────
+        // Fire every 6 hours. On each tick:
+        //   1. Scan all manifold blocks with CRS ≥ 0.85 (high-confidence memories).
+        //   2. OP_ADD-superpose their q-vectors (equal weights, then L2-normalize).
+        //   3. Write the resulting centroid to `~/.engram/ego.leg3`.
+        //   4. Call StoreHandle::refresh_ego_q() so the live server picks it up.
+        // Effect: the Ego's interpretive frame evolves nightly, causing Ego-resonant
+        // memories to surface higher in recall over time (emergent long-term consolidation).
+        let mut nrem_interval = tokio::time::interval(Duration::from_secs(6 * 3600));
+        nrem_interval.tick().await; // skip the immediate first tick at startup
+
+        // If ego.leg3 does not exist yet, trigger an immediate NREM pass to seed it.
+        let ego_path = std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".engram").join("ego.leg3"))
+            .unwrap_or_default();
+        if !ego_path.exists() {
+            info!("[NREM] ego.leg3 missing on startup — triggering immediate genesis consolidation.");
+            run_nrem_consolidation(&store);
+        }
 
         // ── Integration Inbox Scanner (Phase 5) ──────────────────────────────
         // Poll ~/.engram/stalks/default/inbox/ every 5 seconds for
@@ -174,232 +202,7 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                 }
 
                 _ = nrem_interval.tick() => {
-                    // ── NREM Phase 3: Ego Narrative Consolidation ────────────────
-                    info!("[NREM] Starting ego consolidation pass...");
-
-                    // 1. Harvest high-CRS episodic + operational memories
-                    let harvest_queries = [
-                        "session progress decisions architecture crate",
-                        "bug fix solution praxis crystallized error",
-                        "agent identity mission memory manifold",
-                    ];
-
-                    let mut ego_accumulator: Vec<engram_core::Complex32> = vec![
-                        engram_core::Complex32::new(0.0, 0.0); 8192
-                    ];
-                    let mut harvested = 0usize;
-
-                    {
-                        let mut lock = store.lock().unwrap();
-                        for query in &harvest_queries {
-                            let results = lock.recall(query, 10);
-                            for mem in results {
-                                // Only consume blocks above the silver tier (≥0.85)
-                                if mem.crs >= 0.85 {
-                                    if let Some(block) = lock.fetch_block(&mem.concept) {
-                                        // OP_ADD superposition into accumulator
-                                        for i in 0..8192 {
-                                            ego_accumulator[i].re += block.q[i].re;
-                                            ego_accumulator[i].im += block.q[i].im;
-                                        }
-                                        harvested += 1;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if harvested == 0 {
-                        info!("[NREM] No high-CRS memories found for consolidation — skipping.");
-                    } else {
-                        // 2. L2-normalize the accumulated ego vector
-                        let norm: f32 = ego_accumulator.iter()
-                            .map(|c| c.re * c.re + c.im * c.im)
-                            .sum::<f32>()
-                            .sqrt();
-                        if norm > f32::EPSILON {
-                            for c in ego_accumulator.iter_mut() {
-                                c.re /= norm;
-                                c.im /= norm;
-                            }
-                        }
-
-                        // 3. Write updated ego.leg3 to disk
-                        // Build a minimal HolographicBlock using encode then swap q
-                        {
-                            let lock = store.lock().unwrap();
-                            let mut ego_block = lock.encode("ego_narrative_tensor NREM consolidated");
-                            // Overwrite q with the freshly consolidated vector
-                            for i in 0..8192 {
-                                ego_block.q[i] = ego_accumulator[i];
-                            }
-                            ego_block.zedos_tag = 0xFF; // GENESIS tier
-                            ego_block.crs_score = 1.0;
-                            if let Err(e) = engram_core::storage::write_block(
-                                ego_leg3_path.to_str().unwrap_or("/tmp/ego.leg3"),
-                                &ego_block,
-                            ) {
-                                error!("[NREM] Failed to write ego.leg3: {}", e);
-                            } else {
-                                info!("[NREM] ego.leg3 updated ({} blocks consolidated, norm={:.4})", harvested, norm);
-                                // Hot-reload the updated ego tensor into the store
-                                store.lock().unwrap().refresh_ego_q();
-                            }
-                        }
-
-                        // 4. Mint NREM episodic summary into manifold
-                        let ts = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-                        let nrem_concept = format!("nrem_cycle_{}", ts);
-                        let nrem_text = format!(
-                            "NREM Consolidation @ ts={} — {} high-CRS blocks superimposed into ego narrative tensor. ego.leg3 updated. Ego narrative absorbing: session praxis, architectural decisions, mission continuity.",
-                            ts, harvested
-                        );
-                        let mut lock = store.lock().unwrap();
-                        if let Err(e) = lock.remember(&nrem_concept, &nrem_text) {
-                            error!("[NREM] Failed to mint episodic summary: {}", e);
-                        } else {
-                            info!("[NREM] Episodic summary minted: '{}'", nrem_concept);
-                        }
-                    }
-                }
-
-
-                _ = health_interval.tick() => {
-                    // ── System Health Watchdog ───────────────────────────────────────
-                    info!("[HEALTH] Running system health check...");
-
-                    // Services to monitor: (name, url, restart_cmd, plain_english)
-                    let services: &[(&str, &str, &str, &str)] = &[
-                        (
-                            "LLM Server (llama.cpp)",
-                            "http://localhost:11434/v1/models",
-                            "bash -c 'cd ~/Documents/CodeLand && nohup scripts/start_llama_server.sh > logs/llm.log 2>&1 &'",
-                            "The local LLM server (Gemma 26B / llama.cpp) is not responding. Restarting it will restore autonomous reasoning, agency proposals, and chess analysis.",
-                        ),
-                        (
-                            "Monad Runtime",
-                            "http://localhost:8080/api/status",
-                            "bash -c 'cd ~/Documents/CodeLand && nohup target/release/monad_runtime > logs/runtime.log 2>&1 &'",
-                            "The Monad Runtime (NVSA oracle + transductive API) is not responding. Restarting it will restore /api/ask lookups, VSA recall, and the semantic CLI.",
-                        ),
-                        (
-                            "Moltbook Hub",
-                            "http://localhost:6090/api/moltbook/status",
-                            "bash -c 'cd ~/Documents/CodeLand && nohup python3 data/web_ui/serve.py > logs/hub.log 2>&1 &'",
-                            "The Moltbook Hub (Cockpit UI + Rooster daemon) is not responding. Restarting it will restore the web interface, draft queue, and Moltbook posting.",
-                        ),
-                    ];
-
-                    let http_client = reqwest::Client::builder()
-                        .timeout(std::time::Duration::from_secs(4))
-                        .build()
-                        .unwrap_or_default();
-
-                    for (name, url, restart_cmd, plain_english) in services {
-                        let ok = http_client.get(*url).send().await
-                            .map(|r| r.status().is_success() || r.status().as_u16() < 500)
-                            .unwrap_or(false);
-
-                        if !ok {
-                            error!("[HEALTH] {} is DOWN — filing healing proposal", name);
-
-                            // Build a SYSTEM_HEALTH proposal
-                            let ts = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default().as_secs();
-                            let prop_id = format!("health_{}_{}", name.replace(' ', "_").to_lowercase(), ts);
-
-                            let proposal = serde_json::json!({
-                                "id": prop_id,
-                                "action_type": "restart_daemon",
-                                "risk_level": "low",
-                                "plain_english": plain_english,
-                                "if_approved": format!("I will run: `{}`. The service should be back online within 15 seconds.", restart_cmd),
-                                "if_rejected": format!("{} will remain offline until manually restarted. Functionality depending on it will be degraded.", name),
-                                "action": restart_cmd,
-                                "reason": format!("Health check to {} returned no response (timeout or connection refused).", url),
-                                "confidence": 0.95,
-                                "source_topic": "system_health",
-                                "status": "pending",
-                                "created_at": ts as f64,
-                            });
-
-                            // Append to agency_proposals.json
-                            let existing_raw = std::fs::read_to_string(&agency_proposals_path)
-                                .unwrap_or_else(|_| "[]".to_string());
-                            if let Ok(mut arr) = serde_json::from_str::<serde_json::Value>(&existing_raw) {
-                                if let Some(list) = arr.as_array_mut() {
-                                    // Avoid duplicate pending proposals for the same service
-                                    let already_pending = list.iter().any(|p|
-                                        p["action_type"] == "restart_daemon"
-                                        && p["source_topic"] == "system_health"
-                                        && p["action"] == *restart_cmd
-                                        && p["status"] == "pending"
-                                    );
-                                    if !already_pending {
-                                        list.push(proposal);
-                                        if let Ok(out) = serde_json::to_string_pretty(&arr) {
-                                            std::fs::write(&agency_proposals_path, out).ok();
-                                            info!("[HEALTH] Filed restart proposal for {}", name);
-                                        }
-                                    } else {
-                                        info!("[HEALTH] Restart proposal for {} already pending — skipping", name);
-                                    }
-                                }
-                            }
-                        } else {
-                            info!("[HEALTH] {} OK", name);
-                        }
-                    }
-
-                    // Also check Circadian via pgrep
-                    let circadian_ok = std::process::Command::new("pgrep")
-                        .args(["-x", "circadian"])
-                        .output()
-                        .map(|o| !o.stdout.is_empty())
-                        .unwrap_or(false);
-
-                    if !circadian_ok {
-                        error!("[HEALTH] Circadian daemon is DOWN — filing restart proposal");
-                        let ts = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default().as_secs();
-                        let prop_id = format!("health_circadian_{}", ts);
-                        let proposal = serde_json::json!({
-                            "id": prop_id,
-                            "action_type": "restart_daemon",
-                            "risk_level": "low",
-                            "plain_english": "The Circadian daemon (which runs the nightly NREM memory consolidation cycle) has stopped. Restarting it ensures the ego narrative tensor continues to evolve overnight.",
-                            "if_approved": "I will run: `nohup ~/Documents/CodeLand/target/release/circadian > ~/Documents/CodeLand/logs/circadian.log 2>&1 &`. NREM cycles resume.",
-                            "if_rejected": "Circadian stays offline. NREM consolidation will not run. The ego tensor (ego.leg3) will not be updated until manually restarted.",
-                            "action": "bash -c 'nohup ~/Documents/CodeLand/target/release/circadian > ~/Documents/CodeLand/logs/circadian.log 2>&1 &'",
-                            "reason": "pgrep -x circadian returned empty — process is not running.",
-                            "confidence": 0.97,
-                            "source_topic": "system_health",
-                            "status": "pending",
-                            "created_at": ts as f64,
-                        });
-                        let existing_raw = std::fs::read_to_string(&agency_proposals_path)
-                            .unwrap_or_else(|_| "[]".to_string());
-                        if let Ok(mut arr) = serde_json::from_str::<serde_json::Value>(&existing_raw) {
-                            if let Some(list) = arr.as_array_mut() {
-                                let already = list.iter().any(|p|
-                                    p["id"].as_str().unwrap_or("").starts_with("health_circadian")
-                                    && p["status"] == "pending"
-                                );
-                                if !already {
-                                    list.push(proposal);
-                                    if let Ok(out) = serde_json::to_string_pretty(&arr) {
-                                        std::fs::write(&agency_proposals_path, out).ok();
-                                        info!("[HEALTH] Filed Circadian restart proposal");
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    run_nrem_consolidation(&store);
                 }
 
                 _ = inbox_interval.tick() => {
@@ -476,15 +279,28 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                     if let Ok(content) = std::fs::read_to_string(path) {
                                         let mut lock = store.lock().unwrap();
 
-                                        // ── Phase 1: Namespace separation ──────────────────────
-                                        // CodeLand AST blocks go into 'codeland_ast' namespace.
-                                        // Agent episodics remain in the default stalk.
-                                        let is_codeland = path_str.contains("/CodeLand/");
-                                        if is_codeland {
-                                            lock.set_active_stalk("codeland_ast");
+                                        // ── Namespace separation ────────────────────────────────
+                                        // If ENGRAM_LINKED_WORKSPACE is set, AST blocks from that
+                                        // workspace go into a dedicated '<workspace_name>_ast' stalk.
+                                        // This keeps auto-ingested code blocks separate from agent
+                                        // episodic memories in the default stalk.
+                                        let linked_ws = std::env::var("ENGRAM_LINKED_WORKSPACE").ok();
+                                        let (is_linked, ast_stalk) = match &linked_ws {
+                                            Some(ws) if path_str.contains(ws.as_str()) => {
+                                                let name = std::path::Path::new(ws)
+                                                    .file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or("linked")
+                                                    .to_lowercase();
+                                                (true, format!("{}_ast", name))
+                                            }
+                                            _ => (false, String::new()),
+                                        };
+                                        if is_linked {
+                                            lock.set_active_stalk(&ast_stalk);
                                         }
 
-                                        let items = engram_core::ast_extract::extract_ast_items(path.to_str().unwrap_or(""), &content);
+                                        let items = engram_ast::extract_ast_items(path.to_str().unwrap_or(""), &content);
 
                                         if !items.is_empty() {
                                             for item in items {
@@ -497,10 +313,10 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                                 // Store full unbroken source in ProvLog
                                                 engram_core::storage::write_provlog(&mut block, &item.full_source);
 
-                                                // ── Phase 1: Genesis Shadow Anchor ─────────────
+                                                // ── Genesis Shadow Anchor ──────────────────────
                                                 // OP_ADD(block.q, v_cybernetics_768) → L2 normalize
-                                                // Anchors the AST block to the CodeLand genesis
-                                                // coordinate system within the 768-dim manifold.
+                                                // Biases the AST block toward the genesis coordinate
+                                                // system within the 768-dim shadow manifold.
                                                 // Both vectors are 768-dim so dimensions match.
                                                 if let Some(ref shadow) = shadow_cybernetics {
                                                     apply_shadow_anchor(&mut block, shadow);
@@ -543,8 +359,8 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
                                                 );
                                             }
 
-                                        // Restore default namespace after CodeLand block
-                                        if is_codeland {
+                                        // Restore default namespace after linked-workspace block
+                                        if is_linked {
                                             lock.set_active_stalk("default");
                                         }
                                         }
@@ -559,6 +375,109 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
     });
 
     daemon
+}
+
+// ── Phase 3 Epoch IX: NREM Dream Consolidation ───────────────────────────────
+//
+// Called every 6 hours by the circadian timer inside spawn().
+//
+// Algorithm:
+//   1. List all concepts in the active manifold.
+//   2. For each concept, fetch_block() and inspect CRS.
+//   3. Blocks with CRS ≥ NREM_CRS_THRESHOLD contribute their q-vector to a
+//      running OP_ADD accumulator (equal weights — mass proportional to signal).
+//   4. L2-normalize the accumulated centroid to keep it on the unit hypersphere.
+//   5. Mint a fresh HolographicBlock (Leg3Pointer::mint()), write the centroid
+//      into its q-field, mark it ZEDOS_EPISODIC, and persist it to ego.leg3.
+//   6. Call StoreHandle::refresh_ego_q() — the live recall path immediately
+//      picks up the updated interpretive frame.
+//
+// Safety: the store mutex is released between fetches so the server stays
+// responsive. We accumulate into a CPU-side array, never holding the lock
+// across the (slow) list() traversal.
+
+const NREM_CRS_THRESHOLD: f32 = 0.85;
+
+fn run_nrem_consolidation(store: &crate::store::SharedStore) {
+    info!("[NREM] Starting dream consolidation pass (CRS threshold = {})…", NREM_CRS_THRESHOLD);
+
+    // Collect all concept names while holding the lock briefly.
+    let concepts: Vec<String> = {
+        let lock = store.lock().unwrap();
+        lock.list()
+    };
+
+    let mut accumulator = [engram_core::Complex32::new(0.0_f32, 0.0_f32); 8192];
+    let mut contributors: u32 = 0;
+
+    for concept in &concepts {
+        // Skip internal bookkeeping concepts.
+        if concept.starts_with('_') { continue; }
+
+        let block_opt: Option<engram_core::types::Leg3Pointer> = {
+            let lock = store.lock().unwrap();
+            lock.fetch_block(concept)
+        };
+
+        if let Some(block) = block_opt {
+            if block.crs_score >= NREM_CRS_THRESHOLD {
+                for i in 0..8192 {
+                    accumulator[i].re += block.q[i].re;
+                    accumulator[i].im += block.q[i].im;
+                }
+                contributors += 1;
+            }
+        }
+    }
+
+    if contributors == 0 {
+        info!("[NREM] No blocks above CRS threshold — ego.leg3 not updated.");
+        return;
+    }
+
+    // L2-normalize the accumulator onto the unit hypersphere.
+    let norm_sq: f32 = accumulator.iter().map(|c| c.re * c.re + c.im * c.im).sum();
+    let norm = norm_sq.sqrt();
+    if norm < f32::EPSILON {
+        info!("[NREM] Accumulator degenerate (zero norm) — ego.leg3 not updated.");
+        return;
+    }
+    let inv = 1.0 / norm;
+    for c in &mut accumulator {
+        c.re *= inv;
+        c.im *= inv;
+    }
+
+    // Mint a fresh 256KB block and write the NREM centroid into its q-field.
+    let mut ego_block = engram_core::types::Leg3Pointer::mint();
+    ego_block.q = accumulator;
+    ego_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+    ego_block.crs_score = 1.0; // Ego anchor — always pinned.
+    ego_block.energetics.crs = 1.0;
+    ego_block.superposition_count = contributors;
+
+    // Write to ~/.engram/ego.leg3 — the canonical ego narrative tensor path.
+    let ego_path = match std::env::var("HOME") {
+        Ok(h) => std::path::PathBuf::from(h).join(".engram").join("ego.leg3"),
+        Err(_) => {
+            error!("[NREM] HOME env var not set — cannot write ego.leg3");
+            return;
+        }
+    };
+
+    match engram_core::storage::write_block(&ego_path, &ego_block) {
+        Ok(_) => {
+            info!("[NREM] ego.leg3 updated from {} high-signal blocks (norm={:.4}). Refreshing live Ego gate…",
+                contributors, norm);
+            // Hot-swap the Ego q-vector into the live StoreHandle.
+            let mut lock = store.lock().unwrap();
+            lock.refresh_ego_q();
+            info!("[NREM] Ego gate refreshed.");
+        }
+        Err(e) => {
+            error!("[NREM] Failed to write ego.leg3: {}", e);
+        }
+    }
 }
 
 pub struct DaemonControl {

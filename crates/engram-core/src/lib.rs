@@ -3,8 +3,7 @@
 //! # The LEG Container Format
 //!
 //! Engram stores knowledge as **HolographicBlocks** — self-contained 256KB
-//! binary containers (`.leg` files) defined by U.S. Patent Application pending,
-//! Static Rooster Media. Each block encodes:
+//! binary containers (`.leg` files) defined by the LEG container format specification.
 //!
 //! - A 8192-dimensional complex phase vector (`q`) — the geometric "fingerprint"
 //! - A momentum tensor (`p`) — encodes relational binding state  
@@ -41,10 +40,6 @@ pub mod backend;
 pub mod index;
 pub mod genesis;
 
-// AST extraction — requires `features = ["universal-ast"]` in Cargo.toml
-#[cfg(feature = "universal-ast")]
-pub mod ast_extract;
-
 pub use types::{
     HolographicBlock, Leg3Pointer, LegFooter, Logenergetics,
     BLOCK_SIZE, DIMENSION,
@@ -56,7 +51,7 @@ pub use ops::{op_add, op_bind, cosine_similarity};
 pub use backend::{VsaBackend, CpuBackend, SheafBackend};
 pub use genesis::{
     SACRED_PI, SACRED_VESICA, SACRED_PHI, SACRED_ZETA_CRITICAL,
-    SACRED_FREQUENCY_HZ, KEPLER_GATE, ROOSTER_GENESIS_TEXT,
+    SACRED_FREQUENCY_HZ, KEPLER_GATE, AGENT_GENESIS_TEXT,
 };
 
 /// `Complex32` — a 32-bit complex number. The fundamental unit of the phase vector.
