@@ -689,14 +689,6 @@ impl StoreHandle {
         r
     }
 
-    /// Reload the Ego q-vector from disk — called by the NREM pass after
-    /// `accumulate_narrative()` updates ego.leg3.
-    pub fn refresh_ego_q(&mut self) {
-        self.ego_q = load_ego_q();
-        if self.ego_q.is_some() {
-            tracing::info!("[EGO GATE] Ego q-vector refreshed from disk.");
-        }
-    }
     pub fn recall(&mut self, query: &str, k: usize) -> Vec<Memory> {
         // MIN_SCORE_THRESHOLD: Dirichlet composite score floor.
         // With 23,000+ pinned blocks at CRS=1.0 the scorer's CRS term lifts all
