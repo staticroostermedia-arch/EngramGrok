@@ -127,7 +127,13 @@ It mints exactly **one memory block per public semantic item** (functions, struc
 
 ---
 
-## 🧰 MCP Tools Reference (31 Tools)
+## 🧰 MCP Tools Reference (50+ Engram MCP tools as of 2026 — surface evolves)
+
+**Mandatory for all MCP use (engram + grok_com_github etc.):** Call `search_tool` **first** (by tool name) to get the exact live input schema. Then `use_tool` with *only* the returned parameters. Never guess.
+
+**Rule 6 (Expensive Tool Hygiene):** Once context is established, strictly prefer relational/spatial/goal tools (`search_by_relation`, `context_for_file` + `recall_in_file`, `goal_*`, `visualize`) over broad `query_with_momentum`. Use momentum only for explicitly "trending" questions when cheaper tools are insufficient.
+
+Every significant decision/fork gets a `quick_trace` or `record_reasoning_trace`. Visible tool/MCP failures or dead-ends: `scar` **immediately**.
 
 ### Core Memory (4)
 
@@ -181,7 +187,7 @@ Every `mcp_engram_relate` call stores a `ZEDOS_RELATION` block via `OP_BIND`. Ed
 |---|---|
 | `mcp_engram_genesis` | Inspect or re-seed the foundational alignment genesis blocks (CRS=1.0, pinned, never decay) |
 | `mcp_engram_verify_behavior` | Report empirical success/failure against a ZEDOS_HYPOTHESIS block. Repeated success promotes to PRAXIS |
-| `mcp_engram_query_with_momentum` | Momentum-assisted recall: blends semantic similarity (80%) with concept trajectory (20%) |
+| `mcp_engram_query_with_momentum` | Momentum-assisted recall (use sparingly per Rule 6 — prefer relational/spatial/goal tools once context exists). Blends semantic (80%) with p-tensor trajectory (20%). |
 | `mcp_engram_set_namespace` | Switch to a project-specific memory namespace (stalk). Creates it if it doesn't exist |
 | `mcp_engram_list_namespaces` | List all available namespaces and the currently active one |
 
