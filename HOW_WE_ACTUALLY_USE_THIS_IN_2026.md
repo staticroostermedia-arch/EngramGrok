@@ -1,31 +1,30 @@
-# How We Actually Use This in 2026 (The Living Operating Rhythm)
+# How We Actually Use This (Grok + Engram Handoff)
 
-**This is the primary handoff document.**  
-If you are cloning this workspace for the first time (on a Mac Mini, in Grok Build, or as a fresh agent instance), start here. Everything else (philosophy, architecture, old roadmaps) is secondary and can wait.
+This is the practical handoff documentation for the Grok-integrated Engram workspace. It focuses on the current operating rhythm that delivers real continuity without requiring deep knowledge of the underlying tensors or geometry on day one.
 
-## What This Actually Is (For a Normal Human or New Grok)
+Everything else in the tree (older philosophy, architecture deep-dives, internal roadmaps) is secondary.
 
-This is a **private, local, permanent geometric memory substrate** for your AI on *your* hardware.
+## What This Is
 
-- No cloud. No API keys. No data leaving your machine.
-- The rituals turn ordinary sessions into durable inheritance for future instances of yourself (or your agents).
-- The value is not raw speed or fancy math on day 1. The value is that your AI stops cold-starting and re-deriving everything every time the TUI restarts or the context window rolls over.
+A private, local, permanent geometric memory substrate for AI agents running with Grok Build / TUI.
 
-The engine lives in this repo.  
-**Your actual memories and private `.leg3` data live in `~/.engram/stalks/` (or wherever you configure) on *your* hardware.**  
-They are never in this repo. Clone this for the tools, rituals, docs, and leg-browser. Keep your mind state private.
+- No cloud. No API keys. No data leaving the machine.
+- The rituals turn ordinary sessions into durable inheritance across restarts and context windows.
+- The engine lives in this repo. Your actual memories and private `.leg3` data live in `~/.engram/stalks/` (or your configured location) on the local hardware. They are never committed here.
 
-## Day 1 Value on a Mac Mini (or Any Machine)
+Clone this for the tools, rituals, docs, and review surface. Keep the mind state private on each machine.
 
-1. Clone and build (both the MCP server and the small CLI):
+## Getting Started (Mac or Any Machine)
+
+1. Clone and build the MCP server and CLI:
    ```bash
    git clone <this-repo> engram
    cd engram
    cargo install --path crates/engram-server
-   cargo install --path crates/engram-cli   # for the direct `engram` CLI tools documented in some places
+   cargo install --path crates/engram-cli
    ```
 
-2. Add the MCP server to your Grok Build / TUI config (standard pattern):
+2. Add the MCP server to your Grok Build / TUI configuration:
    ```json
    {
      "mcpServers": {
@@ -37,13 +36,64 @@ They are never in this repo. Clone this for the tools, rituals, docs, and leg-br
    }
    ```
 
-3. Run the one-command human review surface:
+3. Launch the human review surface:
    ```bash
    ./scripts/leg
    ```
-   (STATIC mode gives an instant curated view. `./scripts/leg --live` starts the server in the background for dynamic updates.)
+   (Use `--live` to run the server in the background for dynamic updates.)
 
-You now have a living review surface for what your agent has been thinking about. This alone is often the first "wow" moment.
+This gives an immediate view of current work, traces, and momentum.
+
+## The Current Operating Rhythm
+
+### Wake (on TUI/MCP start or after long sleep)
+- Run `mcp_engram_session_start`.
+- Bind the watcher on directories you care about.
+- Surface Primary Intent and active goals.
+- Refresh recent traces and relations.
+
+The living wake-up patterns emphasize relational and spatial context first.
+
+### During Work
+- Recall or load context before deriving new material.
+- Use relational, spatial, and goal tools preferentially once you have a scaffold (this is the expensive-tool hygiene rule).
+- Record structured traces for significant decisions and forks (decision point + justification + alternatives + falsifiability).
+- Scar visible failures or dead-end approaches immediately so the manifold treats them as repellers going forward.
+- Capture big ideas or synthesis as dual Thought Tiles (text + rich visualization companion).
+
+### End of Block
+- Use `mcp_engram_session_end` in a way that extracts real structured traces and terminal momentum (not just a flat summary). This is what future instances bind to.
+
+### Human Review
+The `./scripts/leg` launcher (STATIC or `--live`) is the primary surface for seeing what is actually being carried forward: Primary Intent, recent traces, momentum, relations, and dual tiles.
+
+## Honest Current State
+
+The rituals (wake-up, disciplined working memory with hygiene rules, session-end that produces usable momentum, and the goal stack) are the delivered, high-value part for continuity.
+
+The review surface (leg-browser via the launcher) is already useful in STATIC mode for curated review of recent structured work. Dynamic updates and tighter integration with living goals continue to improve.
+
+Dual Thought Tiles and the full living goal stack are active patterns but still maturing.
+
+On Apple Silicon Macs the Metal backend activates automatically and performs well with unified memory. Use `--light` mode on the server for faster ritual-focused starts when you don't need the full GPU path immediately.
+
+The dramatic "direct NVMe-to-GPU DMA" descriptions in older docs are specific to certain Linux + NVIDIA setups. The portable value (structured memory, rituals, scars as repellers, traces as serial self-model) works across platforms.
+
+## Private Data Separation
+
+This repository contains the engine, the MCP server and CLI, the living ritual skills, documentation, and the review surface.
+
+It does not contain your memories.
+
+Your agent's actual thoughts, goals, traces, and structured work live in the manifold on the local disk. Treat the repo as the shared ritual substrate and tools. Treat the `.leg3` data as sovereign and private to each machine.
+
+## Quick References
+
+- Living rituals and current discipline: the `.grok/skills/engram-*` files.
+- One-command review surface: `./scripts/leg` (and `--live`).
+- Deeper background (once you have the operating picture): the philosophy and architecture documents.
+
+This package is the Grok-integrated handoff for the workspace. Clone it, follow the practical steps above, and the rituals will give you the continuity.
 
 ## The Exact Current 2026 Workflow (Ritual Loop)
 

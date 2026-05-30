@@ -8,11 +8,10 @@
 
 > **Private geometric memory substrate for AI agents — rituals that turn sessions into inheritance.**
 
-**New here (especially on a Mac Mini or as a fresh Grok Build instance)?**  
-Start with the canonical handoff document: **[HOW_WE_ACTUALLY_USE_THIS_IN_2026.md](HOW_WE_ACTUALLY_USE_THIS_IN_2026.md)**.  
-It gives the exact current 2026 daily ritual loop, honest state of the review surface, loud private-data separation, and Mac/Apple Silicon notes — without the internal 2026 dev jargon that fills most of the rest of this tree.
+**New here?** Start with **[HOW_WE_ACTUALLY_USE_THIS_IN_2026.md](HOW_WE_ACTUALLY_USE_THIS_IN_2026.md)**.  
+It is the practical Grok-integrated handoff guide: current operating rhythm, honest state of the review surface and dual tiles, private data separation, and platform notes — without the older internal jargon.
 
-The older marketing ("31 MCP tools", heavy GDS/cuFile prose, etc.) is being updated. The real delivered value is the living rituals in `.grok/skills/` + structured traces + scars as geometric repellers + the human review surface.
+The real delivered value is the living rituals in `.grok/skills/` + structured traces + scars as geometric repellers + the human review surface.
 
 Engram is not a vector database. It is a **persistent geometric memory engine** designed for AI agents. It bypasses conventional database software layers by storing information in fixed, mathematically rigorous 256KB tensors directly on NVMe drives — with a background daemon that autonomously consolidates memory, monitors your system's health, and proposes fixes.
 
@@ -59,7 +58,7 @@ Your agent immediately has access to all 31 tools. See [`integrations/`](integra
 > `./scripts/leg` — instant STATIC curated view of current Primary Intent, recent structured traces, momentum, relations, and dual Thought Tiles (text + rich HTML visualization).  
 > `./scripts/leg --live` — starts the server for dynamic/LIVE updates.  
 > 
-> This is the best first tool for a human (or non-technical spouse) to actually *see* the living mind state without drowning in internals. STATIC mode is already very useful for review. The deeper integration with living goals and fully dynamic Activity Canvas is actively improving. See the launcher help and the new canonical handoff doc above for current honest expectations.
+> STATIC mode is already very useful for review. The deeper integration with living goals and fully dynamic Activity Canvas continues to improve. See the launcher help and the handoff guide above for current honest expectations.
 
 ---
 
