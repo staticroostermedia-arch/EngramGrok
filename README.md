@@ -48,7 +48,24 @@ Your agent immediately has access to all 31 tools. See [`integrations/`](integra
 
 ---
 
+> 🧠 **Review your current geometric mind state (human UX):**  
+> Run the polished one-command launcher from repo root:  
+> `./scripts/leg` — instant STATIC curated view (hero + Activity Canvas + all recent sub-agent tiles).  
+> `./scripts/leg --live` — starts `engram serve` in background for full LIVE dynamic mode (auto-refreshing recent traces, momentum, real blocks).  
+> See `scripts/leg --help` and `tools/leg-browser/README.md`.  
+> (Sub-goal `goal:1780106172_create-polished-launcher-script---update_sub3` under parent `goal:1780106168_make-the-leg-browser-a-seamless--truly-dynamic-g`; follows `ritual:code_edit_ritual_v1`.)
+
+---
+
+> 🧠 **For agents using Engram:** The [KnowledgeMint Protocol](AGENT_INTEGRATION_GUIDE.md#7-knowledgemint-protocol--session-knowledge-crystallization)
+> defines the mandatory minting discipline that makes the [Inheritance Principle](PHILOSOPHY.md#the-inheritance-principle)
+> operational. Read it before your first session. Every fact you mint is intellectual
+> inheritance for every future agent session that uses this system.
+
+---
+
 ## ⚡ Why 256KB? The Hardware-Native Advantage
+
 
 Engram maps your project's memory into strict 262,144-byte (256KB) containers called **HolographicBlocks**. This size is non-arbitrary.
 

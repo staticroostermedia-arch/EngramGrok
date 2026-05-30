@@ -68,6 +68,21 @@ impl LegView {
     pub fn as_block(&self) -> &HolographicBlock {
         unsafe { &*(self.ptr as *const HolographicBlock) }
     }
+
+    /// Returns an owned `Leg3Pointer` by copying the block data out of the
+    /// memory-mapped view.
+    ///
+    /// This is the recommended helper when hot-path code (e.g. CudaBackend
+    /// fetch_block_high_priority / promote_to_high_priority under Maximum
+    /// Engram Speed Tier 2) needs to return an owned block sourced from a
+    /// successful `LegView` (zero-copy mmap origin). It encapsulates the
+    /// common "read from mmap then wrap" pattern used for LegView bias.
+    pub fn to_leg3_pointer(&self) -> crate::types::Leg3Pointer {
+        // We read a copy of the block out of the mapping. The mapping itself
+        // remains valid until the LegView is dropped by the caller.
+        let block = unsafe { std::ptr::read(self.ptr as *const HolographicBlock) };
+        crate::types::Leg3Pointer(Box::new(block))
+    }
 }
 
 impl Drop for LegView {

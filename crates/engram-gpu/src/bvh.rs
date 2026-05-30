@@ -151,12 +151,21 @@ pub struct BvhManifold {
     /// K-NN result cache (FNV hash → top-K results)
     query_cache: std::sync::RwLock<HashMap<u64, Vec<Memory>>>,
     cache_queue: std::sync::RwLock<std::collections::VecDeque<u64>>,
-    /// Phase 8: OptiX RT-Core accelerated BVH pipeline.
-    /// `Some(_)` when compiled with OPTIX_SDK_PATH and init succeeded.
-    /// `None` → query falls back to `filter_cpu()` (CPU slab traversal).
-    /// Only present on CUDA builds — elided entirely on CPU/Metal builds.
+    /// Phase 8: OptiX RT-Core accelerated BVH pipeline (now lazy - Item 1.5 fix).
+    /// We no longer build this expensive structure at startup.
+    /// It is built on first actual use of a spatial query (see query() method).
+    ///
+    /// This change was driven by the 2026-05-27 MCP starvation crisis:
+    /// - Full OptiX GAS + pipeline construction for ~150k primitives on ENGRAM_OPTIX_ENABLED=1
+    ///   starved the main MCP event loop for 10-20+ minutes after restart.
+    /// - Root cause traces: trace:1779906993_heavy-optix..., trace:1779907381_tui-client-restart...
+    /// - Listening / process gap scar also recorded during that period.
+    ///
+    /// Safe launch while lazy binary is not yet deployed: ENGRAM_OPTIX_ENABLED=0 engram-grok mcp
+    ///
+    /// References: goal:item1.5_spatial_discipline_adoption, Cycle 2 of the 1.5 gate.
     #[cfg(engram_backend_cuda)]
-    pub optix_pipeline: Option<crate::optix_pipeline::OptixBvhPipeline>,
+    pub optix_pipeline: std::sync::Mutex<Option<crate::optix_pipeline::OptixBvhPipeline>>,
 }
 
 unsafe impl Send for BvhManifold {}
@@ -208,20 +217,10 @@ impl BvhManifold {
         // arch the optixModuleCreate call SIGSEGVs inside the driver's JIT compiler.
         // The CPU BVH + CUDA cosine-kernel path (CudaBackend) is already fast enough
         // for manifolds <100K blocks. OptiX is only needed at >100K scale.
+        // OptiX pipeline is now lazy (see query() below). We no longer build it at startup.
+        // This prevents the insane 10-20+ minute startup thrash that was making the MCP layer unusable.
         #[cfg(engram_backend_cuda)]
-        let optix_pipeline = if std::env::var("ENGRAM_OPTIX_ENABLED").as_deref() == Ok("1") {
-            let aabb_data = crate::optix_pipeline::OptixBvhPipeline::aabb_from_entries(&entries, AABB_RADIUS);
-            let pipe = crate::optix_pipeline::OptixBvhPipeline::build(&aabb_data);
-            if pipe.is_some() {
-                eprintln!("[BVH] ✓ OptiX RT-Core pipeline ready.");
-            } else {
-                eprintln!("[BVH] OptiX RT-Core init failed — CPU BVH active.");
-            }
-            pipe
-        } else {
-            eprintln!("[BVH] OptiX RT-Core disabled (set ENGRAM_OPTIX_ENABLED=1 to enable).");
-            None
-        };
+        let optix_pipeline = std::sync::Mutex::new(None);
 
         Some(Self {
             nodes,
@@ -272,6 +271,18 @@ impl BvhManifold {
         hits
     }
 
+    #[cfg(engram_backend_cuda)]
+    fn ensure_optix_pipeline(&self) {
+        let mut pipeline_guard = self.optix_pipeline.lock().unwrap();
+        if pipeline_guard.is_none() && std::env::var("ENGRAM_OPTIX_ENABLED").as_deref() == Ok("1") {
+            let aabb_data = crate::optix_pipeline::OptixBvhPipeline::aabb_from_entries(&self.entries, AABB_RADIUS);
+            if let Some(pipe) = crate::optix_pipeline::OptixBvhPipeline::build(&aabb_data) {
+                eprintln!("[BVH] ✓ OptiX RT-Core pipeline lazily initialized on first query (Item 1.5 crisis fix). See bvh.rs comments for heavy_boot + listening scar context.");
+                *pipeline_guard = Some(pipe);
+            }
+        }
+    }
+
     /// K-NN query with cache. Returns up to `k` Memory results sorted by score.
     pub fn query(&self, q: &[Complex32; 8192], k: usize) -> Vec<Memory> {
         if !self.ready.load(Ordering::Relaxed) { return Vec::new(); }
@@ -285,18 +296,34 @@ impl BvhManifold {
 
         let pos = Self::project_to_3d(q);
 
-        // ── Phase 8: OptiX RT-Core path (CUDA builds only) ───────────────────
+        // ── Phase 8: OptiX RT-Core path (CUDA builds only) — lazy initialization ──
+        // The expensive pipeline is built on first use, not at startup.
+        // This is the real fix for the 10-20+ minute "unusable after restart" problem.
+        //
+        // Historical context (Item 1.5 crisis, May/June 2026):
+        // - Full eager OptiX GAS + SBT + pipeline construction for ~150k primitives
+        //   on ENGRAM_OPTIX_ENABLED=1 starved the main MCP stdio loop.
+        // - Result: persistent "Transport closed" from the agent even after "Pipeline ready".
+        // - Primary traces: trace:1779906993_heavy-optix... and trace:1779907381_tui-client-restart...
+        // - Listening/process gap scar also recorded (agent initially prioritized artifacts over substrate usability).
+        // - Safe launch while lazy binary not yet deployed: ENGRAM_OPTIX_ENABLED=0 engram-grok mcp
+        //
+        // See struct comment above for the full canonical reference.
         #[cfg(engram_backend_cuda)]
-        let ids = if let Some(ref pipe) = self.optix_pipeline {
-            let hits = pipe.query_filter_optix([pos.x, pos.y, pos.z], KNN_FILTER_CANDIDATES);
-            if !hits.is_empty() {
-                hits
+        let ids = {
+            self.ensure_optix_pipeline();
+
+            let pipeline_guard = self.optix_pipeline.lock().unwrap();
+            if let Some(ref pipe) = *pipeline_guard {
+                let hits = pipe.query_filter_optix([pos.x, pos.y, pos.z], KNN_FILTER_CANDIDATES);
+                if !hits.is_empty() {
+                    hits
+                } else {
+                    self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
+                }
             } else {
-                // Fall back to CPU slab traversal on empty result
                 self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
             }
-        } else {
-            self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
         };
 
         // ── CPU BVH slab path (non-CUDA builds) ──────────────────────────────

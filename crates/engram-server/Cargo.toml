@@ -20,7 +20,7 @@ rocm  = ["engram-gpu/rocm-kernels"]   # force ROCm even if CUDA is also present
 metal = []                             # macOS Metal: auto-detected by build.rs; kept for compat
 
 [dependencies]
-engram-core = { path = "../engram-core" }
+engram-core = { path = "../engram-core", features = ["async-io"] }
 engram-ast  = { path = "../engram-ast" }
 # engram-gpu is always included — build.rs auto-selects CUDA/ROCm/Metal/WebGPU/CPU
 engram-gpu   = { path = "../engram-gpu" }
@@ -57,6 +57,7 @@ bincode = "1"
 regex   = "1"
 chrono  = { version = "0.4", features = ["serde"] }
 bumpalo = "3.14.0"
+walkdir = "2"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(engram_backend_cuda)', 'cfg(engram_backend_metal)', 'cfg(engram_backend_rocm)', 'cfg(engram_backend_cpu)', 'cfg(engram_backend_wgpu)'] }

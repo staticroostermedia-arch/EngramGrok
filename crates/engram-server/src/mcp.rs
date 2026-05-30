@@ -217,6 +217,33 @@ fn tool_list() -> Value {
                 }
             },
             {
+                "name": "mcp_engram_force_spatial_ingest",
+                "description": "Item 1.5 bootstrap tool: Force the daemon to perform tree-sitter AST extraction and ingestion on a list of files or an entire directory, without requiring actual file system save events. This enables clean, agent-driven historical spatial bootstrap instead of manual open+save.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "paths": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "List of absolute file paths to ingest. If a directory is passed, it will be walked recursively (respecting basic ignores)."
+                        },
+                        "recursive": {
+                            "type": "boolean",
+                            "description": "If true and a directory is provided in paths, walk it recursively."
+                        }
+                    },
+                    "required": ["paths"]
+                }
+            },
+            {
+                "name": "mcp_engram_spatial_status",
+                "description": "Item 1.5 status tool: Returns the current content of the living spatial ingestion state block (item1.5_spatial_ingestion_state_engram). Use this for quick checks on coverage, gaps, and readiness before heavy work or Code Edit Ritual cycles.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            },
+            {
                 "name": "mcp_engram_session_start",
                 "description": "MANDATORY: Call this at the start of every conversation or distinct task. Validates manifold integrity and initializes the session epistemic state. You MUST provide your initial intent or objective for the session. This binds the thermodynamic context and provides a health check of the memory index.",
                 "inputSchema": {
@@ -229,10 +256,10 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_session_end",
-                "description": "MANDATORY: Call this at the end of every conversation or distinct task. \
-                                Commits a session summary as a ZEDOS_EPISODIC block and calculates ADR Thermodynamics \
-                                (alpha_a=confidence, alpha_d=frustration) based on the CRS of memories touched this session. \
-                                CONSEQUENCE OF SKIPPING: The session's work is lost to future agents. The next session \
+                "description": "MANDATORY (now with reasoning trace support): Call at end of every conversation/task. \
+                                Commits the session as ZEDOS_EPISODIC and extracts key reasoning traces (decision points, justifications, forks) into structured trace segments. \
+                                These become part of the serial, tamper-evident chain for the agent self-model. Flat summaries are still accepted but strongly discouraged. \
+                                CONSEQUENCE OF SKIPPING: The session's work + reasoning trajectory is lost to future agents. \
                                 will have no record that this work happened, will re-derive solved problems, and will \
                                 lack the epistemic state needed to continue correctly. \
                                 WHAT TO INCLUDE IN SUMMARY: decisions made, problems solved, files changed, \
@@ -245,6 +272,365 @@ fn tool_list() -> Value {
                     "required": ["summary"]
                 }
             },
+            {
+                "name": "mcp_engram_record_reasoning_trace",
+                "description": "Record a structured reasoning trace segment as first-class serial memory. \
+                                This is the primary mechanism for automatic capture of decision points, justifications, \
+                                and forks during active work (see engram-working-memory Rule 5 and Spatial Discipline). \
+                                Produces well-named `trace:*` blocks that the ki_hijacker surfaces in the Ritual + Reasoning Trajectory \
+                                and that session_end can later compress via 0x10 functors. \
+                                PREFERRED over free-form notes for anything that affects future agent continuation. \
+                                Call from within the ritual disciplines at major forks, pre-edit justifications, and post-delta decisions.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "decision_point": {
+                            "type": "string",
+                            "description": "The question, fork, or decision at hand (short and precise)"
+                        },
+                        "justification": {
+                            "type": "string",
+                            "description": "Why this path was chosen (the positive reasons)"
+                        },
+                        "alternatives_considered": {
+                            "type": "string",
+                            "description": "Alternatives that were seriously evaluated and why they were set aside (optional but strongly recommended)"
+                        },
+                        "falsifiability": {
+                            "type": "string",
+                            "description": "What new information or outcome would cause this decision to be reconsidered (optional)"
+                        },
+                        "related_entities": {
+                            "type": "string",
+                            "description": "Comma-separated list of related concepts (spatial AST nodes, ritual anchors, conv:arc, etc.)"
+                        },
+                        "ritual_context": {
+                            "type": "string",
+                            "description": "The active ritual or self-model anchor this trace relates to (e.g. 'ritual:wake_up_anchor')"
+                        },
+                        "spatial_context": {
+                            "type": "string",
+                            "description": "Relevant file or spatial concept this decision touched"
+                        },
+                        "prev_trace": {
+                            "type": "string",
+                            "description": "Exact concept name of the previous trace segment in this chain (for linking)"
+                        },
+                        "goal_context": {
+                            "type": "string",
+                            "description": "Goal ID this trace serves (optional but strongly recommended when goals are active)"
+                        },
+                        "affirm": {
+                            "type": "string",
+                            "description": "Core positive claim, intent, or state being advanced (A/D/R triad per praxis_as_protocol_spec.md A/D/R subsection + tile:research_offload_phase-1-example--a-d-r-structured-fields-in-trac; optional but recommended for high-stakes traces)"
+                        },
+                        "deny": {
+                            "type": "string",
+                            "description": "Alternatives, risks, or prior positions being rejected with justification (A/D/R triad; optional)"
+                        },
+                        "reconcile": {
+                            "type": "string",
+                            "description": "Synthesis step — how this resolves tension or advances coherence (ZEDO-like 'fruit' carrier per logophysics mapping; optional)"
+                        }
+                    },
+                    "required": ["decision_point", "justification"]
+                }
+            },
+            {
+                "name": "mcp_engram_quick_trace",
+                "description": "ULTRA LOW FRICTION version of trace capture for daily TUI use. \
+                                Takes simple natural fields and produces a proper structured `trace:*` .leg block with correct relations. \
+                                Use this for fast thinking capture during active work. The result is identical in quality to the full structured tool. \
+                                Strongly preferred for real-time TUI sessions.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "decision": {
+                            "type": "string",
+                            "description": "One clear sentence describing the fork or decision"
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "The real justification for the path taken"
+                        },
+                        "alternatives": {
+                            "type": "string",
+                            "description": "What else was seriously considered (optional)"
+                        },
+                        "would_falsify": {
+                            "type": "string",
+                            "description": "What would make you reverse this later (optional)"
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": "Ritual, spatial file, conv:arc, or any relevant context (free text, optional)"
+                        },
+                        "prev": {
+                            "type": "string",
+                            "description": "Previous trace concept name if chaining (optional)"
+                        },
+                        "goal_context": {
+                            "type": "string",
+                            "description": "Goal ID this trace serves (optional but strongly recommended when goals are active)"
+                        },
+                        "affirm": {
+                            "type": "string",
+                            "description": "Core positive claim, intent, or state being advanced (A/D/R triad per praxis_as_protocol_spec.md; optional)"
+                        },
+                        "deny": {
+                            "type": "string",
+                            "description": "Alternatives/risks being rejected (A/D/R; optional)"
+                        },
+                        "reconcile": {
+                            "type": "string",
+                            "description": "Synthesis / coherence step (A/D/R 'fruit' carrier; optional)"
+                        }
+                    },
+                    "required": ["decision", "why"]
+                }
+            },
+            {
+                "name": "mcp_engram_goal_create",
+                "description": "Create a new goal block as part of the agent's explicit goal stack. This is the primary entry point for declaring intent that should be geometrically bound to the ego and influence future recall and continuity. Goals created here can be linked to traces via goal_context and will be surfaced by the engram-goal skill and ki_hijacker.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "statement": {
+                            "type": "string",
+                            "description": "Clear, single-sentence description of the goal"
+                        },
+                        "parent": {
+                            "type": "string",
+                            "description": "Parent goal concept name (for decomposition, optional)"
+                        },
+                        "priority": {
+                            "type": "string",
+                            "description": "high | medium | low (default: medium)"
+                        },
+                        "affirm": {
+                            "type": "string",
+                            "description": "Core positive claim/intent being advanced by this goal (A/D/R triad for goal decomp; optional)"
+                        },
+                        "deny": {
+                            "type": "string",
+                            "description": "Risks or alternatives being rejected for this goal (A/D/R; optional)"
+                        },
+                        "reconcile": {
+                            "type": "string",
+                            "description": "Synthesis/fruit: how this goal resolves tensions or advances coherence (A/D/R 'fruit' carrier; optional)"
+                        }
+                    },
+                    "required": ["statement"]
+                }
+            },
+            {
+                "name": "mcp_engram_goal_update_status",
+                "description": "Update the status of an existing goal (active, blocked, completed, demoted, abandoned). When moving to completed or demoted, the caller is expected to also create a proper Goal Completion/Demotion Trace. This is a core operation for maintaining the intentional self-model.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": "The goal concept name to update"
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "new status: active | blocked | completed | demoted | abandoned"
+                        },
+                        "note": {
+                            "type": "string",
+                            "description": "Optional note explaining the status change"
+                        }
+                    },
+                    "required": ["goal", "status"]
+                }
+            },
+            {
+                "name": "mcp_engram_goal_status",
+                "description": "Get detailed status for a single goal, including recent linked traces, momentum signals if available, and parent/child relationships. Primary tool for the engram-goal skill's `goal show` and `goal status <id>`.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": "The goal concept name"
+                        }
+                    },
+                    "required": ["goal"]
+                }
+            },
+            {
+                "name": "mcp_engram_goal_decompose",
+                "description": "Create one or more child goals under an existing parent goal. This is the primary mechanism for breaking down complex intent. Automatically creates the 'decomposes_into' relations.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "parent": {
+                            "type": "string",
+                            "description": "The parent goal concept name"
+                        },
+                        "statements": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "List of clear statements for the new child goals"
+                        }
+                    },
+                    "required": ["parent", "statements"]
+                }
+            },
+            {
+                "name": "mcp_engram_goal_search",
+                "description": "Search for goals by statement text or status. Returns matching goals with basic metadata. Useful for the engram-goal skill when the agent wants to find existing goals without knowing exact IDs.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Text to search in goal statements"
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Optional status filter (active, completed, etc.)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max results (default 10)"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            },
+            {
+                "name": "mcp_engram_goal_get_children",
+                "description": "Return all direct child (sub) goals for a given parent goal. Supports traversing the goal decomposition tree.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "parent": {
+                            "type": "string",
+                            "description": "Parent goal concept name"
+                        }
+                    },
+                    "required": ["parent"]
+                }
+            },
+            {
+                "name": "mcp_engram_goal_set_primary",
+                "description": "Mark a goal as the agent's current primary intent. This creates a lightweight `primary_goal` marker that other tools (like trace recording) can use for automatic linking. Very useful for reducing friction during focused work.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": "The goal to mark as primary"
+                        }
+                    },
+                    "required": ["goal"]
+                }
+            },
+            {
+                "name": "mcp_engram_goal_list",
+                "description": "List active or recent goals, optionally filtered by status or parent. Useful for the engram-goal skill and for surfacing current intent in ki_hijacker / wake-up.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "description": "Filter by status (active, completed, etc.). If omitted, returns recent goals."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max number of goals to return (default 10)"
+                        }
+                    }
+                }
+            },
+            // --- Thought Tile tools (Item 2) - inserted after goal tools ---
+            {
+                "name": "mcp_engram_thought_tile_create",
+                "description": "Create a new Thought Tile (textual functor payload optimized for agent recall, momentum, NREM, and ki_hijacker). Supports research_offload, state_machine, tabular, knowledge_graph, formal_spec and similar agent-first-principles tiles. Pair with thought_tile_create_visualization for rich human-viewable companion. Auto-links to Primary Intent.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tile_type": {
+                            "type": "string",
+                            "description": "research_offload | state_machine | tabular | knowledge_graph | formal_spec | html_visualization | verified_sequence"
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Short human-readable title for the tile"
+                        },
+                        "payload": {
+                            "type": "object",
+                            "description": "Structured JSON payload matching the schema for the chosen tile_type"
+                        },
+                        "goal_context": {
+                            "type": "string",
+                            "description": "Optional explicit goal. If omitted, auto-links using primary_goal + recent active goal logic (same as record_reasoning_trace)."
+                        },
+                        "parent_tile": {
+                            "type": "string",
+                            "description": "Optional parent tile for decomposition / result hierarchy"
+                        },
+                        "spatial_references": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of existing concept names (spatial AST nodes, ritual anchors, etc.) this Tile compresses or references. Creates lightweight 'compresses_path' relations."
+                        }
+                    },
+                    "required": ["tile_type", "title", "payload"]
+                }
+            },
+            {
+                "name": "mcp_engram_thought_tile_create_visualization",
+                "description": "Create a rich HTML/compound Visualization Thought Tile (for human review and shared understanding). Best used as companion to a textual functor payload Tile created via the main thought_tile_create tool. Supports raw HTML or structured input via mint_html_visualization_payload. Auto goal linking.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Short human-readable title"
+                        },
+                        "payload": {
+                            "type": "string",
+                            "description": "The full compound HTML document (or structured representation) for the visualization tile"
+                        },
+                        "goal_context": {
+                            "type": "string",
+                            "description": "Optional explicit goal. Auto-links if omitted."
+                        },
+                        "spatial_references": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of existing concept names this visualization Tile compresses or references. Creates 'compresses_path' relations."
+                        }
+                    },
+                    "required": ["title", "payload"]
+                }
+            },
+            {
+                "name": "mcp_engram_thought_tile_write_result",
+                "description": "Write result/update data back into an existing Thought Tile. Triggers momentum + ki_hijacker refresh. Especially useful after state changes in Research Offload, State Machine, or Tabular tiles. Consider creating a visualization companion for high-value results.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tile": {
+                            "type": "string",
+                            "description": "The concept name of the Thought Tile to update"
+                        },
+                        "result_payload": {
+                            "type": "object",
+                            "description": "The structured result data (JSON) to merge/write back"
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Optional new status (e.g. completed, failed)"
+                        }
+                    },
+                    "required": ["tile", "result_payload"]
+                }
+            },
+            // --- end Thought Tile tools ---
             {
                 "name": "mcp_engram_pin",
                 "description": "Set a concept's CRS to 1.0 and lock it so the Autophagy Daemon never evicts it. \
@@ -293,9 +679,9 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_context_for_file",
-                "description": "TRIGGER: Call this automatically whenever you open or are about to edit a file. \
-                                Surfaces the top 5 memories most relevant to that file path, including AST-ingested \
-                                functions, structs, and known bugs associated with that file's geometry. \
+                "description": "TRIGGER (core of spatial impact ritual): Call before editing any file. \
+                                Now spatially-prioritized — returns real daemon-extracted AABB AST items (with line ranges + CRS) first, \
+                                then higher-level context. This is your geometric Pre-Edit impact recon tool. \
                                 The daemon stores spatial AABB coordinates (line ranges) with each ingested AST node, \
                                 so results include which exact lines each concept came from. \
                                 This is faster and more precise than a free-text recall for file-specific context.",
@@ -388,6 +774,14 @@ fn tool_list() -> Value {
                         }
                     },
                     "required": ["concept", "new_text"]
+                }
+            },
+            {
+                "name": "mcp_engram_get_backend_readiness",
+                "description": "Item 1.5: Returns whether the full heavy backend (real store + OptiX/BVH + ki_hijacker etc.) has completed initialization. Useful after restarts to know when the system has moved past the fast MCP placeholder phase and heavy work is done. Returns a simple JSON object with `fully_initialized` boolean.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
                 }
             },
             {
@@ -562,7 +956,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_recall_in_file",
-                "description": "Spatial recall: find all AST concepts defined within a specific line range of a file. Queries the aabb_min/max bounding box coordinates stored when the daemon ingested the workspace.",
+                "description": "Spatial recall (enhanced for ritual): find AST concepts in a line range with AABB coordinates. Now returns CRS + short content snippet per result for low-friction Pre-Edit/Post-Delta impact analysis against the manifold. Use with the spatial discipline.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -639,6 +1033,67 @@ fn tool_list() -> Value {
                 }
             },
             {
+                "name": "mcp_engram_verify_block_lawfulness",
+                "description": "AGENTIC-FIRST LAW: Audit the tamper-evidence and contractual integrity of a specific high-value memory block (especially PRAXIS or GENESIS). Returns Merkle chain state, allowed_transforms contract, CRS, and detected issues. Use this on cold boot after long sleep or before acting on critical operational protocols. This is local-only verification — no external servers required.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "The exact concept name of the block to audit"
+                        },
+                        "check_merkle_chain": {
+                            "type": "boolean",
+                            "description": "Whether to inspect the BLAKE3 Merkle history (default: true)",
+                            "default": true
+                        }
+                    },
+                    "required": ["concept"]
+                }
+            },
+            {
+                "name": "mcp_engram_verify_manifold_integrity",
+                "description": "High-level 'am I still lawful?' check on the current memory manifold. Samples high-CRS blocks and reports gross contract or consistency issues. Designed to be reasonably cheap even on large manifolds. Critical for trustworthy long-sleep / cold-boot scenarios.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "min_crs": {
+                            "type": "number",
+                            "description": "Only consider blocks with CRS >= this value (default 0.74)",
+                            "default": 0.74
+                        },
+                        "sample_size": {
+                            "type": "integer",
+                            "description": "How many blocks to sample (default 100)",
+                            "default": 100
+                        }
+                    }
+                }
+            },
+            {
+                "name": "mcp_engram_invoke_protocol",
+                "description": "AGENTIC-FIRST: Safely invoke an executable Praxis Protocol block. Performs the full 7-point verification gate (tag, CRS, ProvLog, 'execute' contract token, enforce_contract, lawfulness summary) before dispatch. Critical for turning high-value crystallized knowledge into trustworthy, auditable behavior. Use only on blocks you have previously audited via the verify tools.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "description": "The exact key/concept of the protocol block to invoke"
+                        },
+                        "args": {
+                            "type": "object",
+                            "description": "Structured arguments for the protocol (optional, must match the protocol's declared schema)"
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "If true, perform full verification but do not execute side effects (default: false)",
+                            "default": false
+                        }
+                    },
+                    "required": ["key"]
+                }
+            },
+            {
                 "name": "mcp_engram_track_user",
                 "description": "BEHAVIOR: Tracks and records a user interaction directly into the persistent User Model manifold. Applies a 90/10 EMA (Exponential Moving Average) superposition to geometrically track drift in user intent. USAGE: Call this whenever the user expresses a significant preference, intent, or constraint to maintain a synchronized psychological model. OUTPUT: A brief confirmation that the interaction has been integrated into the user model.",
                 "inputSchema": {
@@ -675,17 +1130,100 @@ fn tool_list() -> Value {
     })
 }
 
+// ── Shared helper for Item 1-style automatic goal linking (used by traces + Thought Tiles) ──
+
+fn resolve_goal_context_and_link(
+    lock: &mut crate::store::StoreHandle,
+    mut goal_ctx: String,
+) -> (String, bool, bool) {
+    let mut auto_linked_to_primary = false;
+    let mut auto_linked_from_recent = false;
+
+    if goal_ctx.is_empty() {
+        // Hot path upgrade (7-fronts execution): use high_priority for primary_goal
+        if let Some(primary) = lock.fetch_block_high_priority("primary_goal") {
+            let ptext = String::from_utf8_lossy(&primary.payload);
+            if let Some(line) = ptext.lines().find(|l| l.starts_with("**goal:**")) {
+                goal_ctx = line.replace("**goal:** ", "").trim().to_string();
+                auto_linked_to_primary = true;
+            }
+        }
+    }
+
+    if goal_ctx.is_empty() {
+        let recent = lock.recent(8);
+        for (concept, _ts) in recent {
+            if concept.starts_with("goal:") {
+                // Hot path upgrade: high_priority for active goals (Item 2 / Phase 2 continuity)
+                if let Some(gblock) = lock.fetch_block_high_priority(&concept) {
+                    let gtext = String::from_utf8_lossy(&gblock.payload);
+                    if gtext.contains("status: active") {
+                        goal_ctx = concept;
+                        auto_linked_from_recent = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    (goal_ctx, auto_linked_to_primary, auto_linked_from_recent)
+}
+
 // ── Tool dispatch ─────────────────────────────────────────────────────────────
 
 fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
+    // === Early MCP Ready Path guard (transitional) ===
+    // The fast startup uses a lightweight placeholder so Grok can get an
+    // immediate MCP handshake. Once the real heavy store is ready (or the
+    // manifold clearly has real scale), we stop blocking core tools.
+    {
+        let lock = store.lock().unwrap();
+        if !lock.is_fully_initialized() {
+            // Heuristic: if the store already reports a substantial number of
+            // concepts, the real data is present even if the structural
+            // "fully initialized" flag on this particular handle is still false.
+            // This lets session_start and other wake-up tools work reliably
+            // without waiting for a full hot-swap implementation.
+            let concept_count = lock.list().len();
+            let manifold_looks_ready = concept_count > 1000;
+
+            if !manifold_looks_ready {
+                let allowed_during_warmup = matches!(
+                    name,
+                    "mcp_engram_stats"
+                        | "mcp_engram_list_concepts"
+                        | "mcp_engram_summarize"
+                        | "mcp_engram_recall_recent"
+                        | "mcp_engram_genesis"
+                        | "mcp_engram_list_namespaces"
+                        | "mcp_engram_session_start"
+                );
+
+                if !allowed_during_warmup {
+                    return json!({
+                        "content": [{
+                            "type": "text",
+                            "text": "⏳ Engram is still initializing the full geometric manifold, GPU indexes (BVH), and embedding projection in the background.\n\nThis can take longer on large manifolds with full OptiX enabled. You can check readiness with the new tool: mcp_engram_get_backend_readiness. In the meantime, safe tools include mcp_engram_stats, mcp_engram_summarize, mcp_engram_session_start, etc."
+                        }]
+                    });
+                }
+            }
+            // If manifold_looks_ready, we fall through and let the tool run
+            // even on the placeholder handle. Real data is already there.
+        }
+    }
+
     // ── Phase 70.2: Read system_state_vector ──────────────────────────────────
     if name == "mcp_engram_read_system_state" {
         let lock = store.lock().unwrap();
-        return if let Some(block) = lock.fetch_block("__system_state__") {
+        // Hot path upgrade: system state is core infrastructure visibility.
+        return if let Some(block) = lock.fetch_block_high_priority("__system_state__") {
             let crs = block.crs_score;
             let pinned_count = lock.list().iter().filter(|n| {
                 let raw = n.split_once("::").map_or(n.as_str(), |(_, r)| r);
-                lock.fetch_block(raw).map_or(false, |b| b.crs_score >= 1.0)
+                // Tier 2 broaden: use high_priority even for pinned count (falls back safely; pinned concepts are promotable candidates)
+                lock.fetch_block_high_priority(raw).map_or(false, |b| b.crs_score >= 1.0)
             }).count();
             let total = lock.list().len();
             let namespace = lock.active_stalk_name();
@@ -723,6 +1261,9 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
         let store_clone = store.clone();
         let result = tokio::runtime::Handle::current()
             .block_on(crate::scout::run(store_clone, &query, max_results));
+        // NOTE (Tier 2 async opportunity): scout uses block_on. When MCP dispatch or scout internals move to native async,
+        // storage reads inside can use engram_core::storage::async_read_block (gated on "async-io" feature, already enabled)
+        // + future async fetch_block variants for non-blocking relief on event loop during heavy manifold scans.
         return match result {
             Ok(r) => json!({
                 "content": [{ "type": "text", "text": format!(
@@ -858,11 +1399,12 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 return json!({ "content": [{ "type": "text", "text": "Error: concept is required." }], "isError": true });
             }
 
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             // Strip sheaf namespace prefix if the agent included it
             let raw_concept = concept.split_once("::").map_or(concept.as_str(), |(_, r)| r);
             
-            if let Some(block) = lock.fetch_block(raw_concept) {
+            // Hot path upgrade (Tier 2 broader adoption): read_concept is the primary way to pull full high-value blocks.
+            if let Some(block) = lock.fetch_block_high_priority(raw_concept) {
                 let full_text = engram_core::storage::read_provlog(&block);
                 json!({ "content": [{ "type": "text", "text": full_text }] })
             } else {
@@ -905,7 +1447,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
         "mcp_engram_watch_workspace" => {
             let path = args["path"].as_str().unwrap_or("").trim().to_string();
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             if let Some(daemon) = &lock.daemon {
                 let d = daemon.clone();
                 let p = path.clone();
@@ -914,6 +1456,77 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             json!({
                 "content": [{ "type": "text", "text": format!("✓ Agentic Daemon now recursively watching: {}", path) }]
             })
+        }
+
+        "mcp_engram_force_spatial_ingest" => {
+            // Item 1.5 bootstrap improvement.
+            // Goal: Allow agents to trigger tree-sitter AST extraction + ingestion
+            // directly on files/directories without requiring real save events from the user.
+            let paths: Vec<String> = args.get("paths")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+
+            let mut lock = store.lock().unwrap();
+            let mut total = 0usize;
+            let mut details = Vec::new();
+            let recursive = args.get("recursive").and_then(|v| v.as_bool()).unwrap_or(true);
+
+            let mut successes = 0usize;
+            let mut errors = 0usize;
+
+            for p in &paths {
+                match lock.force_ingest_path(p, recursive) {
+                    Ok((count, per_path)) => {
+                        total += count;
+                        successes += 1;
+                        details.extend(per_path);
+                    }
+                    Err(e) => {
+                        errors += 1;
+                        details.push(format!("{} → ERROR: {}", p, e));
+                    }
+                }
+            }
+
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!(
+                        "force_spatial_ingest complete.\n\
+                        Paths processed: {}   |   Successes: {}   |   Errors: {}\n\
+                        Total AST items ingested: {}\n\n\
+                        Per-path results:\n{}\n\n\
+                        Consumption note (Item 1.5): Use `mcp_engram_recall_in_file` for reliable line-range AST results. \
+                        `context_for_file` has known limitations on freshly ingested paths. \
+                        Full status: `item1.5_spatial_ingestion_state_engram`.",
+                        paths.len(), successes, errors, total, details.join("\n")
+                    )
+                }]
+            })
+        }
+
+        "mcp_engram_spatial_status" => {
+            // Lightweight Item 1.5 status tool (gap #5 remediation)
+            // Hot path upgrade (Tier 2 broader adoption): use high_priority for this core ritual state block.
+            let mut lock = store.lock().unwrap();
+            if let Some(block) = lock.fetch_block_high_priority("item1.5_spatial_ingestion_state_engram") {
+                let text = engram_core::storage::read_provlog(&block);
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": format!("Current Spatial Ingestion State:\n\n{}", text)
+                    }]
+                })
+            } else {
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": "item1.5_spatial_ingestion_state_engram block not found yet. Run force_spatial_ingest on core crates and update the block."
+                    }],
+                    "isError": true
+                })
+            }
         }
 
         "mcp_engram_session_start" => {
@@ -949,7 +1562,9 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut genesis_section = String::new();
             let mut genesis_loaded = 0usize;
             for &name in GENESIS_CONCEPTS {
-                if let Some(block) = lock.fetch_block(name) {
+                // Hot path: genesis blocks are foundational continuity artifacts.
+                // Prefer high_priority (LegView + to_leg3_pointer zero-copy + Cuda cache) for post-compression re-hydration speed.
+                if let Some(block) = lock.fetch_block_high_priority(name) {
                     let text = engram_core::storage::read_provlog(&block);
                     if !text.trim().is_empty() {
                         genesis_section.push_str(&format!(
@@ -976,7 +1591,8 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut session_count = 0usize;
             for (concept, ts) in &recent_all {
                 if concept.starts_with("session_end_") && session_count < 3 {
-                    if let Some(block) = lock.fetch_block(concept) {
+                    // Hot path upgrade: recent session_end blocks are high-value for continuity.
+                    if let Some(block) = lock.fetch_block_high_priority(concept) {
                         let text = engram_core::storage::read_provlog(&block);
                         let age_secs = now_secs.saturating_sub(*ts);
                         let age = if age_secs < 3600 {
@@ -1047,7 +1663,9 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut count = 0;
             
             for (concept, _) in &recent_accesses {
-                if let Some(b) = lock.fetch_block(concept) {
+                // Hot path upgrade (pre-65%): session_end is a critical ritual moment.
+                // Recent concepts touched this session now go through the fast path during COMPRESS writing.
+                if let Some(b) = lock.fetch_block_high_priority(concept) {
                     total_crs += b.crs_score;
                     count += 1;
                 }
@@ -1125,7 +1743,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
             // ─────────────────────────────────────────────────────────────────────
 
-            // --- PHASE 8.3: ADR THERMODYNAMICS ---
+            // --- PHASE 8.3: ADR THERMODYNAMICS + REASONING FUNCTOR MINTING (MVP) ---
             let mut session_block = lock.encode(&summary);
             session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
 
@@ -1145,18 +1763,772 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let alpha_a = session_block.energetics.alpha_a;
             let alpha_d = session_block.energetics.alpha_d;
 
+            // Minimal MVP support for explicit "mint compression" actions
+            // Look for lines in the summary of the form:
+            // COMPRESS: <short_name> | <source_concepts> | <preserved_invariants>
+            let compression_markers: Vec<_> = summary
+                .lines()
+                .filter(|l| l.trim_start().to_uppercase().starts_with("COMPRESS:"))
+                .map(|l| l.trim())
+                .collect();
+
+            for marker in &compression_markers {
+                let marker_key = format!("compression_intent_{}_{}", timestamp, compression_markers.iter().position(|x| x == marker).unwrap_or(0));
+                let mut marker_block = lock.encode(marker);
+                marker_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+                // Phase 2 strengthening (post live TUI compression split test 2026-05-28):
+                // More aggressive CRS boost for newly emitted structured Thought Tiles (v0 contract fields + state_machine/research_offload/tabular).
+                // This directly addresses the measured momentum gap: new high-value Tiles need stronger head-start to participate in the graph across compression boundaries.
+                let lower = marker.to_lowercase();
+                let is_strong_structured = lower.contains("key_decisions") || lower.contains("re_hydration_hints") || lower.contains("lessons_scars") || lower.contains("success_criteria") || lower.contains("post_compression") || lower.contains("structured contract") || lower.contains("state_machine_v0") || lower.contains("research_offload") || lower.contains("tabular_v0") || lower.contains("thought tile") || lower.contains("phase 1") || lower.contains("structured tile") || lower.contains("current_arc_status_gpu_item2") || lower.contains("next_compression_measurement_protocol") || lower.contains("65% live test") || lower.contains("dual-lens") || lower.contains("execution checklist");
+                if is_strong_structured {
+                    marker_block.crs_score = 0.92; // Aggressive boost for clear structured functor payloads
+                } else if lower.contains("structured") || lower.contains("tile:") || lower.contains("7 fronts") || lower.contains("handoff") {
+                    marker_block.crs_score = 0.90; // Strengthened for Phase 2 arc closure markers (post 7-fronts execution wave)
+                } else {
+                    marker_block.crs_score = 0.85;
+                }
+                let _ = lock.store(&marker_key, marker_block);
+            }
+
             match lock.store(&key, session_block) {
-                Ok(_) => json!({ "content": [{ "type": "text", "text": format!(
-                    "✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})",
-                    avg_crs, alpha_a, alpha_d
-                )}]}),
+                Ok(_) => {
+                    let mut response = format!(
+                        "✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})",
+                        avg_crs, alpha_a, alpha_d
+                    );
+                    if !compression_markers.is_empty() {
+                        response.push_str(&format!("\n  → {} compression intent(s) recorded for later 0x10 functor minting.", compression_markers.len()));
+                    }
+
+                    // Light encouragement for the new structured trace flow
+                    if summary.to_lowercase().contains("trace:") || summary.to_lowercase().contains("reasoning trace") {
+                        response.push_str("\n  → Structured reasoning traces referenced — excellent. These will appear in the ki_hijacker Ritual + Reasoning Trajectory.");
+                    }
+
+                    // Phase 2 strengthening (post live split test): Stronger encouragement + visibility for structured Tiles
+                    // 64.4% short-list COMPRESS nudge: explicit inclusion of current arc handoff helper + measurement protocol + dual-lens keywords for highest-fidelity continuity artifacts (see trace:1779999524)
+                    let lower_summary = summary.to_lowercase();
+                    if lower_summary.contains("key_decisions") || lower_summary.contains("re_hydration_hints") || lower_summary.contains("lessons_scars") || lower_summary.contains("state_machine_v0") || lower_summary.contains("research_offload") || lower_summary.contains("structured tile") || lower_summary.contains("thought tile") || lower_summary.contains("current_arc_status_gpu_item2") || lower_summary.contains("next_compression_measurement_protocol") || lower_summary.contains("65% live test") || lower_summary.contains("dual-lens") || lower_summary.contains("execution checklist") {
+                        response.push_str("\n  → Well-formed structured Thought Tile(s) with contract fields referenced — aggressive CRS boost (0.92) applied. These are now prioritized for 0x10 compression functors (Phase 2 per live test data).");
+                    } else if lower_summary.contains("structured") || lower_summary.contains("tile:") {
+                        response.push_str("\n  → Structured Thought Tile reference detected — elevated CRS applied.");
+                    }
+                    json!({ "content": [{ "type": "text", "text": response }] })
+                }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
         }
+        "mcp_engram_record_reasoning_trace" => {
+            let decision_point = args["decision_point"].as_str().unwrap_or("").trim().to_string();
+            let justification = args["justification"].as_str().unwrap_or("").trim().to_string();
+
+            if decision_point.is_empty() || justification.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: decision_point and justification are required." }], "isError": true });
+            }
+
+            let alternatives = args.get("alternatives_considered").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let falsifiability = args.get("falsifiability").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let related = args.get("related_entities").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let ritual_ctx = args.get("ritual_context").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let spatial_ctx = args.get("spatial_context").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let prev = args.get("prev_trace").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let goal_ctx = args.get("goal_context").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let affirm = args.get("affirm").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let deny = args.get("deny").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let reconcile = args.get("reconcile").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+            let mut lock = store.lock().unwrap();
+
+            let (goal_ctx, auto_linked_to_primary, auto_linked_from_recent) =
+                resolve_goal_context_and_link(&mut lock, goal_ctx);
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            // Build a clear, human + machine readable payload matching trace:block_structure_v1
+            let mut payload = format!(
+                "REASONING TRACE SEGMENT\n\n**decision_point:** {}\n\n**justification:** {}\n",
+                decision_point, justification
+            );
+            if !alternatives.is_empty() {
+                payload.push_str(&format!("\n**alternatives_considered:** {}\n", alternatives));
+            }
+            if !falsifiability.is_empty() {
+                payload.push_str(&format!("\n**falsifiability:** {}\n", falsifiability));
+            }
+            if !related.is_empty() {
+                payload.push_str(&format!("\n**related_entities:** {}\n", related));
+            }
+            if !ritual_ctx.is_empty() {
+                payload.push_str(&format!("\n**ritual_context:** {}\n", ritual_ctx));
+            }
+            if !spatial_ctx.is_empty() {
+                payload.push_str(&format!("\n**spatial_context:** {}\n", spatial_ctx));
+            }
+            if !goal_ctx.is_empty() {
+                payload.push_str(&format!("\n**goal_context:** {}\n", goal_ctx));
+                if auto_linked_to_primary {
+                    payload.push_str("**auto_linked_to_primary:** true\n");
+                }
+                if auto_linked_from_recent {
+                    payload.push_str("**auto_linked_from_recent_activity:** true\n");
+                }
+            }
+            if !affirm.is_empty() {
+                payload.push_str(&format!("\n**affirm:** {}\n", affirm));
+            }
+            if !deny.is_empty() {
+                payload.push_str(&format!("\n**deny:** {}\n", deny));
+            }
+            if !reconcile.is_empty() {
+                payload.push_str(&format!("\n**reconcile:** {}\n", reconcile));
+            }
+
+            let mut trace_block = lock.encode(&payload);
+            trace_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+            trace_block.crs_score = 0.85;
+
+            // Stable, queryable name: trace:<ts>_<slug>
+            let short = decision_point
+                .chars()
+                .take(48)
+                .collect::<String>()
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+                .collect::<String>();
+            let trace_key = format!("trace:{}_{}", timestamp, short);
+
+            match lock.store(&trace_key, trace_block) {
+                Ok(_) => {
+                    // Wire chaining relations when prev_trace is supplied
+                    if !prev.is_empty() {
+                        let _ = lock.relate(&prev, &trace_key, "prev_in_trace");
+                        let _ = lock.relate(&trace_key, &prev, "next_in_trace");
+                    }
+                    // Light automatic gluing to ritual context (very useful for ki_hijacker grouping)
+                    if !ritual_ctx.is_empty() {
+                        let _ = lock.relate(&trace_key, &ritual_ctx, "supports_ritual");
+                    }
+                    if !spatial_ctx.is_empty() {
+                        let _ = lock.relate(&trace_key, &spatial_ctx, "spatial_context_for");
+                    }
+                    if !goal_ctx.is_empty() {
+                        let _ = lock.relate(&trace_key, &goal_ctx, "serves");
+                    }
+                    if auto_linked_to_primary || !goal_ctx.is_empty() {
+                        lock.mark_ki_rebake_needed(); // fresher Primary Intent + serving traces in context.md
+                    }
+
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Reasoning trace recorded: {}", trace_key) }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            }
+        }
+        "mcp_engram_quick_trace" => {
+            // Ultra low-friction path — normalizes to the same high-quality structured trace format
+            let decision = args["decision"].as_str().unwrap_or("").trim().to_string();
+            let why = args["why"].as_str().unwrap_or("").trim().to_string();
+
+            if decision.is_empty() || why.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: decision and why are required." }], "isError": true });
+            }
+
+            let alternatives = args.get("alternatives").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let would_falsify = args.get("would_falsify").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let prev = args.get("prev").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let goal_ctx = args.get("goal_context").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            // Phase 1 completion: A/D/R triad parity for low-friction quick_trace (schema already declared; now wired in handler for full support + test data generation)
+            let affirm = args.get("affirm").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let deny = args.get("deny").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let reconcile = args.get("reconcile").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+            let mut lock = store.lock().unwrap();
+
+            let (goal_ctx, auto_linked_to_primary, auto_linked_from_recent) =
+                resolve_goal_context_and_link(&mut lock, goal_ctx);
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            // Normalize into the same rich structured payload
+            let mut payload = format!(
+                "REASONING TRACE SEGMENT (via quick_trace)\n\n**decision_point:** {}\n\n**justification:** {}\n",
+                decision, why
+            );
+            if !alternatives.is_empty() {
+                payload.push_str(&format!("\n**alternatives_considered:** {}\n", alternatives));
+            }
+            if !would_falsify.is_empty() {
+                payload.push_str(&format!("\n**falsifiability:** {}\n", would_falsify));
+            }
+            if !context.is_empty() {
+                payload.push_str(&format!("\n**context:** {}\n", context));
+            }
+            if !goal_ctx.is_empty() {
+                payload.push_str(&format!("\n**goal_context:** {}\n", goal_ctx));
+                if auto_linked_to_primary {
+                    payload.push_str("**auto_linked_to_primary:** true\n");
+                }
+                if auto_linked_from_recent {
+                    payload.push_str("**auto_linked_from_recent_activity:** true\n");
+                }
+            }
+            // A/D/R 'fruit' carrier wiring (Phase 1 closeout) — enables fruits metric reconciliation coherence scoring
+            if !affirm.is_empty() {
+                payload.push_str(&format!("\n**affirm:** {}\n", affirm));
+            }
+            if !deny.is_empty() {
+                payload.push_str(&format!("\n**deny:** {}\n", deny));
+            }
+            if !reconcile.is_empty() {
+                payload.push_str(&format!("\n**reconcile:** {}\n", reconcile));
+            }
+
+            let mut trace_block = lock.encode(&payload);
+            trace_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+            trace_block.crs_score = 0.84; // Slightly lower than full tool to show provenance
+
+            let short = decision
+                .chars()
+                .take(48)
+                .collect::<String>()
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+                .collect::<String>();
+            let trace_key = format!("trace:{}_{}", timestamp, short);
+
+            match lock.store(&trace_key, trace_block) {
+                Ok(_) => {
+                    if !prev.is_empty() {
+                        let _ = lock.relate(&prev, &trace_key, "prev_in_trace");
+                        let _ = lock.relate(&trace_key, &prev, "next_in_trace");
+                    }
+                    // Light auto-gluing from free-text context when possible
+                    if context.to_lowercase().contains("ritual:") {
+                        // best effort
+                        let _ = lock.relate(&trace_key, &context, "supports_ritual");
+                    }
+                    if !goal_ctx.is_empty() {
+                        let _ = lock.relate(&trace_key, &goal_ctx, "serves");
+                    }
+                    if auto_linked_to_primary || !goal_ctx.is_empty() {
+                        lock.mark_ki_rebake_needed(); // fresher Primary Intent + serving traces in context.md
+                    }
+
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Quick trace recorded: {}", trace_key) }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            }
+        }
+        "mcp_engram_goal_create" => {
+            let statement = args["statement"].as_str().unwrap_or("").trim().to_string();
+            if statement.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: statement is required." }], "isError": true });
+            }
+
+            let parent = args.get("parent").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let priority = args.get("priority").and_then(|v| v.as_str()).unwrap_or("medium").trim().to_string();
+            // Phase 1 A/D/R for goals (enables fruits coherence tracking on intentional self-model)
+            let goal_affirm = args.get("affirm").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let goal_deny = args.get("deny").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let goal_reconcile = args.get("reconcile").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+            let mut lock = store.lock().unwrap();
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            let short = statement
+                .chars()
+                .take(48)
+                .collect::<String>()
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+                .collect::<String>();
+            let goal_key = format!("goal:{}_{}", timestamp, short);
+
+            let mut payload = format!(
+                "GOAL BLOCK\n\n**goal_statement:** {}\n\n**status:** active\n**priority:** {}\n**created_at:** {}\n",
+                statement, priority, chrono::Utc::now().to_rfc3339()
+            );
+            if !parent.is_empty() {
+                payload.push_str(&format!("\n**parent_goal:** {}\n", parent));
+            }
+            if !goal_affirm.is_empty() {
+                payload.push_str(&format!("\n**affirm:** {}\n", goal_affirm));
+            }
+            if !goal_deny.is_empty() {
+                payload.push_str(&format!("\n**deny:** {}\n", goal_deny));
+            }
+            if !goal_reconcile.is_empty() {
+                payload.push_str(&format!("\n**reconcile:** {}\n", goal_reconcile));
+            }
+
+            let mut goal_block = lock.encode(&payload);
+            goal_block.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+            goal_block.crs_score = 0.92; // High but not pinned — goals can evolve
+
+            match lock.store(&goal_key, goal_block) {
+                Ok(_) => {
+                    if !parent.is_empty() {
+                        let _ = lock.relate(&parent, &goal_key, "decomposes_into");
+                    }
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Goal created: {}", goal_key) }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            }
+        }
+        "mcp_engram_goal_update_status" => {
+            let goal = args["goal"].as_str().unwrap_or("").trim().to_string();
+            let status = args["status"].as_str().unwrap_or("").trim().to_string();
+            let note = args.get("note").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+            if goal.is_empty() || status.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: goal and status are required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            // Hot path upgrade: goals are high-priority for intentional self-model continuity.
+            if let Some(mut block) = lock.fetch_block_high_priority(&goal) {
+                // Simple approach: append status change to payload (real implementation would parse + rewrite structured section)
+                let update_text = format!("\n\n--- Status Update ---\nstatus: {}\nnote: {}\ntimestamp: {}\n", 
+                    status, note, chrono::Utc::now().to_rfc3339());
+
+                // For MVP, we just append to the existing payload text
+                let mut new_payload = block.payload.to_vec();
+                new_payload.extend_from_slice(update_text.as_bytes());
+                block.payload = [0u8; 122584]; // reset
+                for (i, b) in new_payload.iter().take(122584).enumerate() {
+                    block.payload[i] = *b;
+                }
+
+                block.crs_score = if status == "completed" || status == "demoted" { 0.85 } else { block.crs_score };
+
+                match lock.store(&goal, block) {
+                    Ok(_) => {
+                        json!({ "content": [{ "type": "text", "text": format!("✓ Goal {} status updated to {}", goal, status) }] })
+                    }
+                    Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+                }
+            } else {
+                json!({ "content": [{ "type": "text", "text": format!("Goal not found: {}", goal) }], "isError": true })
+            }
+        }
+        "mcp_engram_goal_status" => {
+            let goal = args["goal"].as_str().unwrap_or("").trim().to_string();
+            if goal.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: goal is required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            // Hot path upgrade (Tier 2 broader adoption): mcp_engram_goal_status is a primary visibility tool for intentional self-model.
+            if let Some(block) = lock.fetch_block_high_priority(&goal) {
+                let text = String::from_utf8_lossy(&block.payload);
+                let mut output = format!("**Goal Status: {}**\n\n", goal);
+                output.push_str(&format!("CRS: {:.2}\n", block.crs_score));
+                output.push_str(&format!("Drift (dv): {:.3}\n", block.energetics.dv));
+
+                if let Some(line) = text.lines().find(|l| l.starts_with("goal_statement:")) {
+                    output.push_str(&format!("{}\n", line));
+                }
+                if let Some(line) = text.lines().find(|l| l.starts_with("status:")) {
+                    output.push_str(&format!("{}\n", line));
+                }
+
+                output.push_str("\nRecent payload context (first 600 chars):\n");
+                let snippet: String = text.chars().take(600).collect();
+                output.push_str(&snippet);
+
+                json!({ "content": [{ "type": "text", "text": output }] })
+            } else {
+                json!({ "content": [{ "type": "text", "text": format!("Goal not found: {}", goal) }], "isError": true })
+            }
+        }
+        "mcp_engram_goal_decompose" => {
+            let parent = args["parent"].as_str().unwrap_or("").trim().to_string();
+            let statements: Vec<String> = args.get("statements")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|s| s.as_str().map(|x| x.trim().to_string())).collect())
+                .unwrap_or_default();
+
+            if parent.is_empty() || statements.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: parent and at least one statement are required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            let timestamp_base = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            let mut created = Vec::new();
+
+            for (i, stmt) in statements.iter().enumerate() {
+                let short = stmt.chars().take(40).collect::<String>()
+                    .to_lowercase()
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+                    .collect::<String>();
+
+                let goal_key = format!("goal:{}_{}_sub{}", timestamp_base, short, i);
+
+                let payload = format!(
+                    "GOAL BLOCK (subgoal)\n\n**goal_statement:** {}\n\n**status:** active\n**priority:** medium\n**created_at:** {}\n**parent_goal:** {}\n",
+                    stmt, chrono::Utc::now().to_rfc3339(), parent
+                );
+
+                let mut goal_block = lock.encode(&payload);
+                goal_block.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+                goal_block.crs_score = 0.90;
+
+                if lock.store(&goal_key, goal_block).is_ok() {
+                    let _ = lock.relate(&parent, &goal_key, "decomposes_into");
+                    created.push(goal_key);
+                }
+            }
+
+            json!({ "content": [{ "type": "text", "text": format!("✓ Created {} subgoals under {}: {}", created.len(), parent, created.join(", ")) }] })
+        }
+        "mcp_engram_goal_search" => {
+            let query = args["query"].as_str().unwrap_or("").trim().to_lowercase();
+            let status_filter = args.get("status").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+
+            let mut lock = store.lock().unwrap();
+            let mut matches: Vec<_> = lock.list().into_iter()
+                .filter(|c| c.starts_with("goal:"))
+                // Tier 2 broaden (goal handler hot path): upgrade to high_priority for intentional self-model continuity.
+                // Consistent with goal_status / goal_update_status / set_primary already using it; goals are promotable.
+                .filter_map(|c| lock.fetch_block_high_priority(&c).map(|b| (c, b)))
+                .collect();
+
+            matches.retain(|(_c, b)| {
+                let text = String::from_utf8_lossy(&b.payload).to_lowercase();
+                let matches_text = text.contains(&query);
+                let matches_status = status_filter.is_empty() || text.contains(&format!("status: {}", status_filter));
+                matches_text && matches_status
+            });
+
+            matches.sort_by(|a, b| b.1.crs_score.partial_cmp(&a.1.crs_score).unwrap_or(std::cmp::Ordering::Equal));
+            matches.truncate(limit);
+
+            let mut output = format!("Goal search results for '{}':\n\n", query);
+            for (concept, block) in &matches {
+                let short = concept.split(':').last().unwrap_or(concept);
+                let text = String::from_utf8_lossy(&block.payload);
+                let stmt = text.lines().find(|l| l.starts_with("goal_statement:")).map(|l| l.replace("goal_statement: ", "")).unwrap_or_default();
+                output.push_str(&format!("- **{}** (CRS: {:.2})\n  {}\n", short, block.crs_score, stmt.chars().take(80).collect::<String>()));
+            }
+
+            json!({ "content": [{ "type": "text", "text": output }] })
+        }
+        "mcp_engram_goal_get_children" => {
+            let parent = args["parent"].as_str().unwrap_or("").trim().to_string();
+            if parent.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: parent is required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            let children: Vec<_> = lock.list().into_iter()
+                .filter(|c| c.starts_with("goal:"))
+                .filter_map(|c| {
+                    // Tier 2 broaden (goal handler): high_priority for child lookup (promotable via goal ops)
+                    lock.fetch_block_high_priority(&c).and_then(|b| {
+                        let text = String::from_utf8_lossy(&b.payload);
+                        if text.contains(&format!("parent_goal: {}", parent)) {
+                            Some((c, b))
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            let mut output = format!("Children of {}:\n\n", parent);
+            for (concept, block) in &children {
+                let short = concept.split(':').last().unwrap_or(concept);
+                output.push_str(&format!("- **{}** (CRS: {:.2})\n", short, block.crs_score));
+            }
+
+            json!({ "content": [{ "type": "text", "text": output }] })
+        }
+        "mcp_engram_goal_set_primary" => {
+            let goal = args["goal"].as_str().unwrap_or("").trim().to_string();
+            if goal.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: goal is required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            let payload = format!("PRIMARY GOAL\n\n**goal:** {}\n**set_at:** {}", goal, chrono::Utc::now().to_rfc3339());
+
+            let mut marker = lock.encode(&payload);
+            marker.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+            marker.crs_score = 0.95;
+
+            match lock.store("primary_goal", marker) {
+                Ok(_) => {
+                    lock.mark_ki_rebake_needed(); // make Primary Intent appear faster in ki_hijacker context
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Primary goal set to {}", goal) }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            }
+        }
+        "mcp_engram_goal_list" => {
+            let status_filter = args.get("status").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+
+            let mut lock = store.lock().unwrap();
+            let mut goals: Vec<_> = lock.list().into_iter()
+                .filter(|c| c.starts_with("goal:"))
+                // Tier 2 broaden (goal_list handler loop): high_priority; goal:* blocks are high-value for self-model and already high_prio'd in sibling handlers
+                .filter_map(|c| lock.fetch_block_high_priority(&c).map(|b| (c, b)))
+                .collect();
+
+            if !status_filter.is_empty() {
+                goals.retain(|(_, b)| {
+                    let text = String::from_utf8_lossy(&b.payload);
+                    text.contains(&format!("status: {}", status_filter))
+                });
+            }
+
+            goals.sort_by(|a, b| b.1.crs_score.partial_cmp(&a.1.crs_score).unwrap_or(std::cmp::Ordering::Equal));
+            goals.truncate(limit);
+
+            let mut output = String::from("Active/Recent Goals:\n\n");
+            for (concept, block) in &goals {
+                let short = concept.split(':').last().unwrap_or(concept);
+                let text = String::from_utf8_lossy(&block.payload);
+                let status_line = text.lines().find(|l| l.starts_with("status:")).unwrap_or("status: unknown");
+                let stmt = text.lines().find(|l| l.starts_with("goal_statement:")).map(|l| l.replace("goal_statement: ", "")).unwrap_or_default();
+                output.push_str(&format!("- **{}** (CRS: {:.2}, dv: {:.2})\n  {} | {}\n", short, block.crs_score, block.energetics.dv, stmt.chars().take(70).collect::<String>(), status_line));
+            }
+
+            json!({ "content": [{ "type": "text", "text": output }] })
+        }
+
+        // --- Thought Tile handlers (Item 2) ---
+        "mcp_engram_thought_tile_create" => {
+            let tile_type = args.get("tile_type").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let payload = args.get("payload").cloned().unwrap_or(serde_json::json!({}));
+            let goal_ctx = args.get("goal_context").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let parent_tile = args.get("parent_tile").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let spatial_refs: Vec<String> = args.get("spatial_references")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|s| s.as_str().map(|x| x.to_string())).collect())
+                .unwrap_or_default();
+
+            if tile_type.is_empty() || title.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: tile_type and title are required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+
+            let (goal_ctx, auto_linked_to_primary, auto_linked_from_recent) =
+                resolve_goal_context_and_link(&mut lock, goal_ctx);
+
+            let _timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            let short = title
+                .chars()
+                .take(48)
+                .collect::<String>()
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+                .collect::<String>();
+            let tile_key = format!("tile:{}_{}", tile_type, short);
+
+            // Phase 1 (draft) — Optional textual functor payload contract guidance
+            // Base contract fields (when present in payload):
+            //   summary, key_decisions, lessons_scars, spatial_context,
+            //   goal_linkage, re_hydration_hints, momentum_signals
+            //
+            // state_machine_v0 additional fields (when present):
+            //   current_state, transition_history, open_questions, success_criteria
+            //
+            // These are currently advisory. The handler will surface them cleanly
+            // in the stored textual representation when supplied.
+            let mut tile_payload = format!(
+                "THOUGHT TILE\n\n**tile_type:** {}\n**title:** {}\n\n**payload:** {}\n",
+                tile_type, title, serde_json::to_string_pretty(&payload).unwrap_or_default()
+            );
+
+            // If the payload contains known contract fields, surface them at the top level for readability
+            if let Some(obj) = payload.as_object() {
+                if let Some(summary) = obj.get("summary").and_then(|v| v.as_str()) {
+                    tile_payload.push_str(&format!("\n**contract_summary:** {}\n", summary));
+                }
+                if let Some(state) = obj.get("current_state") {
+                    tile_payload.push_str(&format!("\n**current_state:** {}\n", serde_json::to_string_pretty(state).unwrap_or_default()));
+                }
+                if let Some(re_hydration) = obj.get("re_hydration_hints").and_then(|v| v.as_str()) {
+                    tile_payload.push_str(&format!("\n**re_hydration_hints:** {}\n", re_hydration));
+                }
+                if let Some(lessons) = obj.get("lessons_scars") {
+                    tile_payload.push_str(&format!("\n**lessons_scars:** {}\n", serde_json::to_string_pretty(lessons).unwrap_or_default()));
+                }
+            }
+            if !goal_ctx.is_empty() {
+                tile_payload.push_str(&format!("\n**goal_context:** {}\n", goal_ctx));
+                if auto_linked_to_primary {
+                    tile_payload.push_str("**auto_linked_to_primary:** true\n");
+                }
+                if auto_linked_from_recent {
+                    tile_payload.push_str("**auto_linked_from_recent_activity:** true\n");
+                }
+            }
+            if !parent_tile.is_empty() {
+                tile_payload.push_str(&format!("\n**parent_tile:** {}\n", parent_tile));
+            }
+
+            let mut tile_block = lock.encode(&tile_payload);
+
+            // Choose appropriate zedos tag and let the reflexive contract system handle allowed_transforms
+            tile_block.zedos_tag = match tile_type.as_str() {
+                "html_visualization" => engram_core::types::ZEDOS_DECLARATIVE,
+                "verified_sequence" => engram_core::types::ZEDOS_PRAXIS,
+                _ => engram_core::types::ZEDOS_OPERATIONAL, // research, state_machine, tabular, etc.
+            };
+            tile_block.crs_score = 0.88;
+
+            match lock.store(&tile_key, tile_block) {
+                Ok(_) => {
+                    if !goal_ctx.is_empty() {
+                        let _ = lock.relate(&tile_key, &goal_ctx, "serves");
+                    }
+                    if !parent_tile.is_empty() {
+                        let _ = lock.relate(&parent_tile, &tile_key, "decomposes_into");
+                    }
+                    // Minimal Phase 0 spatial participation: explicit references provided at creation time
+                    for concept in &spatial_refs {
+                        let _ = lock.relate(&tile_key, concept, "compresses_path");
+                    }
+                    if auto_linked_to_primary || !goal_ctx.is_empty() || !spatial_refs.is_empty() {
+                        lock.mark_ki_rebake_needed();
+                    }
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Thought Tile created: {}\n  (textual functor payload ready for agent use; pair with create_visualization for rich human view)", tile_key) }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            }
+        }
+        "mcp_engram_thought_tile_create_visualization" => {
+            // Visualization/compound document path. Supports rich HTML payloads (via mint_html_visualization_payload or raw).
+            // Recommended to pair with a textual functor payload Tile for best agent + human dual representation.
+            let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let payload = args.get("payload").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let goal_ctx = args.get("goal_context").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let spatial_refs: Vec<String> = args.get("spatial_references")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|s| s.as_str().map(|x| x.to_string())).collect())
+                .unwrap_or_default();
+
+            if title.is_empty() || payload.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: title and payload are required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+
+            let (goal_ctx, auto_linked_to_primary, auto_linked_from_recent) =
+                resolve_goal_context_and_link(&mut lock, goal_ctx);
+
+            let _timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            let short = title.chars().take(48).collect::<String>().to_lowercase().chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' }).collect::<String>();
+            let tile_key = format!("tile:html_visualization_{}", short);
+
+            let mut tile_payload = format!(
+                "THOUGHT TILE (VISUALIZATION)\n\n**tile_type:** html_visualization\n**title:** {}\n\n**payload:**\n{}",
+                title, payload
+            );
+            if !goal_ctx.is_empty() {
+                tile_payload.push_str(&format!("\n\n**goal_context:** {}\n", goal_ctx));
+                if auto_linked_to_primary { tile_payload.push_str("**auto_linked_to_primary:** true\n"); }
+                if auto_linked_from_recent { tile_payload.push_str("**auto_linked_from_recent_activity:** true\n"); }
+            }
+
+            let mut tile_block = lock.encode(&tile_payload);
+            tile_block.zedos_tag = engram_core::types::ZEDOS_DECLARATIVE;
+            tile_block.crs_score = 0.87;
+
+            match lock.store(&tile_key, tile_block) {
+                Ok(_) => {
+                    if !goal_ctx.is_empty() {
+                        let _ = lock.relate(&tile_key, &goal_ctx, "serves");
+                    }
+                    for concept in &spatial_refs {
+                        let _ = lock.relate(&tile_key, concept, "compresses_path");
+                    }
+                    if auto_linked_to_primary || !goal_ctx.is_empty() || !spatial_refs.is_empty() {
+                        lock.mark_ki_rebake_needed();
+                    }
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Visualization Thought Tile created: {} (consider creating a companion textual functor Tile for agent-primary use)", tile_key) }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+            }
+        }
+
+        "mcp_engram_thought_tile_write_result" => {
+            let tile = args.get("tile").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let result_payload = args.get("result_payload").cloned().unwrap_or(serde_json::json!({}));
+            let status = args.get("status").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+
+            if tile.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: tile is required." }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+
+            // Hot path upgrade (Tier 2 broader adoption): Thought Tiles are high-value structured continuity artifacts.
+            if let Some(mut block) = lock.fetch_block_high_priority(&tile) {
+                let now = chrono::Utc::now().to_rfc3339();
+                let result_json = serde_json::to_string_pretty(&result_payload).unwrap_or_default();
+
+                let current_text = String::from_utf8_lossy(&block.payload).to_string();
+
+                // Hardened structured merging (v2)
+                // We now provide clearer guidance and attempt to keep the payload more readable for complex tiles.
+                let mut new_content = current_text.clone();
+
+                new_content.push_str(&format!("\n\n**result_written_at:** {}\n", now));
+                if !status.is_empty() {
+                    new_content.push_str(&format!("**status:** {}\n", status));
+                }
+
+                // For State Machine tiles, recommend structured update format
+                if current_text.contains("state_machine") || current_text.contains("\"tile_type\"") {
+                    new_content.push_str("**structured_update_recommended:** Include 'current_state' and 'transition' objects in result_payload for clean history.\n");
+                }
+
+                new_content.push_str(&format!("**result_payload:** {}\n", result_json));
+
+                block.payload.fill(0);
+                let bytes = new_content.as_bytes();
+                let len = bytes.len().min(block.payload.len());
+                block.payload[..len].copy_from_slice(&bytes[..len]);
+
+                match lock.store(&tile, block) {
+                    Ok(_) => {
+                        lock.access_index.touch(&tile);
+                        lock.mark_ki_rebake_needed();
+                        json!({ "content": [{ "type": "text", "text": format!("✓ Result written to Thought Tile: {}\n  (momentum refreshed; consider creating a visualization companion if this is now a high-value state)", tile) }] })
+                    }
+                    Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
+                }
+            } else {
+                json!({ "content": [{ "type": "text", "text": format!("Tile not found: {}", tile) }], "isError": true })
+            }
+        }
+
+        // --- end Thought Tile handlers ---
+
         "mcp_engram_pin" => {
             let concept = args["concept"].as_str().unwrap_or("").trim().to_string();
             let mut lock = store.lock().unwrap();
-            if let Some(mut m) = lock.fetch_block(&concept) {
+            // Hot path upgrade: pinning is typically done on high-value concepts worth fast-path treatment.
+            if let Some(mut m) = lock.fetch_block_high_priority(&concept) {
                 m.crs_score = 1.0; // Pinned mathematically
                 let _ = lock.store(&concept, m);
                 json!({ "content": [{ "type": "text", "text": format!("✓ Pinned concept to CRS 1.0. Autophagy will ignore it.: {}", concept) }] })
@@ -1197,6 +2569,14 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
 
             let mut output = format!("Architectural Context for {}:\n\n", path);
+
+            // Small Item 1.5 practice improvement: if we have spatial AST data from force_ingest,
+            // surface it clearly at the top so the Code Edit Ritual experience is better.
+            let has_spatial = results.iter().any(|m| m.explain.contains("spatial_ast_match"));
+            if has_spatial {
+                output.push_str("**Spatial AST data prioritized** (from Item 1.5 force_ingest bootstrap)\n\n");
+            }
+
             for mem in results.iter() {
                 output.push_str(&format!(
                     "**{}** (crs: {:.2})\n{}\n\n",
@@ -1226,7 +2606,8 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             match lock.remember(&concept_name, &payload) {
                 Ok(_) => {
                     // Fetch the block immediately to pin and tag it
-                    if let Some(mut m) = lock.fetch_block(&concept_name) {
+                    // Hot path upgrade: crystallized PRAXIS solutions are high-value for future recall and continuity.
+                    if let Some(mut m) = lock.fetch_block_high_priority(&concept_name) {
                         m.zedos_tag = engram_core::types::ZEDOS_PRAXIS;
                         m.crs_score = 1.0; // Pinned mathematically
                         let _ = lock.store(&concept_name, m);
@@ -1238,7 +2619,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
         }
 
         "mcp_engram_stats" => {
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             let concepts = lock.list();
             let total = concepts.len();
             let mut pinned = 0usize;
@@ -1246,7 +2627,10 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut crs_min = f32::MAX;
             let mut crs_max = 0.0f32;
             for name in &concepts {
-                if let Some(block) = lock.fetch_block(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
+                // Autonomous Tier 2 improvement (Maximum Engram Speed plan): Prefer high_priority path
+                // during stats collection for better cache behavior on repeated queries.
+                let key = name.split_once("::").map_or(name.as_str(), |(_, r)| r);
+                if let Some(block) = lock.fetch_block_high_priority(key) {
                     let crs = block.crs_score;
                     if crs >= 1.0 { pinned += 1; }
                     crs_sum += crs;
@@ -1313,7 +2697,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             if namespace.is_empty() {
                 return json!({ "content": [{ "type": "text", "text": "Error: namespace is required." }], "isError": true });
             }
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             let is_sheaf = lock.is_sheaf_mode();
             let ok = lock.set_active_stalk(&namespace);
             if ok {
@@ -1327,7 +2711,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
         }
 
         "mcp_engram_list_namespaces" => {
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             let namespaces = lock.stalk_names();
             let active = lock.active_stalk_name();
             drop(lock);
@@ -1357,15 +2741,28 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
+        "mcp_engram_get_backend_readiness" => {
+            // Item 1.5 small tool — returns whether the heavy background initialization has finished.
+            let mut lock = store.lock().unwrap();
+            let ready = lock.is_fully_initialized();
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::json!({ "fully_initialized": ready }).to_string()
+                }]
+            })
+        }
+
         "mcp_engram_summarize" => {
             let top_n = args["top_n"].as_u64().unwrap_or(10).min(50) as usize;
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             let concepts = lock.list();
             let mut pinned: Vec<(String, f32, String)> = Vec::new();
             let mut ranked: Vec<(String, f32, String)> = Vec::new();
 
             for name in &concepts {
-                if let Some(block) = lock.fetch_block(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
+                // Autonomous Tier 2: prefer high_priority for summarize (benefits promoted hot artifacts)
+                if let Some(block) = lock.fetch_block_high_priority(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
                     let crs = block.crs_score;
                     let raw = String::from_utf8_lossy(&block.payload);
                     let text = raw.trim_matches('\0');
@@ -1402,7 +2799,8 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             // ── Phase 70.2: append system_state_vector health ──────────────────
             {
                 let lock2 = store.lock().unwrap();
-                if let Some(sys) = lock2.fetch_block("__system_state__") {
+                // Hot path upgrade (Tier 2 broader adoption): system state in summary/health paths.
+                if let Some(sys) = lock2.fetch_block_high_priority("__system_state__") {
                     let total = lock2.list().len();
                     let ns = lock2.active_stalk_name();
                     out.push_str(&format!(
@@ -1440,11 +2838,12 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
         "mcp_engram_export" => {
             let min_crs = args["min_crs"].as_f64().unwrap_or(0.0) as f32;
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             let concepts = lock.list();
             let mut exported: Vec<Value> = Vec::new();
             for name in &concepts {
-                if let Some(block) = lock.fetch_block(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
+                // Autonomous Tier 2: high_priority for export (favors promoted hot artifacts)
+                if let Some(block) = lock.fetch_block_high_priority(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
                     if block.crs_score < min_crs { continue; }
                     let raw = String::from_utf8_lossy(&block.payload);
                     let text = raw.trim_matches('\0').to_string();
@@ -1495,7 +2894,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs()).unwrap_or(0);
 
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             let concepts = lock.list();
             let mut to_evict: Vec<String> = Vec::new();
             for name in &concepts {
@@ -1643,7 +3042,8 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
                 let store_lk = store.lock().unwrap();
                 let raw_concept = current.split_once("::").map_or(current.as_str(), |(_, r)| r);
-                if let Some(block) = store_lk.fetch_block(raw_concept) {
+                // Hot path upgrade (pre-65%): workflow chain tool pulls full text for reasoning traces and promoted state. Now uses fast path.
+                if let Some(block) = store_lk.fetch_block_high_priority(raw_concept) {
                     let full_text = engram_core::storage::read_provlog(&block);
                     full_output.push_str(&format!("### Step: {}\n{}\n\n", current, full_text));
                 } else {
@@ -1707,20 +3107,30 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 return json!({ "content": [{ "type": "text", "text": "Error: file_stem is required." }], "isError": true });
             }
 
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             let all_concepts = lock.list();
 
-            let mut results: Vec<(String, f32, f32)> = all_concepts.into_iter()
+            let mut results: Vec<(String, f32, f32, f32, String)> = all_concepts.into_iter()
                 .filter_map(|concept| {
                     // Match concepts belonging to this file stem
                     if !concept.starts_with(&file_stem) { return None; }
-                    let block = lock.fetch_block(&concept)?;
+                    // Hot path upgrade (Tier 2 broader adoption): recall_in_file is a core ritual tool used on every code edit.
+                    let block = lock.fetch_block_high_priority(&concept)?;
                     let row_min = block.aabb_min[0];
                     let row_max = block.aabb_max[0];
                     // Only include if AABB is set (row_max > 0) and intersects range
                     if row_max <= 0.0 { return None; }
                     if row_max < start_line || row_min > end_line { return None; }
-                    Some((concept, row_min, row_max))
+                    let crs = block.crs_score;
+                    // Short useful snippet for impact analysis (provlog prefix or signature-style)
+                    let prov_text = engram_core::storage::read_provlog(&block);
+                    let short_info = if !prov_text.is_empty() {
+                        let s = prov_text.chars().take(80).collect::<String>().replace('\n', " ");
+                        format!(" | {}", s)
+                    } else {
+                        String::new()
+                    };
+                    Some((concept, row_min, row_max, crs, short_info))
                 })
                 .collect();
 
@@ -1732,8 +3142,11 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
 
             let mut output = format!("Found {} concepts in '{}':\n\n", results.len(), file_stem);
-            for (concept, row_min, row_max) in &results {
-                output.push_str(&format!("  · {} (lines {:.0}–{:.0})\n", concept, row_min, row_max));
+            for (concept, row_min, row_max, crs, short_info) in &results {
+                output.push_str(&format!(
+                    "  · {} (lines {:.0}–{:.0}) | crs:{:.2}{}\n",
+                    concept, row_min, row_max, crs, short_info
+                ));
             }
             json!({ "content": [{ "type": "text", "text": output.trim() }] })
         }
@@ -1747,13 +3160,14 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 return json!({ "content": [{ "type": "text", "text": "Error: query is required." }], "isError": true });
             }
 
-            let lock = store.lock().unwrap();
+            let mut lock = store.lock().unwrap();
             let query_block = lock.encode(&query);
             let all_concepts = lock.list();
 
             let mut scored: Vec<(String, f32, f32)> = all_concepts.into_iter()
                 .filter_map(|concept| {
-                    let block = lock.fetch_block(&concept)?;
+                    // Hot path upgrade (Tier 2 broader adoption): query_with_momentum is one of the most used ritual entry points.
+                    let block = lock.fetch_block_high_priority(&concept)?;
                     let q_score = engram_core::ops::cosine_similarity(&query_block.q, &block.q);
                     let p_score = engram_core::ops::cosine_similarity(&query_block.q, &block.p);
                     // Blend: 80% position (where it is now) + 20% momentum (where it's heading)
@@ -1811,6 +3225,100 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     json!({ "content": [{ "type": "text", "text": "✓ Tracked user interaction in User Model." }] })
                 },
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error tracking interaction: {e}") }], "isError": true }),
+            }
+        }
+
+        "mcp_engram_verify_block_lawfulness" => {
+            let concept = args.get("concept").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let check_chain = args.get("check_merkle_chain").and_then(|v| v.as_bool()).unwrap_or(true);
+
+            if concept.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: missing required 'concept' string" }], "isError": true });
+            }
+
+            let mut lock = store.lock().unwrap();
+            match lock.get_block_lawfulness_summary(&concept) {
+                Some(summary) => {
+                    let mut msg = format!(
+                        "Lawfulness audit for '{}'\nCRS: {:.3} | Tag: 0x{:02X} | Superpositions: {}\nAllowed: '{}'\n",
+                        summary.concept, summary.crs, summary.zedos_tag, summary.superposition_count, summary.allowed_transforms
+                    );
+                    if check_chain {
+                        let sig_preview: String = summary.sig_0[..4].iter().map(|b| format!("{:02x}", b)).collect();
+                        let merkle_preview: String = summary.merkle_sub_root[..4].iter().map(|b| format!("{:02x}", b)).collect();
+                        msg.push_str(&format!("sig_0: {}... | merkle_sub_root: {}...\n", sig_preview, merkle_preview));
+                    }
+                    msg.push_str("(Full deep chain verification & historical reconstruction coming in follow-up work)");
+                    json!({ "content": [{ "type": "text", "text": msg }] })
+                }
+                None => json!({ "content": [{ "type": "text", "text": format!("Block '{}' not found", concept) }], "isError": true })
+            }
+        }
+
+        "mcp_engram_verify_manifold_integrity" => {
+            // SAFETY: Default sample kept deliberately conservative. The underlying implementation
+            // was hardened (see store.rs verify_manifold_integrity) after live observation of
+            // extreme memory pressure / near-OOM on large manifolds during wake-up rituals.
+            // Never trust a "verify" tool to be cheap without reading its sampling strategy.
+            let min_crs = args.get("min_crs").and_then(|v| v.as_f64()).unwrap_or(0.74) as f32;
+            let sample = args.get("sample_size").and_then(|v| v.as_u64()).map(|n| n as usize);
+
+            let options = crate::store::ManifoldVerificationOptions {
+                min_crs,
+                sample_size: sample,
+                include_relation_integrity: false,
+            };
+
+            match store.lock().unwrap().verify_manifold_integrity(options) {
+                Ok(report) => {
+                    let mut msg = format!(
+                        "Manifold Integrity Report\nSampled: {} | High-value (>=0.74): {}\nIssues found: {}\nOverall: {}\n",
+                        report.total_blocks_sampled, report.high_value_blocks, report.issues_found, report.overall_health
+                    );
+                    if !report.issues.is_empty() {
+                        msg.push_str("\nIssues:\n");
+                        for issue in &report.issues {
+                            msg.push_str(&format!("- {}\n", issue));
+                        }
+                    }
+                    json!({ "content": [{ "type": "text", "text": msg }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Verification error: {}", e) }], "isError": true })
+            }
+        }
+
+        "mcp_engram_invoke_protocol" => {
+            let key = args.get("key").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let dry_run = args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+            let protocol_args = args.get("args").cloned();
+
+            if key.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: missing required 'key' string" }], "isError": true });
+            }
+
+            let options = crate::store::InvokeOptions { dry_run };
+
+            match store.lock().unwrap().invoke_protocol(&key, protocol_args, options) {
+                Ok(result) => {
+                    let mut msg = format!(
+                        "Protocol Invocation: {}\nStatus: {}\n",
+                        key, result.status
+                    );
+                    if let Some(v) = &result.verification {
+                        msg.push_str(&format!(
+                            "Verification: CRS={:.3} | Allowed='{}'\n",
+                            v.crs, v.allowed_transforms
+                        ));
+                    }
+                    if let Some(r) = &result.result {
+                        msg.push_str(&format!("Result: {}\n", r));
+                    }
+                    if dry_run {
+                        msg.push_str("(dry_run: no side effects executed)");
+                    }
+                    json!({ "content": [{ "type": "text", "text": msg }] })
+                }
+                Err(e) => json!({ "content": [{ "type": "text", "text": format!("Invocation error: {}", e) }], "isError": true })
             }
         }
 
@@ -1894,6 +3402,10 @@ pub fn run(store: SharedStore) -> anyhow::Result<()> {
             Ok(l) => l,
             Err(e) => { error!("stdin read error: {e}"); break; }
         };
+        // Tier 2 async note: The stdio MCP loop + dispatch is synchronous. Future evolution (e.g. async transport, or offloading
+        // hot fetch_block_high_priority in goal/tile/summarize/export loops) could use async_read_block/async_write_block
+        // (engram-core "async-io") via spawn_blocking or full async StoreHandle to prevent blocking the tokio reactor
+        // on 256KB .leg3 I/O for promoted concepts. Currently high_priority path already gives the sync win via LegView/Cuda.
         if line.trim().is_empty() { continue; }
 
         debug!("→ {line}");

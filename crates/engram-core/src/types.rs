@@ -49,6 +49,28 @@ pub const ZEDOS_RELATION: u8     = 0xE1;
 /// Phase E.4: User Model block — tracks persistent centroid of user interaction.
 pub const ZEDOS_USER_MODEL: u8   = 0xC0;
 
+/// Tier 5 subjective NREM centroid delta (CodeLand port for resonant path).
+/// Strict routing: never back-propagates to raw objective/oracle candidate pool.
+pub const ZEDOS_NREM_CENTROID: u8 = 0x4E;
+
+/// Tier 5 subjective synthesis delta (CodeLand port for friction/ADR/KDK/polysemy paths).
+/// Enables explicit A/D/R lineage + selection pressure without polluting high-CRS raw blocks.
+pub const ZEDOS_SYNTHESIS: u8 = 0x0C;
+
+/// External pointer / smart reference (ZEDOS_POINTER).
+/// First-class HolographicBlock for large external data (>256KB) that cannot fit in payload.
+/// Strong provenance via embedded content_hash + reuse of LegFooter Merkle (sig_0-5 + merkle_sub_root).
+/// Lazy materialization via structured descriptor in payload.
+/// Geometric metadata (spatial chunks, momentum proxies for shards) stored in payload JSON + block aabb/q-p fingerprint.
+/// Guardrail compliant: zero changes to layout, q/p tensors, alignment, or Body size.
+/// A Thought Tile can reference a pointer block by concept name (via relate or payload embedding).
+pub const ZEDOS_POINTER: u8 = 0x2F;
+
+/// Thermodynamic cost constant (J·s per synthesis / NREM operation or gate decision).
+/// Direct CodeLand LAW_CONSTANT port. Applied to heat_dissipated in Logenergetics
+/// on every contributor and even friction-gate rejections for honest energy accounting.
+pub const LAW_CONSTANT: f32 = 5.47e-4;
+
 // ── Compile-time size seal ──────────────────────────────────────────────────────
 const _: () = assert!(
     std::mem::size_of::<HolographicBlock>() == BLOCK_SIZE,
@@ -214,6 +236,10 @@ pub struct HolographicBlock {
 /// The inner block is 256KB — stack allocation will cause a stack overflow.
 ///
 /// Derefs transparently to `&HolographicBlock` and `&mut HolographicBlock`.
+///
+/// Clone is implemented (deep copy of the 256KB block via Box) to support
+/// hot cache snapshot semantics in high_priority paths (e.g. CudaBackend).
+#[derive(Clone)]
 pub struct Leg3Pointer(pub Box<HolographicBlock>);
 
 impl Leg3Pointer {

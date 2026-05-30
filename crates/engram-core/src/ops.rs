@@ -448,6 +448,178 @@ pub fn apply_temporal_phase(q: &mut [Complex32; 8192], age_days: f32) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CodeLand 2026 Phase 4 NREM/ego.leg3 Integration Primitives (MVP)
+// Guardrail: pure fns, no layout/tensor/alignment changes. All ops on existing
+// [Complex32; 8192] + normalize. Called exclusively from daemon NREM path.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// LAW thermodynamic constant (re-export for convenience in NREM costing).
+pub use crate::LAW_CONSTANT;
+
+/// Hermitian cosine magnitude (CodeLand |Re(a·b) + i Im(a·b)| style for gate).
+/// For normalized vectors approximates the complex inner-product magnitude.
+/// Used for ego-friction detection (less directional bias than plain cos).
+#[inline]
+pub fn hermitian_cos_magnitude(a: &[Complex32; 8192], b: &[Complex32; 8192]) -> f32 {
+    let mut dot_re = 0.0f32;
+    let mut dot_im = 0.0f32;
+    for (ai, bi) in a.iter().zip(b.iter()) {
+        // Hermitian-style: treat as <a, b> = sum a_re*b_re + a_im*b_im + i terms
+        dot_re += ai.re * bi.re + ai.im * bi.im;
+        dot_im += ai.re * bi.im - ai.im * bi.re;  // imag cross for full |< >|
+    }
+    let mag = (dot_re * dot_re + dot_im * dot_im).sqrt();
+    let norm_a: f32 = a.iter().map(|v| v.re*v.re + v.im*v.im).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|v| v.re*v.re + v.im*v.im).sum::<f32>().sqrt();
+    if norm_a < 1e-8 || norm_b < 1e-8 { return 0.0; }
+    (mag / (norm_a * norm_b)).clamp(0.0, 1.0)  // magnitude, non-negative
+}
+
+/// AttractionField for Riemannian pull on the hypersphere (S^1)^8192 manifold.
+/// Returns the tangent-space direction vector (orthogonal component) scaled by strength.
+/// f(q) = strength * (target - <target, q> * q)   [projected to tangent]
+#[inline]
+fn attraction_field_tangent(q: &[Complex32; 8192], target: &[Complex32; 8192], strength: f32) -> [Complex32; 8192] {
+    let proj = project(q, target);  // reuse or inline simple dot proj
+    let mut tangent = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        tangent[i].re = strength * (target[i].re - proj[i].re);
+        tangent[i].im = strength * (target[i].im - proj[i].im);
+    }
+    tangent
+}
+
+// (reuses existing project() defined earlier in module for tangent calc)
+
+/// Single RK4 micro-step on the unit hypersphere with AttractionField.
+/// Integrates dq/dt = AttractionField, then renormalizes to preserve |z|=1.
+/// dt in [0.05, 0.2] recommended for stability in 8192D.
+fn rk4_step_sphere(q: &[Complex32; 8192], target: &[Complex32; 8192], dt: f32, strength: f32) -> [Complex32; 8192] {
+    // k1 = f(q)
+    let k1 = attraction_field_tangent(q, target, strength);
+    // k2 = f(q + dt/2 * k1)  -- approx (no full manifold exp map for MVP speed)
+    let mut q2 = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        q2[i].re = q[i].re + (dt * 0.5) * k1[i].re;
+        q2[i].im = q[i].im + (dt * 0.5) * k1[i].im;
+    }
+    normalize_in_place_local(&mut q2); // local helper to avoid &mut conflict in scope
+    let k2 = attraction_field_tangent(&q2, target, strength);
+
+    // k3
+    let mut q3 = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        q3[i].re = q[i].re + (dt * 0.5) * k2[i].re;
+        q3[i].im = q[i].im + (dt * 0.5) * k2[i].im;
+    }
+    normalize_in_place_local(&mut q3);
+    let k3 = attraction_field_tangent(&q3, target, strength);
+
+    // k4
+    let mut q4 = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        q4[i].re = q[i].re + dt * k3[i].re;
+        q4[i].im = q[i].im + dt * k3[i].im;
+    }
+    normalize_in_place_local(&mut q4);
+    let k4 = attraction_field_tangent(&q4, target, strength);
+
+    // RK4 weighted
+    let mut next = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        next[i].re = q[i].re + (dt / 6.0) * (k1[i].re + 2.0*k2[i].re + 2.0*k3[i].re + k4[i].re);
+        next[i].im = q[i].im + (dt / 6.0) * (k1[i].im + 2.0*k2[i].im + 2.0*k3[i].im + k4[i].im);
+    }
+    normalize(&next)
+}
+
+/// In-place normalize helper (local to avoid name clash with pub fn during edit).
+fn normalize_in_place_local(v: &mut [Complex32; 8192]) {
+    let sq: f32 = v.iter().map(|c| c.re*c.re + c.im*c.im).sum();
+    let l = sq.sqrt();
+    if l > 1e-8 {
+        for c in v.iter_mut() { c.re /= l; c.im /= l; }
+    } else {
+        for c in v.iter_mut() { c.re = 1.0; c.im = 0.0; }
+    }
+}
+
+/// **Riemannian geodesic pre-step (RK4 + AttractionField style)** — CodeLand Phase 114 port.
+/// Evolves `q` toward `target` (e.g. running acc or ego centroid) along manifold-respecting
+/// geodesic before it participates in weighted superposition. 4 steps, dt=0.1, strength=0.4 default.
+/// Returns evolved vector (still unit norm). Dramatically improves geometric fidelity vs naive add.
+/// 
+/// Usage in NREM: for resonant items, q_evolved = riemannian_nrem_pre_step(&block.q, &acc_or_ego, 4, 0.1, 0.4);
+pub fn riemannian_nrem_pre_step(
+    q: &[Complex32; 8192],
+    target: &[Complex32; 8192],
+    steps: u32,
+    dt: f32,
+    strength: f32,
+) -> [Complex32; 8192] {
+    let mut current = *q;  // copy
+    for _ in 0..steps {
+        current = rk4_step_sphere(&current, target, dt, strength);
+    }
+    current  // already normalized by steps
+}
+
+/// Polysemy curvature / conflict detector (post-geodesic probe).
+/// Simple MVP proxy: measures directional twist (angle change from original) + deviation
+/// from linear interpolation. High values → sense conflict / polysemy spike → route to
+/// separate SYNTHESIS accumulator (prevents contaminating unified centroid).
+/// Threshold ~0.25-0.35 in practice for NREM.
+pub fn polysemy_curvature(q_evolved: &[Complex32; 8192], q_original: &[Complex32; 8192], target: &[Complex32; 8192]) -> f32 {
+    let cos_evo_orig = cosine_similarity(q_evolved, q_original);
+    let cos_evo_target = cosine_similarity(q_evolved, target);
+    let cos_orig_target = cosine_similarity(q_original, target);
+    // Curvature proxy: how much the evolution "twisted" vs straight geodesic expectation
+    // (1 - cos_evo_orig) high + (cos_evo_target - cos_orig_target) mismatch
+    let twist = (1.0 - cos_evo_orig).max(0.0);
+    let mismatch = (cos_evo_target - cos_orig_target).abs();
+    (twist * 0.7 + mismatch * 0.3).clamp(0.0, 1.0)
+}
+
+/// Abbreviated KDK ADR reconciliation for friction items (CodeLand 12-step lightweight).
+/// For low-cos (friction <0.30) candidates: iterative weighted blend toward ego/reference
+/// with decreasing blend_w. Tracks dl/dt approx via cosine drift. Returns reconciled q +
+/// (crs_proxy, dl_dt) for Tier5 gate decision.
+/// blend_start=0.30, steps=12, min_w=0.10 per spec. Produces synthesis delta candidate.
+pub fn abbreviated_adr_kdk_reconcile(
+    q_friction: &[Complex32; 8192],
+    reference: &[Complex32; 8192],  // usually ego_q or running centroid
+    steps: u32,                     // 12
+    blend_start: f32,               // 0.30
+    min_w: f32,                     // 0.10
+) -> ([Complex32; 8192], f32, f32) {  // (reconciled_q, crs_proxy, dl_dt)
+    let mut current = *q_friction;
+    let mut prev_cos = cosine_similarity(&current, reference);
+    let mut total_drift = 0.0f32;
+
+    for step in 0..steps {
+        let w = (blend_start - (step as f32) * 0.017).max(min_w);  // 0.017 ~ (0.3-0.1)/12 approx
+        // Weighted kick toward reference (OP_ADD style but partial)
+        let mut blended = [Complex32::default(); 8192];
+        for i in 0..8192 {
+            blended[i].re = current[i].re * (1.0 - w) + reference[i].re * w;
+            blended[i].im = current[i].im * (1.0 - w) + reference[i].im * w;
+        }
+        current = normalize(&blended);
+
+        let new_cos = cosine_similarity(&current, reference);
+        let d_cos = new_cos - prev_cos;
+        total_drift += d_cos;
+        prev_cos = new_cos;
+    }
+
+    let final_cos = cosine_similarity(&current, reference);
+    let crs_proxy = final_cos.clamp(0.0, 1.0);  // proxy for post-recon coherence
+    let dl_dt = (total_drift / steps as f32).clamp(-1.0, 1.0);  // avg delta cos as drift signal
+
+    (current, crs_proxy, dl_dt)
+}
+
 // ── Vector Validity Gate — Write Protection ────────────────────────────────────
 
 /// Check that a phase vector is a valid, non-degenerate normalized vector.

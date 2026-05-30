@@ -46,6 +46,10 @@ pub use types::{
     // ZEDOS epistemic tags — exposed so downstream storage tools can work with the full format
     ZEDOS_DECLARATIVE, ZEDOS_EPISODIC, ZEDOS_OPERATIONAL,
     ZEDOS_BODY, ZEDOS_VERBATIM, ZEDOS_PRAXIS, ZEDOS_RELATION, ZEDOS_HYPOTHESIS,
+    // CodeLand Phase 4 NREM/ego.leg3 integration (Tier 5 subjective deltas + energy)
+    ZEDOS_NREM_CENTROID, ZEDOS_SYNTHESIS, LAW_CONSTANT,
+    // External pointer support (smart refs for >256KB data, guardrail-compliant)
+    ZEDOS_POINTER,
 };
 pub use ops::{op_add, op_bind, cosine_similarity};
 pub use backend::{VsaBackend, CpuBackend, SheafBackend};

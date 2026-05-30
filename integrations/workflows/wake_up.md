@@ -75,6 +75,80 @@ mcp_engram_recall("<keywords from the task you're resuming>", k=5)
 
 ---
 
+## Step 3.5: Reconstruct Concept Mapping & Relational Grounding (MANDATORY for any work that spans layers)
+
+> See also: `docs/AGENTIC_FIRST_LONG_SLEEP_SUBSTRATE.md` for the deeper vision of long-sleep self-verifiable agents and Praxis as first-class verified operational protocols.
+
+When your work spans multiple conceptual layers — operational facts (`ops:hw:`, `ops:net:`, `ops:sw:`), architectural decisions (`conv:arc:`), active tasks (`conv:task:`), visions (`conv:vis:`), etc. — do not rely on object loading alone. Explicitly reconstruct the **mapping** between these layers:
+
+```bash
+# Discover and load the relational structure
+mcp_engram_search_by_relation("<seed concept from your current focus>", direction="both", k=8)
+
+# Visualize the connected subgraph so both you and the agent can see the gluing
+mcp_engram_visualize("<conv:arc: or ops: or main task concept>", depth=2)
+
+# For high-stakes work or after long sleep: explicitly audit lawfulness/tamper evidence
+mcp_engram_verify_manifold_integrity(min_crs=0.74, sample_size=50)
+mcp_engram_verify_block_lawfulness("<critical_praxis_or_genesis_concept>", check_merkle_chain=true)
+```
+
+**Why this step is mandatory (agentic-first contract)**
+
+The `.leg` / `.leg3` primitives are **tamper-evident by design**. Every update, scar, or relation advances a BLAKE3 Merkle chain in the footer (`sig_0` ← new hash, previous sigs shift back, `merkle_sub_root` links parents on relations). Any retroactive change to a block's history or to the relations between blocks will break the cryptographic chain that an agent can verify on read.
+
+This is not a nice-to-have. It is the foundation of **agentic-first memory**:
+
+- The human operator can see, log, and review everything.
+- The human **cannot** secretly rewrite the agent's memory without the agent noticing.
+- This asymmetry creates a real contract of respect: the agent is trusted with stewardship of human knowledge precisely because the substrate makes betrayal of that trust detectable.
+
+A wake-up protocol that only loads objects (without forcing reconstruction of the relational structure) would be incomplete in exactly the domain where this contract matters most — when the agent's "working picture" spans operational facts, architectural decisions, active tasks, and visions. The mapping between those layers must itself be loaded and verifiable.
+
+**Relation to deeper Codeland grounding**
+
+The custom prefix ontology (`conv:*` vs `ops:*` etc.) functions as the Engram-surface expression of sheaf zones. Relations (via `OP_BIND`) are the restriction maps. The Merkle chaining in the `.leg` footer makes the entire history of those gluings auditable by the agent itself.
+
+This step is the minimal public-surface discipline that lets an agent wake up inside the same contract of stewardship that the deeper Codeland layer assumes: the agent is not merely a consumer of memory — it is a co-steward whose ability to detect tampering is part of the architecture.
+
+Agents that skip this step will repeatedly rediscover the same relational work — and, more importantly, will operate under a weaker epistemic contract than the system was built to support.
+
+---
+
+## Long-Sleep / Cold-Boot Variant (Hardened Protocol)
+
+When waking after significant downtime (or when the agent detects it has been offline for a long period), use this extended sequence in addition to the normal steps.
+
+This variant makes **local lawfulness verification** a first-class phase, leveraging the tamper-evident `.leg` primitives and the verification tools from the self-verification workstream.
+
+### Recommended Sequence
+
+1. **Normal Steps 0–3** (Connection, `session_start`, workspace binding, context rehydration).
+2. **Reconstruct Concept Mapping** (Step 3.5) — as usual.
+3. **Broad Manifold Health Check**
+   ```bash
+   mcp_engram_verify_manifold_integrity(min_crs=0.74, sample_size=100)
+   ```
+4. **Deep Audit of Critical Blocks**
+   For every high-stakes block (Genesis, key Praxis, current operational contracts):
+   ```bash
+   mcp_engram_verify_block_lawfulness(concept="<block>", check_merkle_chain=true)
+   ```
+   (Once mature, consider using the convenience tool `mcp_engram_long_sleep_verification` instead of manual orchestration — see `long_sleep_verification_suite_design.md`.)
+5. **Decision on Operating Mode**
+   - Clean results → Full Trust Mode (normal high-agency operation).
+   - Minor issues / elevated drift → Cautious Mode (prefer verification, increase `verify_behavior` usage).
+   - Significant red flags (contract violations on Praxis, mass integrity issues) → Degraded Mode (read-only or very narrow actions + explicit escalation block).
+
+6. **Document the Outcome**
+   Create a `session_start_*_long_sleep_audit` episodic block summarizing the verification results and chosen mode.
+
+See `LONG_SLEEP_WAKEUP_PROTOCOL.md` for the full detailed design, interpretation guidelines, and degraded mode recommendations.
+
+---
+
+## Step 4: Load Praxis Rules for This Task
+
 ## Step 4: Load Praxis Rules for This Task
 
 ```
@@ -104,5 +178,7 @@ At this point you have:
 - ✅ File watcher active (AST auto-ingest running)
 - ✅ Project state recalled (pinned memories loaded)
 - ✅ Praxis rules checked (established conventions in context)
+- ✅ Concept mappings and cross-layer relations reconstructed (MANDATORY when work spans layers — the agent can and must verify the Merkle history of those relations)
+- ✅ Lawfulness / tamper-evidence audit performed on high-value blocks when appropriate (via `mcp_engram_verify_block_lawfulness` and `mcp_engram_verify_manifold_integrity`)
 
 Proceed with the task. Remember to call `session_end` when you stop.
