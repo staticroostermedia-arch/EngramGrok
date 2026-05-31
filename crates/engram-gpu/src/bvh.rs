@@ -24,6 +24,7 @@
 //! ```
 
 use engram_core::backend::Memory;
+use engram_core::ops::apply_frame;
 use num_complex::Complex32;
 use std::collections::HashMap;
 use std::fs;
@@ -151,6 +152,12 @@ pub struct BvhManifold {
     /// K-NN result cache (FNV hash → top-K results)
     query_cache: std::sync::RwLock<HashMap<u64, Vec<Memory>>>,
     cache_queue: std::sync::RwLock<std::collections::VecDeque<u64>>,
+    /// WS3-B Live Geosphere: optional current lens/frame for query-time effective vector transform.
+    /// When set (via MCP surface or daemon), query() applies it (via ops::apply_frame = elementwise * + normalize)
+    /// to the input q for BOTH the 3D BVH projection (filter) and the 8192D cosine scoring.
+    /// This makes distance computation use the "current active_location / lens" without mutating stored blocks or .leg3 layout.
+    /// Invariant: effective vectors always re-normalized to unit hypersphere.
+    current_lens: std::sync::RwLock<Option<[Complex32; 8192]>>,
     /// Phase 8: OptiX RT-Core accelerated BVH pipeline (now lazy - Item 1.5 fix).
     /// We no longer build this expensive structure at startup.
     /// It is built on first actual use of a spatial query (see query() method).
@@ -181,8 +188,54 @@ impl BvhManifold {
             return None;
         }
 
-        eprintln!("[BVH] Building LBVH from {} blocks…", entries_raw.len());
+        let n = entries_raw.len();
+        eprintln!("[BVH] Building LBVH from {} blocks…", n);
 
+        // TEMPORARY GUARD (2026-05-31): Skip very large LBVH builds while we
+        // diagnose the persistent segfault after "LBVH ready" on the main
+        // 154k-concept manifold under CUDA. The stack protection thread is still
+        // present below for when we re-enable this path.
+        if n > 100_000 {
+            eprintln!("[BVH] WARNING: Skipping LBVH build for very large manifold ({} blocks) as a temporary diagnostic measure. Using linear scan fallback. Re-enable once the post-construction CUDA crash is resolved.", n);
+
+            // Return a valid *empty* BvhManifold so that all callers see a Some(empty)
+            // instead of None. This prevents any code that assumes the field is Some
+            // from crashing on the large stalk while we debug the real post-build issue.
+            #[cfg(engram_backend_cuda)]
+            let optix_pipeline = std::sync::Mutex::new(None);
+
+            return Some(Self {
+                nodes: vec![],
+                entries: vec![],
+                concept_index: HashMap::new(),
+                path_index: HashMap::new(),
+                ready: Arc::new(AtomicBool::new(true)),
+                query_cache: std::sync::RwLock::new(HashMap::new()),
+                cache_queue: std::sync::RwLock::new(std::collections::VecDeque::new()),
+                current_lens: std::sync::RwLock::new(None),
+                #[cfg(engram_backend_cuda)]
+                optix_pipeline,
+            });
+        }
+
+        // For very large manifolds the recursive build_top_down can exhaust the
+        // default stack (especially under CUDA + recent device-residency / hot-path
+        // changes on this branch). We protect the large case by running it on a
+        // dedicated thread with a huge stack. This is the minimal safe fix.
+        if n > 100_000 {
+            return std::thread::Builder::new()
+                .stack_size(128 * 1024 * 1024) // 128 MiB guard
+                .spawn(move || Self::_build_from_raw_entries(entries_raw))
+                .unwrap()
+                .join()
+                .ok()
+                .flatten();
+        }
+
+        Self::_build_from_raw_entries(entries_raw)
+    }
+
+    fn _build_from_raw_entries(entries_raw: Vec<(String, PathBuf, Box<[Complex32; 8192]>, f32)>) -> Option<Self> {
         let mut entries:      Vec<ManifoldEntry>         = Vec::with_capacity(entries_raw.len());
         let mut leaves:       Vec<LeafData>              = Vec::with_capacity(entries_raw.len());
         let mut path_index:   HashMap<usize, PathBuf>    = HashMap::with_capacity(entries_raw.len());
@@ -230,6 +283,7 @@ impl BvhManifold {
             ready: Arc::new(AtomicBool::new(true)),
             query_cache: std::sync::RwLock::new(HashMap::new()),
             cache_queue: std::sync::RwLock::new(std::collections::VecDeque::new()),
+            current_lens: std::sync::RwLock::new(None),
             #[cfg(engram_backend_cuda)]
             optix_pipeline,
         })
@@ -284,17 +338,35 @@ impl BvhManifold {
     }
 
     /// K-NN query with cache. Returns up to `k` Memory results sorted by score.
+    ///
+    /// WS3-B: Optionally applies current active_location / lens when computing
+    /// *effective vectors* for distance. The lens (set via MCP geosphere tools or
+    /// daemon SymplecticState) transforms the input query for BOTH:
+    ///   - 3D projection (affects BVH AABB filter / OptiX)
+    ///   - Full 8192D scoring (affects cosine_similarity_srht_b4 ranking)
+    /// Effective = apply_frame(q, current_lens) = elementwise complex mul + re-normalize
+    /// (guarantees unit hypersphere per ops contract; no stored block mutation).
+    /// When no lens, identity (backward compatible).
     pub fn query(&self, q: &[Complex32; 8192], k: usize) -> Vec<Memory> {
         if !self.ready.load(Ordering::Relaxed) { return Vec::new(); }
 
+        // WS3-B: resolve current lens (if any) and compute effective query vector
+        let current_lens_opt: Option<[Complex32; 8192]> = self.current_geosphere_lens();
+        let effective_q: [Complex32; 8192] = apply_frame(q, current_lens_opt.as_ref().map(|l| l as &[Complex32; 8192]));
+
+        // Cache on *original* q hash (framed queries intentionally bypass for correctness;
+        // different lens = different geometry). Framed paths always fresh.
         let qhash = hash_query(q);
-        if let Ok(cache) = self.query_cache.read() {
-            if let Some(hit) = cache.get(&qhash) {
-                return hit[..hit.len().min(k)].to_vec();
+        let use_cache = current_lens_opt.is_none();
+        if use_cache {
+            if let Ok(cache) = self.query_cache.read() {
+                if let Some(hit) = cache.get(&qhash) {
+                    return hit[..hit.len().min(k)].to_vec();
+                }
             }
         }
 
-        let pos = Self::project_to_3d(q);
+        let pos = Self::project_to_3d(&effective_q);
 
         // ── Phase 8: OptiX RT-Core path (CUDA builds only) — lazy initialization ──
         // The expensive pipeline is built on first use, not at startup.
@@ -343,7 +415,8 @@ impl BvhManifold {
 
             // In-memory Phase 8: SRHT+B4 TurboQuant codebook inner-product (no disk I/O!)
             // SRHT pre-rotation Gaussianizes the distribution → ~40% lower MSE than raw B4
-            let sim = crate::quant::cosine_similarity_srht_b4(q, &entry.q_quantized);
+            // WS3-B: use effective_q (lens-applied) so 8192D scoring reflects current Geosphere frame
+            let sim = crate::quant::cosine_similarity_srht_b4(&effective_q, &entry.q_quantized);
             let crs = entry.crs_score.clamp(0.0, 1.0);
             let score = sim * (0.5 + 0.5 * crs);
 
@@ -378,15 +451,17 @@ impl BvhManifold {
             })
         }).collect();
 
-        // Cache result
-        if let Ok(mut cache) = self.query_cache.write() {
-            if !cache.contains_key(&qhash) {
-                if let Ok(mut queue) = self.cache_queue.write() {
-                    if queue.len() >= QUERY_CACHE_MAX {
-                        if let Some(old) = queue.pop_front() { cache.remove(&old); }
+        // Cache result (only for unframed / native coordinate queries per WS3-B)
+        if use_cache {
+            if let Ok(mut cache) = self.query_cache.write() {
+                if !cache.contains_key(&qhash) {
+                    if let Ok(mut queue) = self.cache_queue.write() {
+                        if queue.len() >= QUERY_CACHE_MAX {
+                            if let Some(old) = queue.pop_front() { cache.remove(&old); }
+                        }
+                        queue.push_back(qhash);
+                        cache.insert(qhash, final_results.clone());
                     }
-                    queue.push_back(qhash);
-                    cache.insert(qhash, final_results.clone());
                 }
             }
         }
@@ -409,6 +484,31 @@ impl BvhManifold {
 
     pub fn len(&self) -> usize { self.entries.len() }
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    // ── WS3-B Geosphere frame/lens surface (integrated into main query path) ──
+    /// Set the current active Geosphere lens/frame for this manifold.
+    /// All subsequent query() calls will compute effective vectors as apply_frame(q, Some(lens))
+    /// for 3D projection (BVH filter) + 8192D scoring. Lens is normalized on set.
+    /// Pass None to clear (identity / native coordinate).
+    pub fn set_current_geosphere_lens(&self, lens: Option<[Complex32; 8192]>) {
+        if let Ok(mut guard) = self.current_lens.write() {
+            if let Some(mut l) = lens {
+                // ensure unit hypersphere (defense in depth; apply_frame also does it)
+                engram_core::ops::normalize_in_place(&mut l);
+                *guard = Some(l);
+            } else {
+                *guard = None;
+            }
+        }
+        // Invalidate query cache on frame change (different effective distances)
+        if let Ok(mut cache) = self.query_cache.write() { cache.clear(); }
+        if let Ok(mut q) = self.cache_queue.write() { q.clear(); }
+    }
+
+    /// Query the current lens (for MCP surface / diagnostics). Returns owned copy or None.
+    pub fn current_geosphere_lens(&self) -> Option<[Complex32; 8192]> {
+        self.current_lens.read().ok().and_then(|g| *g)
+    }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 

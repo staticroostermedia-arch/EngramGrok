@@ -70,7 +70,7 @@ This step is the heart of the Inheritance Principle made operational. It is a VS
 - **Legominism Rehydration (CodeLand Phase 3)**: High-lineage tiles (NREM/ego.leg3 synthesis tiles from recent sub-agent, high-fruit traces, codeland handoff-compressed synthesis, goal-served artifacts) must auto-surface here using existing patterns only:
   - `mcp_engram_search_by_relation("handoff:codeland_integration_2026_plan", direction="to", label="compresses_path")` + visualize — pulls the exact high-value synthesis tiles (e.g. verified NREM sequences, final state bundles).
   - `mcp_engram_query_with_momentum("high-fruit OR legominism OR NREM_CENTROID OR ego.leg3 OR codeland synthesis", k=6)` (leverages ki_hijacker fruits bias + CRS/momentum signals for reconcile-rich + lineage content).
-  - Cross-reference "serves" relations to the codeland goal (1780091465...) or primary_goal; prefer high-CRS Tiles/traces promoted via hot path.
+  - Cross-reference "serves" relations to the codeland goal (1780091465...) or primary_goal; prefer high-CRS Tiles/traces promoted via hot path (mark_hot / LegView + Cuda) + NREM promotion patterns.
   - This binds the living transmission of the 6 invariants + Gurdjieff principles into the agent's self-model on restart — minimal, guardrail-safe, no new primitives.
 - For any work that spans layers (ops, conv, philosophy, implementation), run:
   - `mcp_engram_search_by_relation(seed_from_current_thread, direction="both", k=8)`

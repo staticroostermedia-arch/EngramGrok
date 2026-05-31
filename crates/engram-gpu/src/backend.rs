@@ -7,7 +7,7 @@
 use crate::bvh::BvhManifold;
 use engram_core::backend::{CpuBackend, Memory, VsaBackend};
 use engram_core::mmap::LegView;
-use engram_core::types::Leg3Pointer;
+use engram_core::types::{Leg3Pointer, SymplecticState};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -54,8 +54,12 @@ pub struct CudaBackend {
     gpu_available: bool,
     /// In-memory high-priority cache for low-latency access to high-momentum
     /// Thought Tiles and ritual/state blocks (Item 2 + speed-up work).
-    /// Currently holds full Leg3Pointer copies for promoted "hot" items so
-    /// subsequent high_priority fetches can serve from RAM instead of O_DIRECT.
+    /// Holds full Leg3Pointer copies for promoted "hot" items so subsequent
+    /// high_priority fetches serve from RAM instead of O_DIRECT (explicit bypass).
+    ///
+    /// Symmetrized with MetalBackend (identical field + hot API surface) under
+    /// WS1-C of Substrate Phase 2 plan / goal:1780165889_substrate-cs--embodiment-layer-hardening_sub0.
+    /// Both backends source promotions/fetches via LegView mmap when possible.
     ///
     /// GPU speed-up vision: This is the stepping stone to real device-resident
     /// copies (or GPUDirect Storage / direct-mapped storage) for the hottest
@@ -78,6 +82,14 @@ pub struct CudaBackend {
     ///     fetch_block_high_priority + promote_to_high_priority (explicit import,
     ///     promote sourcing, docs).
     high_priority_cache: RwLock<HashMap<String, Leg3Pointer>>,
+
+    /// Phase 2.3 Deeper Hot-Path & Device Residency: Hot residency for full SymplecticState
+    /// (active_location + current lens/frame + snapshots) inside the high_priority mechanism.
+    /// Lives alongside high_priority_cache (same promote/mark_hot/is_hot discipline from StoreHandle).
+    /// Enables fast access for framed effective_q in BVH/OptiX hot paths and future device staging.
+    /// All geo residency is behind existing high_priority paths; no HolographicBlock layout impact;
+    /// O_DIRECT cold path preserved. Parity with MetalBackend.
+    hot_geo_states: RwLock<HashMap<String, SymplecticState>>,
 
     /// Tier 3: Device-resident buffers for hot items (gated behind "device_residency" feature).
     /// When active, the hottest promoted blocks can live directly in GPU memory
@@ -115,6 +127,7 @@ impl CudaBackend {
             bvh,
             gpu_available,
             high_priority_cache: RwLock::new(HashMap::new()),
+            hot_geo_states: RwLock::new(HashMap::new()),
             #[cfg(feature = "device_residency")]
             device_resident_buffers: RwLock::new(HashMap::new()),
         };
@@ -139,6 +152,9 @@ impl CudaBackend {
                     *guard = bvh;
                     eprintln!("[BVH] ✓ Background build complete: {} concepts in {:.1}s",
                         n, t0.elapsed().as_secs_f32());
+                    if n == 0 && path_clone.contains("154473") {
+                        eprintln!("[DIAG] Large stalk got None from build_from_dir (guard active). bvh field is now None.");
+                    }
                 }
             })
             .ok(); // If thread spawn fails, fall back to lazy build on first query
@@ -456,6 +472,53 @@ impl CudaBackend {
         }
     }
 
+    // ── Phase 2.3: Geo / SymplecticState hot residency (behind existing high_priority mechanisms) ──
+    /// Promote a full SymplecticState (active geo + lens/frame snapshot) into the high-priority
+    /// hot residency path. Called from StoreHandle::mark_hot / promote when concept indicates
+    /// geo snapshot (e.g. "geo_snapshot:xxx" or "active_symplectic_state"). Enables fast
+    /// resident frame for effective_q in hot BVH/OptiX paths + future device residency.
+    /// Mirrors high_priority_cache discipline (size limit, eviction via shared compute fn if extended).
+    pub fn promote_geo_snapshot_to_high_priority(&self, name: &str, state: SymplecticState) {
+        if let Ok(mut cache) = self.hot_geo_states.write() {
+            const MAX_GEO_HOT: usize = 128; // Smaller; geo frames are compact live registers
+            if cache.len() >= MAX_GEO_HOT {
+                // Simple FIFO for geo snapshots (or extend with compute_eviction_score for state CRS if added)
+                if let Some(old) = cache.keys().next().cloned() {
+                    cache.remove(&old);
+                }
+            }
+            cache.insert(name.to_string(), state.clone());
+            tracing::debug!("[high-priority][geo] promoted SymplecticState snapshot {}", name);
+        }
+        // Also ensure bvh lens is hot-synced for framed filtering/scoring under this geo state
+        if let Ok(guard) = self.bvh.read() {
+            if let Some(bvh) = guard.as_ref() {
+                if let Some(lens) = state.current_lens {
+                    bvh.set_current_geosphere_lens(Some(lens));
+                }
+            }
+        }
+    }
+
+    /// Is a geo snapshot / symplectic state currently hot-resident?
+    pub fn is_geo_hot(&self, name: &str) -> bool {
+        if let Ok(cache) = self.hot_geo_states.read() {
+            cache.contains_key(name)
+        } else {
+            false
+        }
+    }
+
+    /// Fetch a hot-resident SymplecticState snapshot (for framed hot paths or audit).
+    /// Returns clone for zero-copy safety in caller (consistent with Leg3Pointer clones in cache).
+    pub fn fetch_geo_high_priority(&self, name: &str) -> Option<SymplecticState> {
+        if let Ok(cache) = self.hot_geo_states.read() {
+            cache.get(name).cloned()
+        } else {
+            None
+        }
+    }
+
     /// Tier 3 helper (gated): Future entry point for registering a hot item into device-resident storage.
     /// Will be called from promote_to_high_priority when device_residency is enabled.
     #[cfg(feature = "device_residency")]
@@ -549,7 +612,11 @@ impl CudaBackend {
 /// Tier 2.1 helper: Computes an "evict score" for a cache entry.
 /// Lower score = more likely to be evicted.
 /// Combines CRS, age (from AccessIndex), and type protection.
-fn compute_eviction_score(key: &str, block: &Leg3Pointer, last_accessed_hint: Option<u64>) -> f64 {
+///
+/// Shared with MetalBackend for hot-path symmetry (WS1-C embodiment hardening).
+/// Used exclusively by the high-priority fast paths which explicitly bypass
+/// the O_DIRECT read_block path (storage.rs) in favor of LegView mmap + RAM cache.
+pub(crate) fn compute_eviction_score(key: &str, block: &Leg3Pointer, last_accessed_hint: Option<u64>) -> f64 {
     let crs = block.crs_score as f64;
 
     // Age factor: older items get lower score (more evictable)
