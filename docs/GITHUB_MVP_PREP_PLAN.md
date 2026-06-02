@@ -330,6 +330,12 @@ People and their agents *will* want the skills/rituals we actually use so their 
 
 **Push to EngramGrok public handoff (2026-06-02)**: Per user instruction, pushed the feat/mvp-github-prep-2026-06 branch to EngramGrok repo (public handoff/sanitized version) using explicit git push to git@github.com:staticroostermedia-arch/EngramGrok.git . Branch created successfully. Created PR #6 on EngramGrok: https://github.com/staticroostermedia-arch/EngramGrok/pull/6 with full details, ritual checklist, and links. (Separate from earlier PR #27 on main engram repo.) Dogfooded with engram trace + relate to goal. EngramGrok is the public handoff repo for external visibility.
 
+**Post-push CI fix + re-push (2026-06-02)**: macOS Metal CI (aarch64-apple-darwin, engram_backend_metal cfg) failed on engram-gpu with E0252 (duplicate Leg3Pointer), E0382 (SymplecticState use-after-move in promote_geo), E0063 (incomplete Memory {} missing AABB/alpha/l2/zedos etc.). Fixed in crates/engram-gpu/src/metal_backend.rs:
+- Deduped imports, cfg-gated SymplecticState.
+- Extract lens before state move.
+- Populated full Memory from HolographicBlock (consistent with bvh.rs).
+Commit: dacabd3d. Dogfooded with spatial context/recall attempt + trace:1780429158... + relate + verify (healthy 0 issues). Then re-pushed branch + plan update to EngramGrok (now at dacabd3d + plan log). CI should now pass on macOS GPU leg.
+
 **Passive Spatial Ingestion Redesign (2026-06, closing the 'nonsense' item)**
 
 Why it couldn't "just passively ingest" before:
