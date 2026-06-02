@@ -20,7 +20,9 @@
 //! Falls back to `CpuBackend` on any Metal dispatch error.
 
 use engram_core::backend::{Memory, VsaBackend};
-use engram_core::types::{Leg3Pointer, SymplecticState, DIMENSION};
+use engram_core::types::{Leg3Pointer, DIMENSION};
+#[cfg(target_os = "macos")]
+use engram_core::types::SymplecticState;
 use num_complex::Complex32;
 use anyhow::Result;
 
@@ -30,7 +32,7 @@ use {
     crate::backend::compute_eviction_score,
     engram_core::backend::CpuBackend,
     engram_core::mmap::LegView,
-    engram_core::types::{HolographicBlock, Leg3Pointer},
+    engram_core::types::HolographicBlock,
     metal::*,
     std::collections::HashMap,
     std::path::PathBuf,
@@ -416,6 +418,7 @@ impl MetalBackend {
     /// Invoked from StoreHandle when marking geo:* or active_symplectic_state.
     /// Syncs to bvh lens for framed BVH/OptiX candidate filtering + scoring (effective_q).
     pub fn promote_geo_snapshot_to_high_priority(&self, name: &str, state: SymplecticState) {
+        let lens = state.current_lens;
         if let Ok(mut cache) = self.hot_geo_states.write() {
             const MAX_GEO_HOT: usize = 128;
             if cache.len() >= MAX_GEO_HOT {
@@ -428,7 +431,7 @@ impl MetalBackend {
         }
         if let Ok(guard) = self.bvh.read() {
             if let Some(bvh) = guard.as_ref() {
-                if let Some(lens) = state.current_lens {
+                if let Some(lens) = lens {
                     bvh.set_current_geosphere_lens(Some(lens));
                 }
             }
@@ -498,6 +501,15 @@ impl VsaBackend for MetalBackend {
                             score,
                             crs,
                             provlog,
+                            drift_velocity: block.energetics.dv,
+                            superposition_depth: block.superposition_count,
+                            zedos_tag: block.zedos_tag,
+                            alpha_a: block.energetics.alpha_a,
+                            alpha_d: block.energetics.alpha_d,
+                            aabb_min: block.aabb_min,
+                            aabb_max: block.aabb_max,
+                            explain: format!("Metal GPU SIM => score={:.4} (crs={:.3})", score, crs),
+                            l2_norm_residual: block.l2_norm_residual,
                         }
                     })
                     .collect();
