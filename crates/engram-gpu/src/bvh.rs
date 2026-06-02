@@ -182,6 +182,39 @@ impl BvhManifold {
     /// Build a BVH from all `.leg` files in `dir`.
     pub fn build_from_dir<P: AsRef<Path>>(dir: P) -> Option<Self> {
         let dir = dir.as_ref();
+
+        // ── Fast pre-scan guard (2026-06-01) ────────────────────────────────────
+        // Count directory entries WITHOUT reading file contents (O(n) metadata only).
+        // The previous guard fired AFTER scan_dir already read all 154k .leg files,
+        // allocating ~10GB of memory per rebuild thread. With 4 concurrent rebuilds
+        // that's ~40GB peak just to immediately free it — likely causing the crash.
+        // This check is ~milliseconds vs the previous ~62-second full scan.
+        let approx_count = std::fs::read_dir(dir)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("leg"))
+            .count();
+
+        if approx_count > 100_000 {
+            eprintln!("[BVH] Skipping LBVH build: {} .leg files exceeds 100k limit. Using CPU linear scan.", approx_count);
+
+            #[cfg(engram_backend_cuda)]
+            let optix_pipeline = std::sync::Mutex::new(None);
+
+            return Some(Self {
+                nodes: vec![],
+                entries: vec![],
+                concept_index: HashMap::new(),
+                path_index: HashMap::new(),
+                ready: Arc::new(AtomicBool::new(true)),
+                query_cache: std::sync::RwLock::new(HashMap::new()),
+                cache_queue: std::sync::RwLock::new(std::collections::VecDeque::new()),
+                current_lens: std::sync::RwLock::new(None),
+                #[cfg(engram_backend_cuda)]
+                optix_pipeline,
+            });
+        }
+
         let entries_raw = Self::scan_dir(dir)?;
         if entries_raw.is_empty() {
             eprintln!("[BVH] No .leg files found in {:?}", dir);
@@ -191,16 +224,10 @@ impl BvhManifold {
         let n = entries_raw.len();
         eprintln!("[BVH] Building LBVH from {} blocks…", n);
 
-        // TEMPORARY GUARD (2026-05-31): Skip very large LBVH builds while we
-        // diagnose the persistent segfault after "LBVH ready" on the main
-        // 154k-concept manifold under CUDA. The stack protection thread is still
-        // present below for when we re-enable this path.
+        // Retained for safety: second guard in case scan_dir returns more than expected.
         if n > 100_000 {
-            eprintln!("[BVH] WARNING: Skipping LBVH build for very large manifold ({} blocks) as a temporary diagnostic measure. Using linear scan fallback. Re-enable once the post-construction CUDA crash is resolved.", n);
+            eprintln!("[BVH] WARNING: Skipping LBVH build for very large manifold ({} blocks).", n);
 
-            // Return a valid *empty* BvhManifold so that all callers see a Some(empty)
-            // instead of None. This prevents any code that assumes the field is Some
-            // from crashing on the large stalk while we debug the real post-build issue.
             #[cfg(engram_backend_cuda)]
             let optix_pipeline = std::sync::Mutex::new(None);
 
@@ -327,6 +354,15 @@ impl BvhManifold {
 
     #[cfg(engram_backend_cuda)]
     fn ensure_optix_pipeline(&self) {
+        // Skip OptiX init entirely when the manifold has no entries.
+        // This occurs when the large-manifold guard in build_from_dir() returned
+        // an empty BvhManifold to avoid the post-construction CUDA crash on 154k+
+        // blocks. Calling OptixBvhPipeline::build() with 0 primitives SIGSEGVs
+        // inside the OptiX driver JIT compiler (PTX arch mismatch on Blackwell).
+        if self.entries.is_empty() || self.nodes.is_empty() {
+            return;
+        }
+
         let mut pipeline_guard = self.optix_pipeline.lock().unwrap();
         if pipeline_guard.is_none() && std::env::var("ENGRAM_OPTIX_ENABLED").as_deref() == Ok("1") {
             let aabb_data = crate::optix_pipeline::OptixBvhPipeline::aabb_from_entries(&self.entries, AABB_RADIUS);
@@ -348,7 +384,13 @@ impl BvhManifold {
     /// (guarantees unit hypersphere per ops contract; no stored block mutation).
     /// When no lens, identity (backward compatible).
     pub fn query(&self, q: &[Complex32; 8192], k: usize) -> Vec<Memory> {
-        if !self.ready.load(Ordering::Relaxed) { return Vec::new(); }
+        if !self.ready.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
+        // Large-manifold guard returns empty entries/nodes; never touch OptiX/CUDA paths.
+        if self.entries.is_empty() || self.nodes.is_empty() {
+            return Vec::new();
+        }
 
         // WS3-B: resolve current lens (if any) and compute effective query vector
         let current_lens_opt: Option<[Complex32; 8192]> = self.current_geosphere_lens();

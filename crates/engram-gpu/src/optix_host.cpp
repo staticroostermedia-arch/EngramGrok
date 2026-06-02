@@ -87,6 +87,16 @@ EngramOptiXPipeline* engram_optix_init(
     fprintf(stderr, "[Engram-OptiX] optixInit() returned: %d\n", (int)init_res);
     fflush(stderr);
 
+    // CRITICAL: if optixInit() fails the function table is uninitialized.
+    // Calling ANY OptiX API after this (including optixDeviceContextCreate)
+    // dereferences a null function pointer -> SIGSEGV. Return immediately.
+    if (init_res != OPTIX_SUCCESS) {
+        fprintf(stderr, "[Engram-OptiX] optixInit() failed (%d) — OptiX unavailable on this driver/GPU. CPU BVH fallback.\n", (int)init_res);
+        fflush(stderr);
+        delete state;
+        return nullptr;
+    }
+
     cudaError_t free_err = cudaFree(nullptr);
     fprintf(stderr, "[Engram-OptiX] cudaFree(nullptr) returned: %d (%s)\n", (int)free_err, cudaGetErrorString(free_err));
     fflush(stderr);
@@ -96,6 +106,14 @@ EngramOptiXPipeline* engram_optix_init(
     fprintf(stderr, "[Engram-OptiX] cuCtxGetCurrent returned: %d, cu_ctx = %p\n", (int)ctx_res, (void*)cu_ctx);
     fprintf(stderr, "[Engram-OptiX] optixDeviceContextCreate pointer = %p\n", (void*)OPTIX_FUNCTION_TABLE_SYMBOL.optixDeviceContextCreate);
     fflush(stderr);
+
+    // Secondary guard: verify the function table was actually populated.
+    if (!OPTIX_FUNCTION_TABLE_SYMBOL.optixDeviceContextCreate) {
+        fprintf(stderr, "[Engram-OptiX] Function table null after optixInit — PTX arch mismatch? CPU BVH fallback.\n");
+        fflush(stderr);
+        delete state;
+        return nullptr;
+    }
 
     OptixDeviceContextOptions ctx_opts = {};
     ctx_opts.logCallbackFunction = engram_optix_log;

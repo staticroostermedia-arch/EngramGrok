@@ -10,7 +10,7 @@ use engram_core::mmap::LegView;
 use engram_core::types::{Leg3Pointer, SymplecticState};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use anyhow::Result;
 
 /// Tier 3 scaffolding: Represents a buffer that can be resident directly on the GPU.
@@ -48,7 +48,8 @@ pub struct CudaBackend {
     /// CPU backend for writes and linear-scan fallback
     cpu: CpuBackend,
     /// BVH index for O(log N) queries (rebuilt after writes)
-    bvh: RwLock<Option<BvhManifold>>,
+    /// Arc-wrapped so background rebuild threads can hold a clone without raw pointers.
+    bvh: Arc<RwLock<Option<BvhManifold>>>,
     /// Whether a GPU was detected at startup (reserved for future CUDA dispatch)
     #[allow(dead_code)]
     gpu_available: bool,
@@ -120,11 +121,13 @@ impl CudaBackend {
             eprintln!("[engram-gpu] No CUDA device — using CPU BVH fallback.");
         }
 
-        let bvh: RwLock<Option<BvhManifold>> = RwLock::new(None);
+        // Use Arc so the background build thread gets a stable clone — not a raw pointer
+        // to a local variable that gets moved when new() returns.
+        let bvh: Arc<RwLock<Option<BvhManifold>>> = Arc::new(RwLock::new(None));
         let backend = Self {
             cpu: CpuBackend::new(&path),
             store_path: PathBuf::from(path.clone()),
-            bvh,
+            bvh: Arc::clone(&bvh),
             gpu_available,
             high_priority_cache: RwLock::new(HashMap::new()),
             hot_geo_states: RwLock::new(HashMap::new()),
@@ -133,31 +136,22 @@ impl CudaBackend {
         };
 
         // Kick off background BVH build so first query is fast.
-        // Arc is not available here, but we can spawn with the path and a raw ptr
-        // since CudaBackend lives in an Arc<RwLock<StoreHandle>> in practice.
-        // Safer: spawn the build and store the result via a channel.
-        let bvh_ptr = &backend.bvh as *const RwLock<Option<BvhManifold>> as usize;
+        // The thread holds a cloned Arc — no raw pointers, no dangling references.
         let path_clone = path.clone();
         std::thread::Builder::new()
             .name("engram-bvh-build".to_string())
             .spawn(move || {
                 let t0 = std::time::Instant::now();
                 eprintln!("[BVH] Background build started…");
-                let bvh = BvhManifold::build_from_dir(&path_clone);
-                // SAFETY: CudaBackend lives for the duration of the server process.
-                // The pointer is valid for the lifetime of the StoreHandle arc.
-                let lock = unsafe { &*(bvh_ptr as *const RwLock<Option<BvhManifold>>) };
-                if let Ok(mut guard) = lock.write() {
-                    let n = bvh.as_ref().map_or(0, |b| b.len());
-                    *guard = bvh;
+                let new_bvh = BvhManifold::build_from_dir(&path_clone);
+                if let Ok(mut guard) = bvh.write() {
+                    let n = new_bvh.as_ref().map_or(0, |b| b.len());
+                    *guard = new_bvh;
                     eprintln!("[BVH] ✓ Background build complete: {} concepts in {:.1}s",
                         n, t0.elapsed().as_secs_f32());
-                    if n == 0 && path_clone.contains("154473") {
-                        eprintln!("[DIAG] Large stalk got None from build_from_dir (guard active). bvh field is now None.");
-                    }
                 }
             })
-            .ok(); // If thread spawn fails, fall back to lazy build on first query
+            .ok();
 
         backend
     }
@@ -302,14 +296,14 @@ impl VsaBackend for CudaBackend {
             if let Ok(mut guard) = self.bvh.write() {
                 *guard = None; // invalidate — queries fall back to CPU until rebuild
             }
-            let bvh_ptr = &self.bvh as *const RwLock<Option<BvhManifold>> as usize;
+            // Clone the Arc — thread holds a stable reference, no raw pointers.
+            let bvh_arc = Arc::clone(&self.bvh);
             let path_clone = self.store_path.clone();
             std::thread::Builder::new()
                 .name("engram-bvh-rebuild".to_string())
                 .spawn(move || {
-                    let bvh = BvhManifold::build_from_dir(&path_clone);
-                    let lock = unsafe { &*(bvh_ptr as *const RwLock<Option<BvhManifold>>) };
-                    if let Ok(mut guard) = lock.write() { *guard = bvh; }
+                    let new_bvh = BvhManifold::build_from_dir(&path_clone);
+                    if let Ok(mut guard) = bvh_arc.write() { *guard = new_bvh; }
                 })
                 .ok();
         }

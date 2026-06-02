@@ -29,7 +29,7 @@ use engram_gpu::backend::CudaBackend;
 use engram_gpu::metal_backend::MetalBackend;
 #[cfg(engram_backend_wgpu)]
 use engram_gpu::wgpu_backend::WgpuBackend;
-use engram_core::types::{Leg3Pointer, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION, ZEDOS_USER_MODEL};
+use engram_core::types::{Leg3Pointer, SymplecticState, ZEDOS_PRAXIS, ZEDOS_EPISODIC, ZEDOS_RELATION, ZEDOS_USER_MODEL};
 
 use engram_core::ops::{op_add, op_bind, op_deduce};
 use std::collections::HashMap;
@@ -38,6 +38,13 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 
 pub type SharedStore = Arc<Mutex<StoreHandle>>;
+
+/// Strip sheaf namespace prefix (`primary::foo` → `foo`) for backend disk/cache lookups.
+/// `list()` returns namespaced keys; blocks on disk use the raw concept stem.
+#[inline]
+fn stalk_raw_concept(concept: &str) -> &str {
+    concept.split_once("::").map_or(concept, |(_, r)| r)
+}
 
 // ── Sheaf Config ──────────────────────────────────────────────────────────────
 
@@ -217,6 +224,7 @@ impl RelationIndex {
 // | PRAXIS      | evidence_update       | Crystallized: update only          |
 // | RELATION    | op_bind,rollback      | Relational bonds rebound-able      |
 // | OPERATIONAL | evidence_update,rollb | Code memory correctable            |
+// | TRAINING    | evidence_update,op_add| 8-prop CLS training data (augmentable) |
 // | 0xFF / pin  | 0xFF                  | Full authority, genesis-tier       |
 // ── Transductive Oracle Fallthrough ─────────────────────────────────────────
 //
@@ -297,10 +305,10 @@ fn oracle_fallthrough(query: &str) -> Option<Memory> {
     })
 }
 
-fn assign_reflexive_contract(block: &mut engram_core::types::Leg3Pointer) {
+pub(crate) fn assign_reflexive_contract(block: &mut engram_core::types::Leg3Pointer) {
 
     use engram_core::types::{
-        ZEDOS_PRAXIS, ZEDOS_RELATION, ZEDOS_EPISODIC, ZEDOS_DECLARATIVE,
+        ZEDOS_PRAXIS, ZEDOS_RELATION, ZEDOS_EPISODIC, ZEDOS_DECLARATIVE, ZEDOS_TRAINING,
     };
     // Pinned genesis-tier: full authority
     if block.crs_score >= 1.0 {
@@ -315,6 +323,7 @@ fn assign_reflexive_contract(block: &mut engram_core::types::Leg3Pointer) {
         t if t == ZEDOS_RELATION     => b"op_bind,rollback",
         t if t == ZEDOS_EPISODIC     => b"evidence_update,rollback",
         t if t == ZEDOS_DECLARATIVE  => b"evidence_update,op_add",
+        t if t == ZEDOS_TRAINING     => b"evidence_update,op_add",
         _                            => b"evidence_update,rollback", // OPERATIONAL default
     };
 
@@ -518,24 +527,38 @@ impl Backend {
     // When device_residency feature is enabled, the device path is attempted first.
     // This is the canonical low-CPU path for promoted continuity artifacts.
     //
-    // Explicit: CudaBackend hot path uses engram_core::mmap::LegView::open + .to_leg3_pointer()
-    // (zero-copy mmap origin bridge to Leg3Pointer) before RAM cache fallback.
+    // High-priority dispatch — now fully symmetrized across CUDA and Metal (WS1-C charter).
+    // Both CudaBackend and MetalBackend implement the hot methods using:
+    //   - LegView::open + to_leg3_pointer() (mmap zero-copy, explicit O_DIRECT bypass)
+    //   - high_priority_cache (RAM fast path for promoted blocks)
+    //   - compute_eviction_score (AccessIndex-aware LRU)
+    // Cold path (CpuBackend::fetch_block etc.) continues to use storage::read_block
+    // which applies O_DIRECT (libc flag) on Linux for page-cache bypass on random
+    // large scans. Promoted hot blocks (tiles, traces, goals, ritual anchors) reliably
+    // take the fast path regardless of whether the active backend is CUDA or Metal.
+    // See also: engram-gpu/src/{backend.rs,metal_backend.rs} hot impls and
+    // engram-core/src/storage.rs (read_block O_DIRECT) + mmap.rs (LegView).
     fn fetch_block_high_priority(&self, concept: &str) -> Option<Leg3Pointer> {
         match self {
             #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.fetch_block_high_priority(concept),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.fetch_block_high_priority(concept),
             _ => self.fetch_block(concept),
         }
     }
 
     fn promote_to_high_priority(&self, concept: &str, last_accessed: Option<u64>) -> Option<Leg3Pointer> {
         // Dispatch only; the caller (StoreHandle) owns AccessIndex and supplies the
-        // recency timestamp for Tier 2.1 hybrid LRU eviction scoring in CudaBackend.
-        // Non-GPU backends fall back to plain fetch (no high-prio cache).
-        // Note: CudaBackend promote now sources via LegView + to_leg3_pointer (Tier 2).
+        // recency timestamp for Tier 2.1 hybrid LRU eviction scoring (shared fn).
+        // Now dispatches to MetalBackend symmetrically with CudaBackend.
+        // Both source via LegView when possible (O_DIRECT bypass at promotion).
+        // Non-accelerated backends fall back to plain fetch_block.
         match self {
             #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.promote_to_high_priority(concept, last_accessed),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.promote_to_high_priority(concept, last_accessed),
             _ => self.fetch_block(concept),
         }
     }
@@ -544,6 +567,8 @@ impl Backend {
         match self {
             #[cfg(engram_backend_cuda)]
             Backend::Gpu(b) => b.is_hot(concept),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.is_hot(concept),
             _ => false,
         }
     }
@@ -586,9 +611,53 @@ pub struct StoreHandle {
 
     /// Lightweight "hot" set for the canonical fast path (Item 2 speed-up phase 2).
     /// High-priority / high-CRS Thought Tiles, ritual anchors, and state blocks
-    /// are explicitly marked here so fetch_block_high_priority and is_hot become
-    /// the documented default instead of a heuristic.
+    /// (plus promoted substrate artifacts) are explicitly marked here so
+    /// fetch_block_high_priority and is_hot become the documented default.
+    /// Works symmetrically for both CUDA and Metal hot caches (WS1-C hardening).
     hot_set: std::sync::RwLock<std::collections::HashSet<String>>,
+
+    // WS3-B: Live Geosphere 5th coordinate register (SymplecticState).
+    // Holds active_location + current_lens for frame application in query paths.
+    // "Current" for this store's manifold; settable via new MCP surface.
+    // Applied in StoreHandle::query before delegating to backend (which reaches bvh.rs).
+    // Guarantees: normalized vectors only; no .leg3 / HolographicBlock changes.
+    geosphere: std::sync::RwLock<SymplecticState>,
+
+    // Phase 2.1 (Geo Ubiquity): geo-tagged hot promotions for NREM / mark_hot paths.
+    // concept -> (frame_step, origin_at_mark_time). Carries live SymplecticState context
+    // into hot cache without touching HolographicBlock layout or stored blocks.
+    // Respected in contributor logging; queryable for geo-aware hot embodiment (WS2+).
+    hot_geo_context: std::sync::RwLock<std::collections::HashMap<String, (u64, String)>>,
+
+    /// TTL cache for `build_continuation_bundle` (large-stalk wake-up latency).
+    continuation_bundle_cached_at: u64,
+    continuation_bundle_cache: Option<serde_json::Value>,
+}
+
+/// Goal block text: provlog first (encode path), payload fallback.
+pub fn goal_block_text(block: &engram_core::types::HolographicBlock) -> String {
+    let provlog = engram_core::storage::read_provlog(block);
+    if provlog.trim().is_empty() {
+        String::from_utf8_lossy(&block.payload).into_owned()
+    } else {
+        provlog
+    }
+}
+
+/// Match `status: active` or `**status:** active` (goal_create uses markdown form).
+pub fn goal_status_matches(text: &str, filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let f = filter.to_lowercase();
+    text.lines().any(|l| {
+        let t = l.trim().to_lowercase();
+        t == format!("status: {}", f) || t == format!("**status:** {}", f)
+    })
+}
+
+pub fn goal_status_is_active(text: &str) -> bool {
+    goal_status_matches(text, "active")
 }
 
 impl StoreHandle {
@@ -601,6 +670,13 @@ impl StoreHandle {
         if let Ok(ws) = std::env::var("ENGRAM_LINKED_WORKSPACE") {
             candidates.push(std::path::PathBuf::from(&ws).join(".engramignore"));
         }
+        // Also load from CWD (for when running from repo root) and any explicit ENGRAM_WORKSPACE
+        if let Ok(cwd) = std::env::current_dir() {
+            candidates.push(cwd.join(".engramignore"));
+        }
+        if let Ok(ws2) = std::env::var("ENGRAM_WORKSPACE") {
+            candidates.push(std::path::PathBuf::from(&ws2).join(".engramignore"));
+        }
 
         let mut ignored = Vec::new();
         for cand in &candidates {
@@ -611,6 +687,12 @@ impl StoreHandle {
                         ignored.push(trimmed.to_string());
                     }
                 }
+            }
+        }
+        // Sensible built-in defaults so node_modules etc never pollute even without .engramignore
+        for def in ["node_modules/", "extensions/vscode/node_modules/", "/dist/", "/build/"] {
+            if !ignored.iter().any(|p| p.contains(def)) {
+                ignored.push(def.to_string());
             }
         }
         ignored
@@ -625,7 +707,8 @@ impl StoreHandle {
         let access_index = AccessIndex::load(&engram_root);
         let relation_index = RelationIndex::load(&engram_root);
 
-        let backend = if sheaf_config_path.exists() {
+        let disable_sheaf = std::env::var("ENGRAM_DISABLE_SHEAF").is_ok();
+        let backend = if sheaf_config_path.exists() && !disable_sheaf {
             match std::fs::read_to_string(&sheaf_config_path)
                 .ok()
                 .and_then(|s| toml::from_str::<SheafConfig>(&s).ok())
@@ -721,6 +804,10 @@ impl StoreHandle {
             ki_rebake_needed: std::sync::atomic::AtomicBool::new(true), // initial bake wanted
             fully_initialized: std::sync::atomic::AtomicBool::new(false),
             hot_set: std::sync::RwLock::new(std::collections::HashSet::new()),
+            geosphere: std::sync::RwLock::new(SymplecticState::new()),
+            hot_geo_context: std::sync::RwLock::new(std::collections::HashMap::new()),
+            continuation_bundle_cached_at: 0,
+            continuation_bundle_cache: None,
         }
     }
 
@@ -749,7 +836,16 @@ impl StoreHandle {
             ki_rebake_needed: std::sync::atomic::AtomicBool::new(true),
             fully_initialized: std::sync::atomic::AtomicBool::new(false),
             hot_set: std::sync::RwLock::new(std::collections::HashSet::new()),
+            geosphere: std::sync::RwLock::new(SymplecticState::new()),
+            hot_geo_context: std::sync::RwLock::new(std::collections::HashMap::new()),
+            continuation_bundle_cached_at: 0,
+            continuation_bundle_cache: None,
         }
+    }
+
+    pub fn invalidate_continuation_bundle_cache(&mut self) {
+        self.continuation_bundle_cached_at = 0;
+        self.continuation_bundle_cache = None;
     }
 
     /// Returns true when the full backend (real store + OptiX/BVH + ki_hijacker etc.)
@@ -762,6 +858,16 @@ impl StoreHandle {
     /// Called by the background initialization thread once everything is ready.
     pub fn mark_fully_initialized(&self) {
         self.fully_initialized.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Hot-swap the fast MCP placeholder with a fully initialized store on the same disk path.
+    /// Keeps the outer `Arc<Mutex<StoreHandle>>` alive so MCP stdio and daemons share one handle.
+    pub fn upgrade_from(&mut self, full: Self) {
+        tracing::info!(
+            "[MCP-FAST] Upgrading placeholder → full backend at {}",
+            full.store_path()
+        );
+        *self = full;
     }
 
     /// Phase 111-B: Project text through Gemma 4 embeddings → W matrix → complex phase vector.
@@ -842,8 +948,12 @@ impl StoreHandle {
     }
 
     pub fn boot_daemon(store_arc: SharedStore) {
-        let control = crate::daemon::spawn(store_arc.clone());
         let mut lock = store_arc.lock().unwrap();
+        if lock.daemon.is_some() {
+            tracing::debug!("[Daemon] Already booted on this store handle — skipping duplicate spawn");
+            return;
+        }
+        let control = crate::daemon::spawn(store_arc.clone());
         lock.daemon = Some(control);
     }
 
@@ -964,7 +1074,18 @@ impl StoreHandle {
         // get an empty result rather than plausible-looking noise.
         const MIN_SCORE_THRESHOLD: f32 = 0.67;
 
-        let mut results = self.backend.recall(query, k);
+        // Phase 2.1 Geo Ubiquity: apply current SymplecticState frame/lens to the
+        // encoded query vector (using existing ops::apply_current_frame which delegates
+        // to apply_frame + normalize). This makes StoreHandle::recall geo-aware,
+        // matching the vector query path and bvh GPU paths. No stored blocks mutated;
+        // unit hypersphere invariant held to 1e-5+ (enforced in ops layer).
+        let encoded = self.encode(query);
+        let effective_q = if let Ok(geo) = self.geosphere.read() {
+            geo.apply_current_frame(&encoded.q)
+        } else {
+            engram_core::ops::normalize(&encoded.q)  // identity safe path
+        };
+        let mut results = self.backend.query(&effective_q, k);
 
         // ── Phase 88-Engram Bridge: Ego-Modulated Recall ──────────────────────
         //
@@ -1041,36 +1162,441 @@ impl StoreHandle {
                 concept
             ));
         }
-        self.backend.forget(concept)
+        self.backend.forget(stalk_raw_concept(concept))
     }
     pub fn list(&self) -> Vec<String> { self.backend.list() }
-    pub fn fetch(&self, concept: &str) -> Option<Box<[engram_core::Complex32; 8192]>> { self.backend.fetch(concept) }
-    pub fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> { self.backend.fetch_block(concept) }
+
+    /// Bounded concept listing. With `prefix`, gathers from hot_set, access recency,
+    /// and relation index before a full backend scan. Without prefix, returns at most
+    /// `limit` concepts and sets `truncated` when the manifold is larger.
+    pub fn list_concepts_filtered(
+        &self,
+        prefix: Option<&str>,
+        limit: usize,
+    ) -> (Vec<String>, bool, usize) {
+        use std::collections::HashSet;
+
+        let limit = limit.clamp(1, 500);
+        let prefix = prefix.map(str::trim).filter(|s| !s.is_empty());
+        let total = self.backend.list().len();
+
+        let matches = |c: &str| -> bool {
+            prefix.map(|p| c.starts_with(p)).unwrap_or(true)
+        };
+
+        if prefix.is_some() {
+            let mut out = Vec::new();
+            let mut seen = HashSet::new();
+
+            if let Ok(set) = self.hot_set.read() {
+                let mut hot: Vec<String> = set.iter().filter(|c| matches(c)).cloned().collect();
+                hot.sort();
+                for c in hot {
+                    if seen.insert(c.clone()) {
+                        out.push(c);
+                        if out.len() >= limit {
+                            return (out, false, total);
+                        }
+                    }
+                }
+            }
+
+            for (c, _) in self.access_index.recent(250) {
+                if matches(&c) && seen.insert(c.clone()) {
+                    out.push(c);
+                    if out.len() >= limit {
+                        return (out, false, total);
+                    }
+                }
+            }
+
+            for e in &self.relation_index.entries {
+                for name in [&e.from, &e.to] {
+                    if matches(name) && seen.insert(name.clone()) {
+                        out.push(name.clone());
+                        if out.len() >= limit {
+                            return (out, false, total);
+                        }
+                    }
+                }
+            }
+
+            for c in self.backend.list() {
+                if matches(&c) && seen.insert(c.clone()) {
+                    out.push(c);
+                    if out.len() >= limit {
+                        return (out, false, total);
+                    }
+                }
+            }
+            (out, false, total)
+        } else {
+            let truncated = total > limit;
+            let out: Vec<String> = self.backend.list().into_iter().take(limit).collect();
+            (out, truncated, total)
+        }
+    }
+
+    /// Active continuity artifacts for agent wake-up: primary goal, last session_end,
+    /// hydration cache flag, and ranked tile/helper/ritual/metric concepts.
+    pub fn build_continuation_bundle(&mut self) -> serde_json::Value {
+        use std::collections::HashSet;
+
+        const TTL_SECS: u64 = 120;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if let Some(ref cached) = self.continuation_bundle_cache {
+            if now.saturating_sub(self.continuation_bundle_cached_at) < TTL_SECS {
+                return cached.clone();
+            }
+        }
+
+        const HANDOFF_SEEDS: &[&str] = &[
+            "handoff:codeland_integration_2026_plan",
+            "helper:session_hydration_cache",
+        ];
+        const MAX_ARTIFACTS: usize = 14;
+
+        #[derive(Clone)]
+        struct BundleEntry {
+            concept: String,
+            crs: f32,
+            hot: bool,
+            preview: String,
+            source: String,
+        }
+
+        let mut entries: Vec<BundleEntry> = Vec::new();
+        let mut seen = HashSet::new();
+
+        let mut push = |this: &mut Self,
+                        entries: &mut Vec<BundleEntry>,
+                        seen: &mut HashSet<String>,
+                        concept: &str,
+                        source: &str| {
+            if concept.is_empty() || !seen.insert(concept.to_string()) {
+                return;
+            }
+            let raw = stalk_raw_concept(concept);
+            if let Some(block) = this.fetch_block_high_priority(raw) {
+                let text = engram_core::storage::read_provlog(&block);
+                let preview: String = text.chars().take(240).collect();
+                let preview = if text.len() > 240 {
+                    format!("{}…", preview)
+                } else {
+                    preview
+                };
+                entries.push(BundleEntry {
+                    concept: concept.to_string(),
+                    crs: block.crs_score,
+                    hot: this.is_hot(raw),
+                    preview,
+                    source: source.to_string(),
+                });
+            }
+        };
+
+        let mut primary_goal_name: Option<String> = None;
+        if let Some(block) = self.fetch_block_high_priority("primary_goal") {
+            let text = engram_core::storage::read_provlog(&block);
+            if let Some(line) = text.lines().find(|l| l.starts_with("**goal:**")) {
+                primary_goal_name = Some(line.replace("**goal:** ", "").trim().to_string());
+            }
+            push(self, &mut entries, &mut seen, "primary_goal", "primary_goal_marker");
+        }
+
+        let mut last_session_end: Option<serde_json::Value> = None;
+        for (concept, ts) in self.access_index.recent(50) {
+            if concept.starts_with("session_end_") {
+                if let Some(block) = self.fetch_block_high_priority(&concept) {
+                    let text = engram_core::storage::read_provlog(&block);
+                    let preview: String = text.chars().take(400).collect();
+                    last_session_end = Some(serde_json::json!({
+                        "concept": concept,
+                        "age_secs": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0)
+                            .saturating_sub(ts),
+                        "preview": if text.len() > 400 { format!("{}…", preview) } else { preview },
+                    }));
+                    push(self, &mut entries, &mut seen, &concept, "last_session_end");
+                }
+                break;
+            }
+        }
+
+        let hydration_cache_present =
+            self.fetch_block_high_priority("helper:session_hydration_cache").is_some();
+        if hydration_cache_present {
+            push(
+                self,
+                &mut entries,
+                &mut seen,
+                "helper:session_hydration_cache",
+                "hydration_cache",
+            );
+        }
+
+        for seed in HANDOFF_SEEDS {
+            for (_label, other) in self.search_relations(seed, Some("compresses_path"), "to") {
+                if other.starts_with("tile:")
+                    || other.starts_with("helper:")
+                    || other.starts_with("ritual:")
+                    || other.starts_with("metric:")
+                {
+                    push(self, &mut entries, &mut seen, &other, "handoff_compresses_path");
+                }
+            }
+        }
+
+        if let Some(ref goal) = primary_goal_name {
+            for (_label, other) in self.search_relations(goal, Some("serves"), "to") {
+                if other.starts_with("tile:") || other.starts_with("trace:") {
+                    push(self, &mut entries, &mut seen, &other, "goal_serves_lineage");
+                }
+            }
+        }
+
+        for (concept, _) in self.access_index.recent(120) {
+            if concept.starts_with("tile:")
+                || concept.starts_with("helper:")
+                || concept.starts_with("ritual:")
+                || concept.starts_with("metric:")
+            {
+                push(self, &mut entries, &mut seen, &concept, "recent_access");
+            }
+        }
+
+        let hot_candidates: Vec<String> = self
+            .hot_set
+            .read()
+            .ok()
+            .map(|set| {
+                let mut hot: Vec<String> = set
+                    .iter()
+                    .filter(|c| {
+                        c.starts_with("tile:")
+                            || c.starts_with("helper:")
+                            || c.starts_with("ritual:")
+                    })
+                    .cloned()
+                    .collect();
+                hot.sort();
+                hot
+            })
+            .unwrap_or_default();
+        for c in hot_candidates {
+            push(self, &mut entries, &mut seen, &c, "hot_set");
+        }
+
+        for mem in self.recall("active thought tile roadmap handoff lawfulness substrate", 8) {
+            if mem.concept.starts_with("tile:") || mem.concept.starts_with("helper:") {
+                push(self, &mut entries, &mut seen, &mem.concept, "momentum_recall");
+            }
+        }
+
+        entries.sort_by(|a, b| {
+            b.crs
+                .partial_cmp(&a.crs)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        entries.truncate(MAX_ARTIFACTS);
+
+        let active_tiles: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "concept": e.concept,
+                    "crs": e.crs,
+                    "hot": e.hot,
+                    "source": e.source,
+                    "preview": e.preview,
+                })
+            })
+            .collect();
+
+        let bundle = serde_json::json!({
+            "primary_goal": primary_goal_name,
+            "last_session_end": last_session_end,
+            "hydration_cache_present": hydration_cache_present,
+            "active_artifacts": active_tiles,
+            "recall_hint": "Use mcp_engram_recall or mcp_engram_read_concept on each concept for full tile payload.",
+            "cached_at": now,
+        });
+        self.continuation_bundle_cached_at = now;
+        self.continuation_bundle_cache = Some(bundle.clone());
+        bundle
+    }
+
+    /// Post-session / pre-compression handoff: refresh hydration cache, promote continuity
+    /// artifacts, mint a structured `compression_handoff_*` manifest linked to session_end.
+    pub fn refresh_compression_handoff(
+        &mut self,
+        session_end_key: &str,
+        summary_snippet: &str,
+    ) -> serde_json::Value {
+        const CACHE_KEY: &str = "helper:session_hydration_cache";
+        const HANDOFF_ANCHOR: &str = "handoff:codeland_integration_2026_plan";
+
+        self.invalidate_continuation_bundle_cache();
+        let bundle = self.build_continuation_bundle();
+        let mut promote_list: Vec<String> = Vec::new();
+
+        if let Some(arts) = bundle.get("active_artifacts").and_then(|v| v.as_array()) {
+            for a in arts {
+                if let Some(c) = a.get("concept").and_then(|v| v.as_str()) {
+                    promote_list.push(c.to_string());
+                }
+            }
+        }
+
+        for (c, _) in self.access_index.recent(50) {
+            if c.starts_with("trace:")
+                || c.starts_with("tile:")
+                || c.starts_with("helper:")
+                || c.starts_with("ritual:")
+                || c.starts_with("metric:")
+            {
+                if !promote_list.iter().any(|x| x == &c) {
+                    promote_list.push(c.clone());
+                }
+            }
+        }
+        promote_list.truncate(28);
+
+        for c in &promote_list {
+            let _ = self.promote_tile_to_high_priority(c);
+        }
+
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let primary_goal = bundle
+            .get("primary_goal")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(none)");
+
+        let recall_lines: Vec<String> = promote_list
+            .iter()
+            .take(16)
+            .map(|c| format!("- `{}`", c))
+            .collect();
+
+        let bundle_json =
+            serde_json::to_string_pretty(&bundle).unwrap_or_else(|_| "{}".to_string());
+
+        let cache_body = format!(
+            "SESSION HYDRATION CACHE (auto compression handoff)\n\n\
+             **updated_utc:** {}\n\
+             **session_end:** {}\n\
+             **primary_goal:** {}\n\n\
+             **summary_snippet:**\n{}\n\n\
+             **recall_first (all hot-promoted):**\n{}\n\n\
+             **continuation_bundle:**\n{}\n\n\
+             **wake_protocol:** session_start → read CONTINUATION BUNDLE → recall_first list → escalate only on gaps.\n",
+            ts,
+            session_end_key,
+            primary_goal,
+            summary_snippet.chars().take(500).collect::<String>(),
+            recall_lines.join("\n"),
+            bundle_json
+        );
+
+        if self.fetch_block(CACHE_KEY).is_some() {
+            let _ = self.update(CACHE_KEY, &cache_body);
+        } else {
+            let mut b = self.encode(&cache_body);
+            b.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+            b.crs_score = 0.92;
+            let _ = self.store(CACHE_KEY, b);
+        }
+        let _ = self.promote_tile_to_high_priority(CACHE_KEY);
+        if !promote_list.iter().any(|c| c == CACHE_KEY) {
+            promote_list.insert(0, CACHE_KEY.to_string());
+        }
+
+        let handoff_key = format!("compression_handoff_{}", ts);
+        let manifest = serde_json::json!({
+            "handoff_key": handoff_key,
+            "timestamp": ts,
+            "session_end": session_end_key,
+            "hydration_cache": CACHE_KEY,
+            "primary_goal": primary_goal,
+            "promoted": promote_list,
+            "continuation_bundle": bundle,
+            "recall_order": [
+                CACHE_KEY,
+                HANDOFF_ANCHOR,
+                session_end_key,
+                handoff_key
+            ]
+        });
+
+        let handoff_text = format!(
+            "COMPRESSION HANDOFF MANIFEST v1\n\n{}\n",
+            serde_json::to_string_pretty(&manifest).unwrap_or_default()
+        );
+        let mut handoff_block = self.encode(&handoff_text);
+        handoff_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+        handoff_block.crs_score = 0.93;
+        if self.store(&handoff_key, handoff_block).is_ok() {
+            let _ = self.relate(&handoff_key, session_end_key, "compresses_path");
+            let _ = self.relate(&handoff_key, CACHE_KEY, "compresses_path");
+            let _ = self.relate(&handoff_key, HANDOFF_ANCHOR, "serves");
+            let _ = self.promote_tile_to_high_priority(&handoff_key);
+            if let Some(pg) = bundle.get("primary_goal").and_then(|v| v.as_str()) {
+                if !pg.is_empty() && pg != "(none)" {
+                    let _ = self.relate(&handoff_key, pg, "serves");
+                }
+            }
+        }
+
+        self.mark_ki_rebake_needed();
+        manifest
+    }
+
+    pub fn fetch(&self, concept: &str) -> Option<Box<[engram_core::Complex32; 8192]>> {
+        self.backend.fetch(stalk_raw_concept(concept))
+    }
+    pub fn fetch_block(&self, concept: &str) -> Option<Leg3Pointer> {
+        self.backend.fetch_block(stalk_raw_concept(concept))
+    }
 
     /// High-priority fetch path (Item 2 low-latency loading + speed-up work).
-    /// Prefers LegView (mmap zero-copy via `LegView::open` + `to_leg3_pointer` in
-    /// CudaBackend when the item is hot) for hot patterns (Thought Tiles, ritual
-    /// state, hydration cache, etc.) when possible. Falls back to normal path.
-    /// This is the first concrete wiring of Option 1 from the post-live-test I/O investigation.
-    /// High-priority fast path (canonical API for hot/low-latency access).
-    /// Delegates to Backend (which prefers CudaBackend hot cache when available).
+    /// Prefers LegView (mmap zero-copy via `LegView::open` + `to_leg3_pointer`) +
+    /// backend high_priority_cache for promoted hot items. This is the explicit
+    /// O_DIRECT bypass: normal fetch_block / CpuBackend paths use storage::read_block
+    /// (O_DIRECT on Linux, page-cache bypass for cold scans); hot paths (promoted
+    /// via mark_hot / promote_tile_to_high_priority from ki_hijacker, mcp, etc.)
+    /// use mmap/RAM instead.
+    ///
+    /// Fully symmetrized across CUDA (CudaBackend) and Metal (MetalBackend) per
+    /// WS1-C of tile:formal_spec_substrate-phase2-execution-plan-v1 / child goal
+    /// 1780165889_substrate-cs--embodiment-layer-hardening_sub0. Non-GPU backends
+    /// gracefully fall back. See Backend dispatch + gpu/{backend,metal_backend}.rs.
     pub fn fetch_block_high_priority(&self, concept: &str) -> Option<Leg3Pointer> {
         // If the call matches our hot heuristic, ensure it is in the explicit hot set
         // so future is_hot() and high_priority calls treat it as canonical fast-path data.
         // Extended for reasoning traces (serial self-model continuity, ki_hijacker surfacing,
         // post-compression re-hydration) as one more high-value site in the 61%→65% window.
         // The backend path will use LegView + to_leg3_pointer for zero-copy when hot.
-        let is_hot_heuristic = concept.starts_with("tile:") ||
-                               concept.starts_with("helper:") ||
-                               concept.starts_with("ritual:") ||
-                               concept.starts_with("item2_") ||
-                               concept.starts_with("item1.5_") ||
-                               concept.starts_with("trace:") ||
-                               concept == "primary_goal";
+        let raw = stalk_raw_concept(concept);
+        let is_hot_heuristic = raw.starts_with("tile:") ||
+                               raw.starts_with("helper:") ||
+                               raw.starts_with("ritual:") ||
+                               raw.starts_with("item2_") ||
+                               raw.starts_with("item1.5_") ||
+                               raw.starts_with("trace:") ||
+                               raw == "primary_goal";
         if is_hot_heuristic {
-            self.mark_hot(concept);
+            self.mark_hot(raw);
         }
-        self.backend.fetch_block_high_priority(concept)
+        self.backend.fetch_block_high_priority(raw)
     }
 
     // Tier 2 async note: The sync fetch_block_high_priority (and underlying storage::read_block) is the current hot path.
@@ -1083,37 +1609,71 @@ impl StoreHandle {
     /// Also marks it in the explicit StoreHandle hot set so is_hot() and future
     /// high_priority fetches treat it as canonical fast-path data.
     pub fn promote_tile_to_high_priority(&self, concept: &str) -> Option<Leg3Pointer> {
-        self.mark_hot(concept);
-        let last = self.access_index.last_accessed(concept);
-        self.backend.promote_to_high_priority(concept, last)
+        let raw = stalk_raw_concept(concept);
+        self.mark_hot(raw);
+        let last = self.access_index.last_accessed(raw);
+        self.backend.promote_to_high_priority(raw, last)
     }
 
     /// Is this concept currently in the high-priority hot set?
     pub fn is_hot(&self, concept: &str) -> bool {
+        let raw = stalk_raw_concept(concept);
         // Check both the explicit hot set and the backend cache
         if let Ok(set) = self.hot_set.read() {
-            if set.contains(concept) {
+            if set.contains(raw) {
                 return true;
             }
         }
-        self.backend.is_hot(concept)
+        self.backend.is_hot(raw)
     }
 
     /// Explicitly mark a concept as "hot" so it prefers the high-priority fast path
     /// (LegView + to_leg3_pointer zero-copy + CudaBackend cache) on future fetches.
     pub fn mark_hot(&self, concept: &str) {
+        let raw = stalk_raw_concept(concept);
         if let Ok(mut set) = self.hot_set.write() {
-            set.insert(concept.to_string());
+            set.insert(raw.to_string());
+        }
+        // Phase 2.1 geo carry: snapshot current SymplecticState frame at promotion time
+        // so NREM contributor logs and hot paths respect the live geosphere under which
+        // the artifact (esp. TRAINING/tile/trace) was elevated. Stored in runtime only.
+        if let Ok(geo) = self.geosphere.read() {
+            let origin = geo.frame_origin.clone().unwrap_or_else(|| "native".to_string());
+            if let Ok(mut geo_map) = self.hot_geo_context.write() {
+                geo_map.insert(raw.to_string(), (geo.frame_step, origin));
+            }
+        }
+        // Phase 2.3: Deeper device residency for full SymplecticState (active_location + lens/frame)
+        // + geo snapshots inside high_priority geo caches (Cuda/Metal). 
+        // Leverages the exact same mark_hot call site + hot_set. Snapshots become first-class
+        // hot ritual blocks (NREM/ki_hijacker visible). Feeds resident frame to bvh effective_q
+        // (framed BVH/OptiX candidate filtering + 8192D scoring) without extra locks in hot path.
+        // All behind existing high_priority; no layout change; O_DIRECT cold untouched.
+        // Explicit geo:* names + per-artifact geo_context:* snapshots for consumption by other WS.
+        if let Ok(geo) = self.geosphere.read() {
+            let snap_name = if raw.starts_with("geo_snapshot:") || raw == "active_symplectic_state" || raw.starts_with("symplectic:") {
+                raw.to_string()
+            } else {
+                format!("geo_context:{}", raw)
+            };
+            match &self.backend {
+                #[cfg(engram_backend_cuda)]
+                Backend::Gpu(b) => b.promote_geo_snapshot_to_high_priority(&snap_name, geo.clone()),
+                #[cfg(engram_backend_metal)]
+                Backend::Metal(b) => b.promote_geo_snapshot_to_high_priority(&snap_name, geo.clone()),
+                _ => {}
+            }
         }
         // Also promote in the backend cache if available (with recency)
-        let last = self.access_index.last_accessed(concept);
-        let _ = self.backend.promote_to_high_priority(concept, last);
+        let last = self.access_index.last_accessed(raw);
+        let _ = self.backend.promote_to_high_priority(raw, last);
     }
 
     /// Remove from the explicit hot set (cache may still retain it briefly).
     pub fn unmark_hot(&self, concept: &str) {
+        let raw = stalk_raw_concept(concept);
         if let Ok(mut set) = self.hot_set.write() {
-            set.remove(concept);
+            set.remove(raw);
         }
     }
 
@@ -1139,10 +1699,100 @@ impl StoreHandle {
     }
     pub fn encode(&self, text: &str) -> Leg3Pointer { self.backend.encode(text) }
     pub fn query(&mut self, query_vec: &[engram_core::Complex32; 8192], k: usize) -> Vec<Memory> {
-        let results = self.backend.query(query_vec, k);
+        // WS3-B: apply current Geosphere frame/lens from SymplecticState before
+        // delegating to backend (bvh.rs or gpu paths). This is the main query path
+        // integration point for active_location / lens effective vector computation.
+        let effective = {
+            if let Ok(geo) = self.geosphere.read() {
+                geo.apply_current_frame(query_vec)
+            } else {
+                *query_vec  // fallback (should never happen)
+            }
+        };
+        let results = self.backend.query(&effective, k);
         for m in &results { self.access_index.touch(&m.concept); }
         results
     }
+
+    // ── WS3-B MCP surface helpers for current Geosphere frame ─────────────────
+    /// Set the live Geosphere frame from an origin reference + time offset description.
+    /// For this phase: we synthesize a deterministic lens vector from the description
+    /// (via encode of canonical string) and install it into the SymplecticState.
+    /// Origin e.g. "giza_sacred_cubit", "grove_sower_moon", "london_1776_gibbon".
+    /// All vectors normalized; reproducible given same origin+offset text.
+    pub fn set_geosphere_frame(&mut self, origin: &str, time_offset_desc: &str) {
+        let desc = format!("geosphere_frame::origin={}::offset={}", origin, time_offset_desc);
+        let lens_block = self.backend.encode(&desc);  // re-uses existing encode path (BLAKE3 + norm)
+        let lens_vec = lens_block.q;  // already normalized by encode contract
+        if let Ok(mut geo) = self.geosphere.write() {
+            geo.set_current_lens(lens_vec, Some(origin.to_string()));
+            geo.advance_frame();
+        }
+        // Also expose as first-class block for recall/audit (high CRS)
+        let _ = self.remember(&format!("current_geosphere_frame::{}", origin), &desc);
+    }
+
+    pub fn get_current_geosphere_frame(&self) -> Option<(String, u64, [engram_core::Complex32; 8192])> {
+        if let Ok(geo) = self.geosphere.read() {
+            let origin = geo.frame_origin.clone().unwrap_or_else(|| "native".to_string());
+            Some((origin, geo.frame_step, geo.active_location))
+        } else {
+            None
+        }
+    }
+
+    /// Phase 2.1: Full live SymplecticState snapshot (active_location, current_lens,
+    /// frame_step, frame_origin) for embedding as structured geo_context in every
+    /// ZEDOS_TRAINING payload at emission (mcp record/quick_trace). Also used by
+    /// NREM for geo-tagged hot promotions. Clone is cheap relative to ritual cost;
+    /// never mutates blocks or layout.
+    pub fn current_geosphere_state(&self) -> Option<SymplecticState> {
+        if let Ok(guard) = self.geosphere.read() {
+            Some(guard.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn clear_geosphere_frame(&mut self) {
+        if let Ok(mut geo) = self.geosphere.write() {
+            geo.clear_current_lens();
+            geo.advance_frame();
+        }
+    }
+
+    // ── Phase 2.3 hot geo residency public surface (leverages mark_hot + backend geo caches) ──
+    /// Promote explicit geo snapshot (full SymplecticState) to high_priority geo residency
+    /// (CUDA/Metal hot caches + bvh lens sync for framed effective_q). First-class hot ritual.
+    /// Also marks in hot_set so is_hot / fetch high prio treat as canonical.
+    pub fn promote_geo_snapshot(&self, name: &str, _state: SymplecticState) {
+        self.mark_hot(name);
+        // mark_hot already routes full clone (live geosphere) to backend hot_geo_states for geo names.
+        // The passed _state is accepted for API symmetry / future direct-snapshot use but live is canonical.
+    }
+
+    /// Check residency of a geo snapshot or geo_context in the high_priority geo caches.
+    pub fn is_geo_hot(&self, name: &str) -> bool {
+        match &self.backend {
+            #[cfg(engram_backend_cuda)]
+            Backend::Gpu(b) => b.is_geo_hot(name),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.is_geo_hot(name),
+            _ => false,
+        }
+    }
+
+    /// Fetch hot-resident full SymplecticState snapshot (for framed hot paths, audit, TRAINING).
+    pub fn fetch_geo_high_priority(&self, name: &str) -> Option<SymplecticState> {
+        match &self.backend {
+            #[cfg(engram_backend_cuda)]
+            Backend::Gpu(b) => b.fetch_geo_high_priority(name),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.fetch_geo_high_priority(name),
+            _ => None,
+        }
+    }
+
     pub fn store(&mut self, concept: &str, block: Leg3Pointer) -> Result<()> {
         let r = self.backend.store(concept, block);
         if r.is_ok() { self.access_index.touch(concept); }
@@ -1588,6 +2238,41 @@ impl StoreHandle {
             }
         }
 
+        // Auto-update the living item1.5 bootstrap tracking state.
+        // This eliminates the need for separate "user open+save" or extra force calls
+        // just to advance the state block. Passive watch bind now fully bootstraps
+        // both AST AABB blocks *and* the ingestion state metadata.
+        // Future: make this richer (list files, gaps, timestamp) and use update for drift.
+        let state_concept = "item1.5_spatial_ingestion_state_engram";
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let state_text = format!(
+            "SPATIAL INGESTION STATE — Engram Project (auto-updated on passive ingest)\n\
+            watcher_bound: true\n\
+            last_bootstrap_attempt: passive-{} (daemon watch bind + force_ingest_path)\n\
+            status: ingested\n\
+            total_items_last_pass: {}\n\
+            note: Updated automatically by daemon/store on set_watch_workspace or force. \
+            No manual editor open+save required for full AABB bootstrap. \
+            See engram-ast for md heading support (passive sections as items).",
+            now, total_ingested
+        );
+        if self.fetch_block(state_concept).is_some() {
+            let _ = self.update(state_concept, &state_text);
+        } else {
+            let _ = self.remember(state_concept, &state_text);
+        }
+
+        // Ensure provlog also carries the descriptive text (spatial_status reads provlog for the item1.5 block).
+        // This makes the "passive ingest" description live in the status output, killing the stale
+        // "bootstrap_in_progress + user open+save" nonsense once and for all.
+        if let Some(mut b) = self.fetch_block(state_concept) {
+            engram_core::storage::write_provlog(&mut b, &state_text);
+            let _ = self.store(state_concept, b);
+        }
+
         Ok((total_ingested, details))
     }
 
@@ -1622,9 +2307,13 @@ impl StoreHandle {
             let mut spatial_hits: Vec<(String, f32, f32)> = all_concepts.into_iter()
                 .filter_map(|concept| {
                     if !concept.to_lowercase().starts_with(&stem) { return None; }
-                    // Tier 2 broaden (core ritual path): context_for_file called on every file edit/open.
-                    // Spatial AST items are high-value promotable concepts; use high_priority fast path (LegView + to_leg3_pointer zero-copy / Cuda hot).
-                    let block = self.fetch_block_high_priority(&concept)?;
+                    // Prefer high_priority (hot/pinned) but fall back to regular fetch.
+                    // Critical for passive/force bootstrap: freshly ingested AST (from watch bind or mcp force)
+                    // may not be in the LegView/hot cache yet, but still have valid AABB and must be visible
+                    // to context_for_file / Code Edit Ritual without "no specific topological memory".
+                    let block = self.fetch_block_high_priority(&concept)
+                        .or_else(|| self.fetch_block(&concept));
+                    let block = block?;
                     let row_min = block.aabb_min[0];
                     let row_max = block.aabb_max[0];
                     if row_max > 0.0 {
@@ -1641,7 +2330,10 @@ impl StoreHandle {
                 // Prefer direct fetch + lightweight Memory construction for spatially-ingested
                 // AST items created via force_ingest. This makes context_for_file reliable
                 // even when semantic recall is still weak on freshly force_ingested blocks.
-                if let Some(block) = self.fetch_block_high_priority(&concept) {
+                // Fallback to regular fetch (pairs with the collection-time or_else above).
+                if let Some(block) = self.fetch_block_high_priority(&concept)
+                    .or_else(|| self.fetch_block(&concept))
+                {
                     let prov = engram_core::storage::read_provlog(&block);
                     let _snippet = String::from_utf8_lossy(&block.payload)
                         .trim_matches('\0')
@@ -1974,11 +2666,14 @@ impl StoreHandle {
         let genesis_loaded = genesis_entries.len();
         let session_count  = session_entries.len();
 
+        let continuation_bundle = self.build_continuation_bundle();
+
         serde_json::json!({
             "total_memories":  total_memories,
             "namespace":       namespace,
             "genesis":         genesis_entries,
             "recent_sessions": session_entries,
+            "continuation_bundle": continuation_bundle,
             "stats": {
                 "genesis_loaded": genesis_loaded,
                 "genesis_total":  GENESIS_CONCEPTS.len(),
@@ -2182,19 +2877,28 @@ impl StoreHandle {
         // Previous implementation eagerly fetch_block()'d every qualifying block before sampling.
         // On real manifolds (149k+ blocks, many with large provlogs) this caused extreme memory
         // pressure / near-OOM during wake-up rituals (observed live: memory climbing hard at 83%+
-        // of 100GB system while verify was called). We now do name-only filtering + final small sample.
-        //
-        // Only the final sampled blocks (typically 30-100) have their full payload loaded.
-        // This makes the tool safe to call even on large, long-lived manifolds.
+        // of 100GB system while verify was called). We now stride-probe CRS on a bounded subset,
+        // then load full payloads only for the final sample (typically 30-100 blocks).
 
         let concepts = self.backend.list();
+        let target_sample = options.sample_size.unwrap_or(50).max(1);
 
-        // Phase 1: cheap name collection of blocks meeting min_crs (only CRS is examined, full payload dropped immediately)
+        // Phase 1: CRS gate on a bounded probe set (not the full 150k+ list)
         let qualifying_names: Vec<String> = if options.min_crs > 0.0 {
-            concepts.into_iter()
+            const MAX_CRS_PROBE: usize = 2500;
+            let probe_cap = (target_sample * 50).clamp(200, MAX_CRS_PROBE);
+            let probe: Vec<String> = if concepts.len() <= probe_cap {
+                concepts
+            } else {
+                let step = concepts.len() / probe_cap;
+                (0..probe_cap)
+                    .filter_map(|i| concepts.get(i * step).cloned())
+                    .collect()
+            };
+            probe
+                .into_iter()
                 .filter_map(|c| {
-                    // We still need the block for CRS, but we drop it immediately after the check.
-                    let b = self.backend.fetch_block(&c)?;
+                    let b = self.fetch_block(&c)?;
                     if b.crs_score >= options.min_crs { Some(c) } else { None }
                 })
                 .collect()
@@ -2203,7 +2907,7 @@ impl StoreHandle {
         };
 
         // Phase 2: safe sampling over *names only* (no full blocks in memory)
-        let sample_size = options.sample_size.unwrap_or(50).min(qualifying_names.len()); // lowered default from 100
+        let sample_size = target_sample.min(qualifying_names.len());
         let sampled_names: Vec<String> = if qualifying_names.len() > sample_size {
             let step = qualifying_names.len() / sample_size.max(1);
             (0..sample_size).filter_map(|i| qualifying_names.get(i * step).cloned()).collect()
@@ -2218,7 +2922,7 @@ impl StoreHandle {
 
         // Phase 3: load full blocks ONLY for the tiny final sample
         for concept in &sampled_names {
-            let block = match self.backend.fetch_block(concept) {
+            let block = match self.fetch_block(concept) {
                 Some(b) => b,
                 None => continue,
             };
