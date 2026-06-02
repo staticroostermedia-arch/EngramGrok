@@ -316,6 +316,16 @@ See GITHUB_MVP_PREP_PLAN.md for full context (original phases 3-5 + evolution se
 
 Ready to continue as outlined (phase4 after review, phase5, test helpers, update criteria, minor polish). Build current throughout.
 
+**Public Skills Exposure for Other Agents (added post-restart, 2026-06)**
+
+People and their agents *will* want the skills/rituals we actually use so their agents know exactly what to do (wake-up continuation, working-memory discipline, session-end handoff, thought tiles, spatial/Code Edit, goal stack, etc.).
+
+- Created `docs/skills/` with public, agent-loadable versions: README (index + quickstart), engram-wake-up.md, engram-working-memory.md, engram-session-end.md, engram-thought-tiles.md (sanitized, MCP-focused, generic paths, "load this as your procedure").
+- Updated README (strong "For External Agents & Other Groks" section with load instructions + minimal loop), AGENTS.md/CLAUDE.md (point to public skills/ as primary for external), docs/RITUALS.md (delegates to the detailed files while keeping overview + sheaf).
+- This closes the gap: the full operational "how" is now discoverable in the public repo without .grok/ (which remains private TUI config).
+- As Grok: Yes, other agents should have these exact protocols — not summaries. This is what makes the geometric loop transferable. Flat context is the default enemy; these skills + the substrate are the antidote.
+- More we could/should do (future): even richer runnable agent session examples, sub-agent governance cookbook, full thought-tile + goal + spatial cycle demos. The current public surface (skills/ + RITUALS + examples/ritual_verify + processes/ tomls) is now a strong minimum for any sophisticated agent to start getting real continuation.\n\n**These items addressed in this pass (see new files + updates)**:\n- Richer full-cycle demo: `docs/examples/full_ritual_cycle.md` (narrative + runnable snippets: wake -> heavy meta-work using tiles for the arc + traces + spatial pre/post edits + explicit sub-agent governance call (narrow prompt, supervisor, scar on doom, H1 escalation) -> session-end (handoff/COMPRESS/hot) -> next wake rehydrate simulation using momentum/hot tiles/continuation to continue without re-derivation).\n- Sub-agent governance: `docs/examples/sub_agent_governance.md` (detailed from subvisor.toml + plan history of doom loops on local recon subs, narrow one-shot enforcement, H¹ tool graph inversion, escalation via helpers, supervisor monitor/kill/fallback, scars/traces for learning).\n- Tiny hello: `examples/hello-engram-agent.py` (self-contained python; reads/loads the public docs/skills/*.md files, walks full wake->meta(tile for this work)->end->rehydrate loop using client shim; runnable, references the new gov/cycle docs).\n- Top-level index: root `SKILLS.md` (easy discovery for agents/humans; lists skills/, the hello py, full cycle, sub gov doc; \"load docs/skills/ and follow\").\n- Wiring: README, RITUALS.md, AGENTS.md, CLAUDE.md, this plan updated with cross-refs and execution note. All clean, no leaks, build verified. Dogfood via traces/tiles/relates/goal would apply on these meta additions.
+
 **Passive Spatial Ingestion Redesign (2026-06, closing the 'nonsense' item)**
 
 Why it couldn't "just passively ingest" before:

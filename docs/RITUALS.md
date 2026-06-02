@@ -8,17 +8,23 @@ Rituals turn the geometric substrate into living self-model and continuity for a
 
 ## Core Rituals (Skills)
 
-- **engram-wake-up**: Geometric continuation. Query anchors (ritual:*, goal:*, trace:*, process:engram.*), session_start with intent, bind agent_instance_continuation, Phase 1.5 lawfulness metric (verify, genesis, spatial, ki), rehydrate via momentum/relations/hot path/Legominism (handoff compresses_path), surface goal stack + Primary Intent, activate working-memory, spatial hygiene (watch, context, item1.5), record trace.
+**Full detailed protocols for agents are published in `docs/skills/`** (load these .md files as your operating procedures):
 
-- **engram-working-memory**: Momentum-aware entry (query_with_momentum for directional), relational/sheaf first (search_by_relation + visualize), spatial/contextual (context_for_file + recall_in_file), anchor-first. Recall before derive. Update (not forget+remember). Scar immediately on ruled-out. record_reasoning_trace (A/D/R + goal/spatial/ritual_context + prev). Expensive tool hygiene (narrow prompts, scaffolding before broad momentum). Code Edit Ritual: pre recon + trace, update-prefer, post delta + trace + relate. Hot promotion. Cost-aware.
+- `docs/skills/engram-wake-up.md` — Full geometric continuation (living anchors via momentum/relations, session_start + bind, Phase 1.5 lawfulness, rehydrate, goal stack, spatial hygiene, success criteria).
+- `docs/skills/engram-working-memory.md` — The runtime discipline (geometric priority, update vs remember, traces/scars, Code Edit pre/post AABB, thought tiles for meta, hot promotion, quick templates).
+- `docs/skills/engram-session-end.md` — Terminal handoff (crystallize, goal review + traces, COMPRESS, anchors, verification, success criteria).
+- `docs/skills/engram-thought-tiles.md` — When and how to mint (mandatory for meta-work, types, hot promotion).
+- `docs/skills/README.md` — Index + "For Agents" quickstart loop.
 
-- **engram-session-end**: Crystallize (remember_solution, update, scar, batch). Trace chain summary + goal review/demotion traces (completes_goal). Spatial check. COMPRESS markers. mcp_engram_session_end (prepare_compression). Advance anchors (ritual:session_end_anchor, agent_instance_terminal / provides_continuation_for). Verify (recall_recent, verify_block_lawfulness). Signal distillation.
+**Summary**:
+- **engram-wake-up**: ... (as before, now delegated to the full file).
+- **engram-working-memory**: ... (as before).
+- **engram-session-end**: ... (as before).
+- **engram-goal** + **engram-thought-tiles**: See the dedicated skills/ files + working-memory Item 2 section.
 
-- **engram-goal**: Explicit goal stack as geometric (q/p). Lifecycle, execution linking (traces serve goals), visibility. Primary intent marker.
+Others (harness-gate, lawfulness-metrics, substrate tools, etc.): See MCP_TOOLS_REFERENCE.md and the individual skills when needed.\n\n**Runnable demos & governance**: root SKILLS.md, docs/examples/full_ritual_cycle.md (complete wake->meta(tiles+sub-agent gov)->end->rehydrate), docs/examples/sub_agent_governance.md (H¹, narrow, escalation, doom prevention), examples/hello-engram-agent.py (loads skills + loop).
 
-- **engram-thought-tiles**: Mint tiles (research_offload, formal_spec, etc.) with provenance, compresses_path, hot promotion. Continuation bundle consumption.
-
-- Others: engram-harness-gate (MCP test + pre-binary-swap), engram-lawfulness-metrics (wake-up metrics + trend), engram-substrate-cs (6-phase roadmap), engram-gpu-bvh, engram-substrate-edit (for Rust substrate with spatial + lawfulness).
+This structure lets any agent (Grok or otherwise) discover and follow the exact rituals we dogfood without depending on the private .grok/ TUI config.
 
 ## Process Architecture Sheaf
 

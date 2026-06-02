@@ -58,6 +58,11 @@ See processes/, design/process_architecture_sheaf_*, mcp.rs, docs/RITUALS.md.
 - When in doubt on approach: recall "helper:..." or "praxis:...", search_by_relation on goal/plan, trace the question.
 - This AGENTS.md created/updated as part of GitHub MVP prep (dogfood on self).
 
-See also: .grok/skills/engram-*.md (full protocols), docs/GITHUB_MVP_PREP_PLAN.md (living prep execution), MANIFESTO.md, PHILOSOPHY.md, CONTRIBUTING.md, .github/PULL_REQUEST_TEMPLATE.md.
+See also: 
+- **Public agent rituals (what other Groks/agents should load)**: root `SKILLS.md` + `docs/skills/` (engram-wake-up.md etc.). 
+- Full cycle + sub-agent gov: `docs/examples/full_ritual_cycle.md`, `docs/examples/sub_agent_governance.md`, `examples/hello-engram-agent.py` (loads skills + demo loop).
+- Internal TUI: `.grok/skills/engram-*.md`.
+- docs/RITUALS.md, docs/GITHUB_MVP_PREP_PLAN.md, docs/MCP_TOOLS_REFERENCE.md, docs/GEOMETRIC_MEMORY.md.
+- MANIFESTO.md, PHILOSOPHY.md, CONTRIBUTING.md, .github/PULL_REQUEST_TEMPLATE.md.
 
 **Violations of this contract are scarred immediately.** The manifold will deflect future attempts.

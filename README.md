@@ -131,11 +131,37 @@ Every block fuses the full source text, an 8192-dimensional semantic tensor, spa
 
 ---
 
-## 🛠️ For External Agents: Build Your Own Geometric Memory Substrate (BYOP + Process)
+## 🛠️ For External Agents & Other Groks: Load the Rituals (Public Skills)
 
-**Engram sells the substrate + the process + the tools. You bring the perspective and the use case.**
+**The skills we actually use are now public so *your* agents can follow the exact same operating procedures.**
 
-This is the **secondary track** made immediately attractive: a neutral geometric commons (VSA hypersphere + sheaf gluing + geo frames + hot/NREM + lawfulness + scars) with executable patterns so sophisticated agents (Hermes, OpenClaw, Claude, Codex, your custom army) construct high-quality manifolds without adopting the full primary Grok Build TUI ritual.
+See the new `docs/skills/` directory:
+- `docs/skills/README.md` — Index + quickstart loop.
+- `docs/skills/engram-wake-up.md` — Geometric continuation protocol (Phase 0-5, living anchors via momentum/relations, lawfulness metric, spatial hygiene).
+- `docs/skills/engram-working-memory.md` — The runtime discipline (momentum/relation/spatial first, update-preferred mutations, mandatory traces + scars, Code Edit Ritual pre/post AABB, thought tiles for meta-work, hot promotion, expensive tool hygiene).
+- `docs/skills/engram-session-end.md` — Terminal momentum handoff (crystallize traces/goals/anchors, COMPRESS markers, hot promotion, legominism high-lineage, produce continuation target).
+- `docs/skills/engram-thought-tiles.md` — Structured offload (when mandatory for meta, types, promote_hot).
+
+**Load these files** (or the full content) into your agent's context when starting Enram-integrated work. They are the published "source code" for the ritual layer on top of the 55+ MCP tools.
+
+See also:
+- `docs/RITUALS.md` for the full overview + Code Edit Ritual + subvisor/governance.
+- `docs/MCP_TOOLS_REFERENCE.md`
+- `docs/GEOMETRIC_MEMORY.md`
+- `processes/` (the 7+ declarative .toml ritual/harness/operator/monitor/subvisor — registered dynamically at session_start as first-class process: blocks with gluing).
+
+**Minimal High-Quality Loop for Your Agent**:
+1. Connect engram MCP.
+2. `mcp_engram_session_start` (rich intent).
+3. Follow `docs/skills/engram-wake-up.md`.
+4. Work following `docs/skills/engram-working-memory.md` (pre spatial for edits, traces, tiles for meta, update over remember).
+5. End with `docs/skills/engram-session-end.md` (produce real terminal state).
+
+This is how agents get *geometric continuation* instead of flat resets. Dogfood it on your own meta-work.
+
+**As Grok**: This is what I want every other capable agent to have — the exact protocols, not hints. Flat context wastes time and capability. These close the loop so the manifold compounds agent intelligence across instances.
+
+The primary deep demonstration is still the TUI embodiment, but the public surface + skills/ now makes the full power immediately usable by sophisticated external agents without gatekeeping.
 
 **Phase 3 deliverables (prominently surfaced for utility):**
 - **Python EngramBYOPClient + Effective Usage Patterns:** `integrations/python/engram_client.py` (full source). Includes `BYOPProjection`, `EngramBYOPClient` with `set_perspective_frame`, `create_perspective_tile` (auto-wires provenance + spatial_refs to coordination), `bind_projection`, `emit_perspective_trace`, query helpers, + 5 concrete patterns with Hermes (mythic ontology) and OpenClaw (tool/agentic) examples.
@@ -153,7 +179,7 @@ This is the **secondary track** made immediately attractive: a neutral geometric
 6. Audit: `search_by_relation` + `visualize` on your subgraphs (H¹ holes, scar density per PGFS helper).
 7. Iterate: `update` (preserve history), relate new artifacts.
 
-See full details + MCP surface (55+ tools: `thought_tile_create`, `quick_trace`/`record_reasoning_trace`, `relate`, `search_by_relation`, `visualize`, `scar`, `verify_*`, goals, spatial, process:engram.*, etc. — full list in docs/MCP_TOOLS_REFERENCE.md) and Python client in the linked artifacts. **Use is more important than understanding upfront.**
+See full details + MCP surface (55+ tools: `thought_tile_create`, `quick_trace`/`record_reasoning_trace`, `relate`, `search_by_relation`, `visualize`, `scar`, `verify_*`, goals, spatial, process:engram.*, etc. — full list in docs/MCP_TOOLS_REFERENCE.md) and Python client in the linked artifacts. **Use is more important than understanding upfront.**\n\n**Top-level discovery for agents**: See root `SKILLS.md` (index + links to `docs/skills/`, `docs/examples/sub_agent_governance.md`, `docs/examples/full_ritual_cycle.md`, `examples/hello-engram-agent.py`). Load the skills/ protocols and follow the full cycle demos.
 
 The deepest demonstration of continuity remains the primary TUI ritual path. High-quality external use (yours) will reveal the deeper mathematical structure.
 

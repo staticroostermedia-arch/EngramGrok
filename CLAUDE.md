@@ -32,6 +32,7 @@ Claude (and similar): follow AGENTS.md exactly. This is a supplement for common 
 - For complex: spawn_subagent only with narrow one-shot prompts + supervisor.
 - Read .grok/skills/engram-*.md for exact ritual steps (wake, working-memory, session-end, thought-tiles, lawfulness-metrics, substrate-edit, harness-gate, substrate-cs, gpu-bvh).
 - Spatial (Item 1.5): Passive (watch bind + events; toml/md enhanced). Use force only for recovery. context/recall deliver AABB for edits without editor saves (see plan passive redesign + source fixes in engram-ast/store/daemon).
+- **Public skills for agents**: Load root `SKILLS.md` + `docs/skills/engram-*.md` (wake-up, working-memory, session-end, thought-tiles) as your operating procedures when using Enram. See also `docs/examples/full_ritual_cycle.md` (wake->meta with tiles+subgov->end->rehydrate), `docs/examples/sub_agent_governance.md`, `examples/hello-engram-agent.py`. This is what other Groks/agents need. See updated README + docs/RITUALS.md.
 - Verify post changes: mcp_engram_verify_manifold_integrity + spatial_status + genesis.
 - For plan execution: update docs/GITHUB_MVP_PREP_PLAN.md exec log live with search_replace after each milestone.
 
