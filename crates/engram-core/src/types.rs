@@ -373,6 +373,12 @@ pub struct SymplecticState {
     pub frame_origin: Option<String>,
 }
 
+impl Default for SymplecticState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymplecticState {
     /// Construct a new register at the multiplicative identity (neutral frame).
     /// All components normalized.

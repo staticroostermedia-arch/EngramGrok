@@ -331,6 +331,8 @@ People and their agents *will* want the skills/rituals we actually use so their 
 **Push to EngramGrok public handoff (2026-06-02)**: Per user instruction, pushed the feat/mvp-github-prep-2026-06 branch to EngramGrok repo (public handoff/sanitized version) using explicit git push to git@github.com:staticroostermedia-arch/EngramGrok.git . Branch created successfully. Created PR #6 on EngramGrok: https://github.com/staticroostermedia-arch/EngramGrok/pull/6 with full details, ritual checklist, and links. (Separate from earlier PR #27 on main engram repo.) Dogfooded with engram trace + relate to goal. EngramGrok is the public handoff repo for external visibility.
 
 **Post-push CI fix + re-push (2026-06-02)**: macOS Metal CI (aarch64-apple-darwin, engram_backend_metal cfg) failed on engram-gpu with E0252 (duplicate Leg3Pointer), E0382 (SymplecticState use-after-move in promote_geo), E0063 (incomplete Memory {} missing AABB/alpha/l2/zedos etc.). Fixed in crates/engram-gpu/src/metal_backend.rs:
+
+Additional core Clippy errors (new_without_default, doc_lazy_continuation x4, needless_range_loop x2, io_other_error x2, let_unit_value, explicit_auto_deref x2) in engram-core (types, ops, storage, backend). All fixed per suggestions + manual borrow-safe refactor for residual loop. Trace recorded for the maintenance.
 - Deduped imports, cfg-gated SymplecticState.
 - Extract lens before state move.
 - Populated full Memory from HolographicBlock (consistent with bvh.rs).

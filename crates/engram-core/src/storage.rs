@@ -300,7 +300,7 @@ pub async fn async_read_block<P: AsRef<std::path::Path> + Send + 'static>(
     let path_clone = path.as_ref().to_path_buf();
     let inner = tokio::task::spawn_blocking(move || read_block(path_clone))
         .await
-        .map_err(|join_err| std::io::Error::new(std::io::ErrorKind::Other, join_err))??;
+        .map_err(std::io::Error::other)??;
     let elapsed = start.elapsed();
     tracing::debug!("[async-io] read_block took {:?} (path: {:?})", elapsed, path.as_ref());
     // Basic instrumentation hook for future metrics (e.g., hot vs cold, compression windows)
@@ -317,9 +317,9 @@ pub async fn async_write_block<P: AsRef<std::path::Path> + Send + 'static>(
 ) -> std::io::Result<()> {
     let start = std::time::Instant::now();
     let path_clone = path.as_ref().to_path_buf();
-    let inner = tokio::task::spawn_blocking(move || write_block(path_clone, &block))
+    tokio::task::spawn_blocking(move || write_block(path_clone, &block))
         .await
-        .map_err(|join_err| std::io::Error::new(std::io::ErrorKind::Other, join_err))??;
+        .map_err(std::io::Error::other)??;
     let elapsed = start.elapsed();
     tracing::debug!("[async-io] write_block took {:?} (path: {:?})", elapsed, path.as_ref());
     if elapsed > std::time::Duration::from_millis(50) {

@@ -142,13 +142,14 @@ pub trait VsaBackend: Send + Sync {
         let mut block = self.encode(text);
 
         // Compute element-wise residual: actual_q − prior_q
-        let mut l2_sq = 0.0f32;
-        for i in 0..crate::types::DIMENSION {
+        let l2_sq: f32 = block.q
+            .iter()
+            .zip(prior_q.iter())
+            .map(|(q, p)| (*q - *p).norm_sqr())
+            .sum();
+        for i in 0..16 {
             let diff = block.q[i] - prior_q[i];
-            l2_sq += diff.norm_sqr();
-            if i < 16 {
-                block.err_residual_16d[i] = diff;
-            }
+            block.err_residual_16d[i] = diff;
         }
         block.l2_norm_residual = l2_sq.sqrt();
         block.residual_dims_used = 16;
@@ -362,7 +363,7 @@ impl VsaBackend for CpuBackend {
                     .filter_map(|concept| {
                         let path = self.manifold_dir.join(format!("{}.leg", concept));
                         let block = crate::storage::read_block(&path).ok()?;
-                        Some(score_block(concept.clone(), query, &*block, None))
+                        Some(score_block(concept.clone(), query, &block, None))
                     })
                     .collect();
                 scored.sort_by(|a, b|
@@ -387,7 +388,7 @@ impl VsaBackend for CpuBackend {
                 if path.extension().and_then(|e| e.to_str()) != Some("leg") { return None; }
                 let concept = path.file_stem()?.to_str()?.to_string();
                 let block = crate::storage::read_block(&path).ok()?;
-                Some(score_block(concept, query, &*block, None))
+                Some(score_block(concept, query, &block, None))
             })
             .collect();
 

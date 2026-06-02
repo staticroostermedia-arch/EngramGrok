@@ -22,10 +22,10 @@
 //! - [`op_measure`] / [`op_collapse`] — Measurement + collapse primitives
 //! - [`quasi_ortho_check`] + [`quasi_ortho_recovery`] — Quasi-ortho + recovery checks
 //! - [`op_unbind`] — Public OP_UNBIND analog (holographic_unbind)
-//! All new ops preserve unit hypersphere (reuse normalize / normalize_in_place).
-//! Full SymplecticState frame integration via apply_frame / frame_combine before/after
-//! (see WS3-A tests and SymplecticState::apply_current_frame). ZEDOS_OPERATOR tag
-//! (types::ZEDOS_OPERATOR) for first-class operator blocks (no layout change).
+//!   All new ops preserve unit hypersphere (reuse normalize / normalize_in_place).
+//!   Full SymplecticState frame integration via apply_frame / frame_combine before/after
+//!   (see WS3-A tests and SymplecticState::apply_current_frame). ZEDOS_OPERATOR tag
+//!   (types::ZEDOS_OPERATOR) for first-class operator blocks (no layout change).
 
 use num_complex::Complex32;
 
@@ -160,9 +160,9 @@ pub fn normalize_in_place(vector: &mut [Complex32; 8192]) {
     let sq_sum: f32 = vector.iter().map(|v| v.re * v.re + v.im * v.im).sum();
     let l2 = sq_sum.sqrt();
     if l2 > 1e-8 {
-        for i in 0..8192 {
-            vector[i].re /= l2;
-            vector[i].im /= l2;
+        for v in vector.iter_mut() {
+            v.re /= l2;
+            v.im /= l2;
         }
     } else {
         for v in vector.iter_mut() {
@@ -371,7 +371,7 @@ pub fn op_dynamis(v: &[Complex32; 8192]) -> [Complex32; 8192] {
 /// **OP_COMPOSE** — Compose two VSA operators / vectors (chaining / product).
 /// Uses geometric product (Clifford-style) for simultaneous dot (similarity)
 /// + wedge (orthogonality) capture. Natural for operator pipelines in sheaf work.
-/// Binding analog for higher-order relations.
+///   Binding analog for higher-order relations.
 pub fn op_compose(a: &[Complex32; 8192], b: &[Complex32; 8192]) -> [Complex32; 8192] {
     op_geometric_product(a, b)
 }
