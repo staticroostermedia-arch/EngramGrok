@@ -328,6 +328,8 @@ People and their agents *will* want the skills/rituals we actually use so their 
 
 **Commit of this pass (2026-06-02)**: Atomic conventional commit `docs(skills): publish full ritual protocols + examples for external agents/Groks` (e5cd15ad) on feat/mvp-github-prep-2026-06. Staged only public surface (SKILLS.md + new examples/docs/examples + docs/skills/ files + updates to README/RITUALS/plan/AGENTS/CLAUDE). Excluded internals (design/, test-harness/, minor build.rs). Double-checked paths (only meta sanitization notes in plan), build clean, 14 files / ~650 lines. Git state post: clean for these changes. See commit message for details. This advances the "public face for agents" part of the MVP prep.
 
+**Push to EngramGrok public handoff (2026-06-02)**: Per user instruction, pushed the feat/mvp-github-prep-2026-06 branch to EngramGrok repo (public handoff/sanitized version) using explicit git push to git@github.com:staticroostermedia-arch/EngramGrok.git . Branch created successfully. Created PR #6 on EngramGrok: https://github.com/staticroostermedia-arch/EngramGrok/pull/6 with full details, ritual checklist, and links. (Separate from earlier PR #27 on main engram repo.) Dogfooded with engram trace + relate to goal. EngramGrok is the public handoff repo for external visibility.
+
 **Passive Spatial Ingestion Redesign (2026-06, closing the 'nonsense' item)**
 
 Why it couldn't "just passively ingest" before:
