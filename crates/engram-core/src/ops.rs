@@ -14,6 +14,18 @@
 //! - [`gram_schmidt`] — Orthogonalize a vector against a basis set
 //! - [`op_invert`] — Negate a concept (π phase rotation)
 //! - [`op_shift`] — Encode asymmetric relations (prime-stride permutation)
+//!
+//! Phase 2.2 extensions (goal:1780185084_phase-2-2-vsa-calculus-runtime-expansion_sub1,
+//! ZEDOS_OPERATOR support + frame integration):
+//! - [`op_dynamis`] — π/4 phase (roadmap primitive)
+//! - [`op_compose`] — Operator composition (geometric product)
+//! - [`op_measure`] / [`op_collapse`] — Measurement + collapse primitives
+//! - [`quasi_ortho_check`] + [`quasi_ortho_recovery`] — Quasi-ortho + recovery checks
+//! - [`op_unbind`] — Public OP_UNBIND analog (holographic_unbind)
+//!   All new ops preserve unit hypersphere (reuse normalize / normalize_in_place).
+//!   Full SymplecticState frame integration via apply_frame / frame_combine before/after
+//!   (see WS3-A tests and SymplecticState::apply_current_frame). ZEDOS_OPERATOR tag
+//!   (types::ZEDOS_OPERATOR) for first-class operator blocks (no layout change).
 
 use num_complex::Complex32;
 
@@ -148,9 +160,9 @@ pub fn normalize_in_place(vector: &mut [Complex32; 8192]) {
     let sq_sum: f32 = vector.iter().map(|v| v.re * v.re + v.im * v.im).sum();
     let l2 = sq_sum.sqrt();
     if l2 > 1e-8 {
-        for i in 0..8192 {
-            vector[i].re /= l2;
-            vector[i].im /= l2;
+        for v in vector.iter_mut() {
+            v.re /= l2;
+            v.im /= l2;
         }
     } else {
         for v in vector.iter_mut() {
@@ -328,6 +340,75 @@ fn apeiron_primitive() -> [Complex32; 8192] {
 pub fn op_suspend(v: &[Complex32; 8192]) -> [Complex32; 8192] {
     let apeiron = apeiron_primitive();
     op_bind(v, &apeiron)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase 2.2 VSA Calculus Extensions + ZEDOS_OPERATOR support
+// (goal:1780185084_phase-2-2-vsa-calculus-runtime-expansion_sub1)
+// Binding/OP_BIND analogs, composition, measurement/collapse, quasi-ortho recovery.
+// All outputs on unit hypersphere. Frame integration: callers use SymplecticState
+// (apply_current_frame) or ops::apply_frame / frame_combine before/after as
+// appropriate (extends existing WS3-A pattern in frame_combine/apply_frame).
+// ZEDOS_OPERATOR (0x4F) tags blocks representing these as first-class operators
+// (see types.rs; consumed by sheaf 2.4 / harmonics 2.5).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **OP_DYNAMIS** — π/4 phase rotation (roadmap "missing operation").
+/// Used for harmonic stepping and resonance injection in 432Hz Symplectic contexts.
+/// Binding analog: rotates the vector without destroying information (unit preserved).
+pub fn op_dynamis(v: &[Complex32; 8192]) -> [Complex32; 8192] {
+    let theta = std::f32::consts::PI / 4.0;
+    let cos_t = theta.cos();
+    let sin_t = theta.sin();
+    let mut out = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        out[i].re = v[i].re * cos_t - v[i].im * sin_t;
+        out[i].im = v[i].re * sin_t + v[i].im * cos_t;
+    }
+    normalize(&out)
+}
+
+/// **OP_COMPOSE** — Compose two VSA operators / vectors (chaining / product).
+/// Uses geometric product (Clifford-style) for simultaneous dot (similarity)
+/// + wedge (orthogonality) capture. Natural for operator pipelines in sheaf work.
+///   Binding analog for higher-order relations.
+pub fn op_compose(a: &[Complex32; 8192], b: &[Complex32; 8192]) -> [Complex32; 8192] {
+    op_geometric_product(a, b)
+}
+
+/// **OP_MEASURE** — Measurement primitive: cosine similarities of v against a basis set.
+/// Returns vector of scores in [-1,1]. Used for readout / attention in collapse paths.
+/// Quasi-ortho aware: low scores indicate recovery candidates.
+pub fn op_measure(v: &[Complex32; 8192], basis: &[&[Complex32; 8192]]) -> Vec<f32> {
+    basis.iter().map(|b| cosine_similarity(v, b)).collect()
+}
+
+/// **OP_COLLAPSE** — Collapse a superposed vector via attention mask (soft measurement).
+/// Binding/attend analog for reducing superposition to dominant component.
+/// Result unit-normalized. Frame-apply the inputs upstream for geo-aware collapse.
+pub fn op_collapse(superposed: &[Complex32; 8192], attention_mask: &[Complex32; 8192]) -> [Complex32; 8192] {
+    op_attend(superposed, attention_mask)
+}
+
+/// **quasi_ortho_check** — Returns true if |cos(a,b)| < thresh (quasi-orthogonal).
+/// Core for recovery gating and sheaf H¹ obstruction detection.
+pub fn quasi_ortho_check(a: &[Complex32; 8192], b: &[Complex32; 8192], thresh: f32) -> bool {
+    cosine_similarity(a, b).abs() < thresh
+}
+
+/// **quasi_ortho_recovery** — Recover the component of target orthogonal to the basis.
+/// Uses gram_schmidt (existing primitive). Returns unit vector. Essential for
+/// "against flat knowledge" — stripping known dimensions to surface novelty.
+/// ZEDOS_OPERATOR usage: apply to OPERATOR blocks for clean lifting.
+pub fn quasi_ortho_recovery(target: &[Complex32; 8192], basis: &[&[Complex32; 8192]]) -> [Complex32; 8192] {
+    gram_schmidt(target, basis)
+}
+
+/// **OP_UNBIND** — Public alias for holographic_unbind (OP_UNBIND analog).
+/// `op_unbind(result, role) ≈ filler` when result = op_bind(role, filler).
+/// Complements op_bind for full role-filler calculus exposure.
+pub fn op_unbind(result: &[Complex32; 8192], role: &[Complex32; 8192]) -> [Complex32; 8192] {
+    holographic_unbind(result, role)
 }
 
 // ── Lyapunov Stability Tracker (Task 3) ───────────────────────────────────────
@@ -749,6 +830,71 @@ fn project(a: &[Complex32; 8192], b: &[Complex32; 8192]) -> [Complex32; 8192] {
     proj
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// WS3-A Substrate Phase 2: frame_combine / apply_frame (live Geosphere 5th coord)
+// + Phase 2.2 ZEDOS_OPERATOR extensions (goal:1780185084_phase-2-2-vsa-calculus-runtime-expansion_sub1)
+//
+// These are the core primitives implementing "basic frame application operations"
+// for the child goal goal:1780165889_substrate-cs--live-geosphere-5th-coordin_sub2
+// and the 2.2 VSA calculus expansion.
+//
+// Contract (per formal_spec tile + roadmap):
+//   • Accepts query vector + geosphere lens (both [Complex32;8192])
+//   • Returns result strictly on the unit hypersphere (|z| = 1.0)
+//   • Uses OP_BIND-style combination (phase rotation via Hadamard) — the
+//     mathematically natural "frame shift" in FHRR VSA
+//   • Pure, allocation-free hot path, no side effects
+//   • Lawfulness tests below + in types (via SymplecticState) verify invariant
+//
+// Phase 2.2: New VSA ops (op_dynamis, op_compose, op_measure/collapse, quasi_ortho_*,
+// op_unbind) are frame-integrable by applying apply_frame / SymplecticState::apply_current_frame
+// to inputs/outputs (see extended lawfulness tests). ZEDOS_OPERATOR tag enables
+// first-class operator blocks for downstream sheaf/harmonics consumption.
+//
+// Future evolution (still within guardrails): may be accelerated in GPU kernels
+// or composed with geometric_product / sheaf ops, but the named entry points
+// remain stable for callers (daemon SymplecticState, MCP geosphere surface,
+// query paths).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **frame_combine** (WS3-A) — Combine query with geosphere lens, unit hypersphere.
+///
+/// This is the primitive for applying a live 5th-coordinate frame (lens) to
+/// a query vector. The lens encodes a coordinate origin + temporal offset
+/// (e.g., Giza sacred cubit reference frame at a given planetary rotation).
+///
+/// Semantics: element-wise multiplication (Hadamard product) rotates the
+/// query phases into the lens frame. Equivalent to binding the query to the
+/// frame descriptor under FHRR. Result is re-normalized.
+///
+/// All outputs satisfy the invariant:
+///   Σ (re² + im²) ≈ 1.0   (within f32 accumulation tolerance ~1e-4 across 8192 dims)
+///
+/// Used by SymplecticState::apply_current_frame and future query hot-paths.
+pub fn frame_combine(query: &[Complex32; 8192], lens: &[Complex32; 8192]) -> [Complex32; 8192] {
+    let mut combined = [Complex32::default(); 8192];
+    for i in 0..8192 {
+        combined[i] = query[i] * lens[i];
+    }
+    normalize(&combined)
+}
+
+/// **apply_frame** (WS3-A) — Optional-lens convenience wrapper around frame_combine.
+///
+/// When `lens` is `Some`, delegates to `frame_combine`.
+/// When `None`, returns a freshly normalized copy of `query` (identity transform).
+///
+/// This is the single stable API surface for "apply geosphere frame or not"
+/// in query paths, SymplecticState, and MCP surfaces. Guarantees normalization
+/// on every return path.
+#[inline]
+pub fn apply_frame(query: &[Complex32; 8192], lens: Option<&[Complex32; 8192]>) -> [Complex32; 8192] {
+    match lens {
+        Some(l) => frame_combine(query, l),
+        None => normalize(query),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,5 +950,118 @@ mod tests {
         let normed = normalize(&v);
         let mag: f32 = normed.iter().map(|c| c.re * c.re + c.im * c.im).sum::<f32>().sqrt();
         assert!((mag - 1.0).abs() < 1e-4, "magnitude not 1.0: {mag}");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // WS3-A Lawfulness Tests (goal:1780165889_substrate-cs--live-geosphere-5th-coordin_sub2)
+    // Verify frame_combine / apply_frame + SymplecticState (via types) obey:
+    //   • All outputs on unit hypersphere
+    //   • Determinism & distinctness under frame shift
+    //   • Identity lens is near-noop (after normalize)
+    // These are the "lawfulness tests" deliverable.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn frame_combine_and_apply_frame_preserve_unit_hypersphere() {
+        let q = hash_vec("query:knowledge");
+        let lens = hash_vec("lens:giza_cubit_origin");
+
+        let combined = frame_combine(&q, &lens);
+        let mag: f32 = combined.iter().map(|c| c.re * c.re + c.im * c.im).sum::<f32>().sqrt();
+        assert!((mag - 1.0).abs() < 1e-4, "frame_combine magnitude not 1.0: {mag}");
+
+        let applied = apply_frame(&q, Some(&lens));
+        let mag2: f32 = applied.iter().map(|c| c.re * c.re + c.im * c.im).sum::<f32>().sqrt();
+        assert!((mag2 - 1.0).abs() < 1e-4, "apply_frame magnitude not 1.0: {mag2}");
+
+        // None path (identity transform)
+        let id = apply_frame(&q, None);
+        let mag3: f32 = id.iter().map(|c| c.re * c.re + c.im * c.im).sum::<f32>().sqrt();
+        assert!((mag3 - 1.0).abs() < 1e-4, "apply_frame(None) magnitude not 1.0: {mag3}");
+    }
+
+    #[test]
+    fn frame_combine_with_identity_is_normalized_query() {
+        let q = hash_vec("some:concept");
+        let id_lens = [Complex32::new(1.0, 0.0); 8192]; // multiplicative identity (neutral frame)
+
+        let out = frame_combine(&q, &id_lens);
+        let q_norm = normalize(&q);
+        let sim = cosine_similarity(&out, &q_norm);
+        assert!(sim > 0.999, "identity lens must yield nearly identical normalized query (got {sim})");
+    }
+
+    #[test]
+    fn frame_shift_produces_distinct_but_valid_vector() {
+        let q = hash_vec("base:vector");
+        let lens = hash_vec("frame:shifted_origin");
+
+        let shifted = frame_combine(&q, &lens);
+        // Must still be valid unit
+        let mag: f32 = shifted.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((mag-1.0).abs() < 1e-4);
+
+        // Distinct from original (unless lens == id, which it isn't)
+        let sim = cosine_similarity(&shifted, &q);
+        assert!(sim.abs() < 0.98, "frame shift should move the vector meaningfully (sim={sim})");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Phase 2.2 VSA + ZEDOS_OPERATOR Lawfulness (extends WS3-A style)
+    // goal:1780185084_phase-2-2-vsa-calculus-runtime-expansion_sub1
+    // Verifies: new ops on unit hypersphere, frame integration via SymplecticState
+    // + apply_frame, recovery (unbind/measure/ortho), quasi-ortho behavior,
+    // ZEDOS tag compatibility (via types reexport). All per charter invariants.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn phase2_2_zedos_operator_primitives_preserve_unit_and_frame_integration() {
+        use crate::types::SymplecticState;
+        use crate::ZEDOS_OPERATOR; // tag value available for future block minting
+
+        let mut state = SymplecticState::new();
+        let lens = hash_vec("lens:phase2.2-test-giza");
+        state.set_current_lens(lens, Some("phase2.2:test".to_string()));
+
+        let a = hash_vec("op-role:phase2.2");
+        let b = hash_vec("op-filler:phase2.2");
+
+        // Frame before bind (integration pattern)
+        let a_framed = state.apply_current_frame(&a);
+        let b_framed = state.apply_current_frame(&b);
+        let bound = op_bind(&a_framed, &b_framed);
+        let mag_b: f32 = bound.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((mag_b - 1.0).abs() < 1e-4, "framed op_bind not unit");
+
+        // New ops
+        let dyn_v = op_dynamis(&a);
+        let mag_d: f32 = dyn_v.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((mag_d - 1.0).abs() < 1e-4);
+
+        let composed = op_compose(&a, &b);
+        let mag_c: f32 = composed.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((mag_c - 1.0).abs() < 1e-4);
+
+        let measures = op_measure(&bound, &[&a, &b]);
+        assert_eq!(measures.len(), 2);
+        // recovery via unbind
+        let recovered = op_unbind(&bound, &a_framed);
+        let sim_rec = cosine_similarity(&recovered, &b_framed);
+        assert!(sim_rec > 0.90, "2.2 unbind recovery low: {sim_rec}");
+
+        // collapse + measure
+        let collapsed = op_collapse(&bound, &a);
+        let mag_coll: f32 = collapsed.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((mag_coll - 1.0).abs() < 1e-4);
+
+        // quasi ortho
+        let ortho = quasi_ortho_check(&a, &b, 0.6);
+        // random hash vecs are typically <0.5 cos, so true
+        let recovered_ortho = quasi_ortho_recovery(&bound, &[&a]);
+        let mag_o: f32 = recovered_ortho.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((mag_o - 1.0).abs() < 1e-4);
+
+        // ZEDOS tag value is the expected constant (for block tagging of operators)
+        assert_eq!(ZEDOS_OPERATOR, 0x4F);
     }
 }

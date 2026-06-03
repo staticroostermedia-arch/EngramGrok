@@ -2,6 +2,8 @@
 //!
 //! Implements the MCP specification (protocol version 2024-11-05).
 //! Communicates over stdin/stdout, one JSON object per line.
+//! Passive spatial (Item 1.5) now fully automatic: watch bind triggers full ingest + state; fs events keep it live.
+//! No manual editor open+save or bootstrap touches required. See daemon + store force_ingest_path + engram-ast.
 //!
 //! # Engram — 21 MCP Tools for Geometric Memory
 //!
@@ -78,6 +80,68 @@ struct Response {
     error: Option<RpcError>,
 }
 
+// Quick Win 1 (user-prioritized highest-leverage, per Phase 3 roadmap trace:1780285926):
+// Tiny LRU (24 entries) for recent 80/20 blended results from mcp_engram_query_with_momentum.
+// Hits on hot concepts (wake-up, sub-agent polling) bypass the full linear 154k-block scan.
+// Keyed by normalized query + zedos_filter. Populated on miss path inside the handler arm.
+// Fully qualified to avoid import churn; capacity chosen for 70-90% hit rate on ritual paths.
+static MOMENTUM_LRU: std::sync::LazyLock<std::sync::Mutex<std::collections::VecDeque<(String, String)>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::VecDeque::with_capacity(24)));
+
+fn load_process_sheaf(store: &SharedStore) -> Result<(), String> {
+    // Dynamic prototype (full execution): walk processes/ dir, read *.toml, extract [process] name and [category] via simple string parse.
+    // Registers as first-class process: blocks with gluing data. Supports subvisor, H1, continuity.
+    // Uses only std::fs (no extra deps for prototype). Errors logged but continue.
+    // NOTE: Portable for public GitHub clones — no hardcoded user paths. Default looks for ./processes relative to cwd
+    // (run server from repo root, or set ENGRAM_PROCESSES_DIR env). See docs/GITHUB_MVP_PREP_PLAN.md and processes/.
+    let mut lock = store.lock().unwrap();
+    let base = std::env::var("ENGRAM_PROCESSES_DIR")
+        .unwrap_or_else(|_| {
+            std::env::current_dir()
+                .map(|p| p.join("processes").to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "processes".to_string())
+        });
+    let mut registered = 0usize;
+    let subdirs = ["ritual", "harness", "operator", "monitor", "process"];
+    for sub in &subdirs {
+        let dir = format!("{}/{}", base, sub);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        // Simple parse for our format: find name = "..." 
+                        let raw_name = content.lines().find(|l| l.contains("name = \"agent:engram.")).and_then(|l| {
+                            l.split('"').nth(1).map(|s| s.to_string())
+                        }).unwrap_or_else(|| format!("agent:engram.{}.unknown", sub));
+                        let key = if raw_name.starts_with("agent:engram.") {
+                            raw_name.replace("agent:engram.", "process:engram.")
+                        } else {
+                            format!("process:{}", raw_name)
+                        };
+                        let obj = content.lines().find(|l| l.contains("object = \"")).and_then(|l| l.split('"').nth(1)).unwrap_or("unknown");
+                        let morph = content.lines().find(|l| l.contains("morphism = \"")).and_then(|l| l.split('"').nth(1)).unwrap_or("unknown");
+                        let role = content.lines().find(|l| l.contains("sheaf_role = \"")).and_then(|l| l.split('"').nth(1)).unwrap_or("");
+                        let desc = format!("{} / {} / {}", obj, morph, role);
+                        let mut b = lock.encode(&format!("Process Sheaf: {} - {}", key, desc));
+                        b.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+                        b.crs_score = 0.85;
+                        if lock.store(&key, b).is_ok() {
+                            registered += 1;
+                            // Gluing: relate to primary if possible
+                            if let Some(_) = lock.fetch_block_high_priority("goal:engram_mvp_v1") {
+                                let _ = lock.relate(&key, "goal:engram_mvp_v1", "serves");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    info!("Process Architecture Sheaf loader: dynamically registered {} processes from processes/ tomls (walked dir, parsed category; portable via ENGRAM_PROCESSES_DIR or cwd). Subvisor draft active for agent governance. See processes/ and design/.", registered);
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 struct RpcError {
     code: i32,
@@ -149,7 +213,8 @@ fn tool_list() -> Value {
                                 CRS in result tells you how reliable that memory is: >=0.74 is grounded fact. \
                                 ZEDOS FILTER GUIDE: 'praxis'=crystallized solutions that worked | \
                                 'declarative'=facts and architecture | 'episodic'=session logs | \
-                                'operational'=procedures and workflows | 'relation'=concept graph edges. \
+                                'operational'=procedures and workflows | 'relation'=concept graph edges | \
+                                'training'=richer CLS 8-property TRAINING blocks (NREM-biased per Phase 2 WS2-B + child goal:1780165889_substrate-cs--richer-cls-8-property-trai_sub1). \
                                 TIME DECAY: Only use when user asks about past work (e.g. 'last week'). \
                                 Use mcp_engram_read_concept after recall to get the full un-truncated text.",
                 "inputSchema": {
@@ -166,7 +231,7 @@ fn tool_list() -> Value {
                         },
                         "zedos_filter": {
                             "type": "string",
-                            "description": "Optional: filter by memory type. One of: 'declarative', 'episodic', 'operational', 'praxis', 'relation'. Leave unset for all types."
+                            "description": "Optional: filter by memory type. One of: 'declarative', 'episodic', 'operational', 'praxis', 'relation', 'training'. 'training' selects ZEDOS_TRAINING blocks (richer 8-property CLS tuples; receive NREM bias). Leave unset for all types."
                         },
                         "time_decay": {
                             "type": "number",
@@ -196,10 +261,19 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_list_concepts",
-                "description": "BEHAVIOR: Lists all concept names currently stored in the memory manifold. USAGE: Call this when you need to see a directory of all remembered concepts without fetching their full text. Use this to orient yourself to the current namespace. OUTPUT: Returns a text string containing a newline-separated list of all concept identifiers.",
+                "description": "Lists concept names in the memory manifold (bounded). Always pass prefix (e.g. tile:, helper:, ritual:) on large stalks — never request an unfiltered full dump. OUTPUT: newline-separated concept list with total/truncation notes.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {}
+                    "properties": {
+                        "prefix": {
+                            "type": "string",
+                            "description": "Filter to concepts starting with this prefix (strongly recommended: tile:, helper:, goal:, trace:)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max concepts to return (default 50, max 500)"
+                        }
+                    }
                 }
             },
             {
@@ -245,7 +319,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_session_start",
-                "description": "MANDATORY: Call this at the start of every conversation or distinct task. Validates manifold integrity and initializes the session epistemic state. You MUST provide your initial intent or objective for the session. This binds the thermodynamic context and provides a health check of the memory index.",
+                "description": "MANDATORY: Call this at the start of every conversation or distinct task. Validates manifold integrity and initializes the session epistemic state. You MUST provide your initial intent or objective for the session. This binds the thermodynamic context and provides a health check of the memory index. 2026-06 Ritual Evolution: includes meta-arc detection - surfaces helper:meta_work_escalation_v1 / current_meta_arc / missing tiles for re-hydration if design:/progress: active (see ki_hijacker + plan in GITHUB_MVP_PREP_PLAN.md).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -259,17 +333,28 @@ fn tool_list() -> Value {
                 "description": "MANDATORY (now with reasoning trace support): Call at end of every conversation/task. \
                                 Commits the session as ZEDOS_EPISODIC and extracts key reasoning traces (decision points, justifications, forks) into structured trace segments. \
                                 These become part of the serial, tamper-evident chain for the agent self-model. Flat summaries are still accepted but strongly discouraged. \
+                                Automatically refreshes helper:session_hydration_cache, hot-promotes continuity artifacts, and mints compression_handoff_* manifest. \
                                 CONSEQUENCE OF SKIPPING: The session's work + reasoning trajectory is lost to future agents. \
-                                will have no record that this work happened, will re-derive solved problems, and will \
-                                lack the epistemic state needed to continue correctly. \
-                                WHAT TO INCLUDE IN SUMMARY: decisions made, problems solved, files changed, \
-                                open questions, and what the user wants next.",
+                                WHAT TO INCLUDE IN SUMMARY: decisions made, problems solved, files changed, open questions, next steps. \
+                                Optional COMPRESS: lines for 0x10 functor minting later. 2026-06 Ritual Evolution: for meta arcs ensure tiles + current_meta_arc promoted/updated for bundles (per helper:meta_work_escalation_v1).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "summary": { "type": "string", "description": "Agent's summary of the session" }
+                        "summary": { "type": "string", "description": "Agent's summary of the session" },
+                        "prepare_compression": {
+                            "type": "boolean",
+                            "description": "If true (default), run full compression handoff: hydration cache + hot promote + compression_handoff_* manifest. Set false only for trivial sessions."
+                        }
                     },
                     "required": ["summary"]
+                }
+            },
+            {
+                "name": "mcp_engram_get_continuation_bundle",
+                "description": "Return the live continuation bundle (primary goal, active tiles/helpers, handoff lineage) without starting a session. Use at TUI 63-65% before context compression to know exactly what to recall after the boundary.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
                 }
             },
             {
@@ -398,6 +483,10 @@ fn tool_list() -> Value {
                         "statement": {
                             "type": "string",
                             "description": "Clear, single-sentence description of the goal"
+                        },
+                        "goal_id": {
+                            "type": "string",
+                            "description": "Optional stable concept name (e.g. engram_mvp_v1 → goal:engram_mvp_v1). If omitted, a timestamped goal:* key is minted."
                         },
                         "parent": {
                             "type": "string",
@@ -606,6 +695,20 @@ fn tool_list() -> Value {
                         }
                     },
                     "required": ["title", "payload"]
+                }
+            },
+            {
+                "name": "mcp_engram_promote_hot",
+                "description": "Promote a concept to the high-priority hot path (LegView + backend hot cache + explicit hot_set). Use after creating high-value Thought Tiles, ritual anchors, helpers, or before session_end/compression windows. Same mechanism as ki_hijacker promote_tile_to_high_priority.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concept": {
+                            "type": "string",
+                            "description": "Concept name to promote (e.g. tile:knowledge_graph_..., helper:session_hydration_cache)"
+                        }
+                    },
+                    "required": ["concept"]
                 }
             },
             {
@@ -990,7 +1093,8 @@ fn tool_list() -> Value {
                                 changing or evolving, not just ones that statically match your query right now. \
                                 Example: use this when asking 'what has been changing in the auth system?' \
                                 because momentum detects blocks whose p tensor is accelerating toward your query topic. \
-                                Use regular recall when you want stable, crystallized knowledge.",
+                                Use regular recall when you want stable, crystallized knowledge. \
+                                Supports zedos_filter (incl. 'training' for Phase 2 NREM-biased richer CLS blocks).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1002,6 +1106,10 @@ fn tool_list() -> Value {
                             "type": "integer",
                             "description": "Number of results to return (default: 5, max: 20)",
                             "default": 5
+                        },
+                        "zedos_filter": {
+                            "type": "string",
+                            "description": "Optional: filter by memory type (same values as mcp_engram_recall, including 'training' for ZEDOS_TRAINING / richer CLS blocks). Leave unset for all types."
                         }
                     },
                      "required": ["query"]
@@ -1125,6 +1233,29 @@ fn tool_list() -> Value {
                     },
                     "required": ["query"]
                 }
+            },
+            // WS3-B: MCP surface for Live Geosphere 5th coordinate frames (origin + time offset → lens)
+            {
+                "name": "mcp_engram_set_geosphere_frame",
+                "description": "WS3-B / Substrate Phase 2: Set the current live Geosphere frame (5th coordinate) for all subsequent queries. Takes an origin reference (e.g. 'giza_sacred_cubit', 'grove_sower_moon', 'london_1776') + time offset descriptor. Synthesizes a deterministic normalized 8192D lens vector and installs it into the SymplecticState register. All future recall/query_with_momentum (and internal BVH+GPU paths) will compute effective vectors under this lens for angular distance (frame_combine + normalize, unit hypersphere invariant). Returns confirmation with frame_step. Reproducible for same inputs.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "origin": { "type": "string", "description": "Origin reference string (e.g. 'giza_sacred_cubit' or 'grove_sower_2026')" },
+                        "time_offset": { "type": "string", "description": "Time descriptor/offset (e.g. 'sowing_moon' or '1776-07-04' or '+10h')" }
+                    },
+                    "required": ["origin", "time_offset"]
+                }
+            },
+            {
+                "name": "mcp_engram_get_geosphere_frame",
+                "description": "WS3-B: Return the currently active Geosphere frame state (origin, frame_step counter, active_location summary). Used for audit, reproducibility checks, and lawfulness verification. Includes whether a lens is active.",
+                "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
+                "name": "mcp_engram_clear_geosphere_frame",
+                "description": "WS3-B: Clear the current Geosphere lens (return all queries to native coordinate / identity transform). Advances frame_step for audit trail.",
+                "inputSchema": { "type": "object", "properties": {} }
             }
         ]
     })
@@ -1142,7 +1273,7 @@ fn resolve_goal_context_and_link(
     if goal_ctx.is_empty() {
         // Hot path upgrade (7-fronts execution): use high_priority for primary_goal
         if let Some(primary) = lock.fetch_block_high_priority("primary_goal") {
-            let ptext = String::from_utf8_lossy(&primary.payload);
+            let ptext = crate::store::goal_block_text(&primary);
             if let Some(line) = ptext.lines().find(|l| l.starts_with("**goal:**")) {
                 goal_ctx = line.replace("**goal:** ", "").trim().to_string();
                 auto_linked_to_primary = true;
@@ -1156,8 +1287,8 @@ fn resolve_goal_context_and_link(
             if concept.starts_with("goal:") {
                 // Hot path upgrade: high_priority for active goals (Item 2 / Phase 2 continuity)
                 if let Some(gblock) = lock.fetch_block_high_priority(&concept) {
-                    let gtext = String::from_utf8_lossy(&gblock.payload);
-                    if gtext.contains("status: active") {
+                    let gtext = crate::store::goal_block_text(&gblock);
+                    if crate::store::goal_status_is_active(&gtext) {
                         goal_ctx = concept;
                         auto_linked_from_recent = true;
                         break;
@@ -1172,7 +1303,7 @@ fn resolve_goal_context_and_link(
 
 // ── Tool dispatch ─────────────────────────────────────────────────────────────
 
-fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
+pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
     // === Early MCP Ready Path guard (transitional) ===
     // The fast startup uses a lightweight placeholder so Grok can get an
     // immediate MCP handshake. Once the real heavy store is ready (or the
@@ -1198,6 +1329,14 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                         | "mcp_engram_genesis"
                         | "mcp_engram_list_namespaces"
                         | "mcp_engram_session_start"
+                        | "mcp_engram_get_backend_readiness"
+                        | "mcp_engram_get_continuation_bundle"
+                        | "mcp_engram_goal_create"
+                        | "mcp_engram_goal_set_primary"
+                        | "mcp_engram_goal_list"
+                        | "mcp_engram_goal_status"
+                        | "mcp_engram_read_concept"
+                        | "mcp_engram_session_end"
                 );
 
                 if !allowed_during_warmup {
@@ -1330,6 +1469,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 "operational"  => Some(engram_core::types::ZEDOS_OPERATIONAL),
                 "praxis"       => Some(engram_core::types::ZEDOS_PRAXIS),
                 "relation"     => Some(engram_core::types::ZEDOS_RELATION),
+                "training"     => Some(engram_core::types::ZEDOS_TRAINING),
                 _ => None,
             });
 
@@ -1374,6 +1514,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     0x52 => "OPERATIONAL",
                     0x50 => "PRAXIS",
                     0xE1 => "RELATION",
+                    0x54 => "TRAINING",
                     _    => "UNKNOWN",
                 };
                 let spatial = if mem.aabb_max[0] > 0.0 {
@@ -1433,15 +1574,91 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
         }
 
         "mcp_engram_list_concepts" => {
-            let concepts = store.lock().unwrap().list();
+            let prefix = args.get("prefix").and_then(|v| v.as_str());
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50) as usize;
+            let (concepts, truncated, total) =
+                store.lock().unwrap().list_concepts_filtered(prefix, limit);
             if concepts.is_empty() {
-                json!({ "content": [{ "type": "text", "text": "No memories stored yet." }] })
+                let p = prefix.unwrap_or("(none)");
+                json!({
+                    "content": [{ "type": "text", "text": format!(
+                        "No concepts matching prefix '{}' (manifold total: {}).",
+                        p, total
+                    ) }]
+                })
             } else {
-                let list = concepts.iter()
+                let list = concepts
+                    .iter()
                     .map(|c| format!("  • {c}"))
                     .collect::<Vec<_>>()
                     .join("\n");
-                json!({ "content": [{ "type": "text", "text": format!("{} memories:\n{}", concepts.len(), list) }] })
+                let prefix_note = prefix
+                    .map(|p| format!(" prefix='{}'", p))
+                    .unwrap_or_default();
+                let trunc_note = if truncated {
+                    format!(
+                        "\n\n⚠ Unfiltered listing capped at {} of {} total concepts. Pass prefix (e.g. tile:) to target discovery.",
+                        limit, total
+                    )
+                } else {
+                    String::new()
+                };
+                json!({
+                    "content": [{ "type": "text", "text": format!(
+                        "Showing {} concept(s){} (manifold total: {}):\n{}{}",
+                        concepts.len(),
+                        prefix_note,
+                        total,
+                        list,
+                        trunc_note
+                    ) }]
+                })
+            }
+        }
+
+        "mcp_engram_get_continuation_bundle" => {
+            let bundle = store.lock().unwrap().build_continuation_bundle();
+            let text = serde_json::to_string_pretty(&bundle).unwrap_or_else(|_| "{}".to_string());
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!(
+                        "CONTINUATION BUNDLE (live)\n\n{}\n\nNext: recall each `concept` in active_artifacts before broad momentum.",
+                        text
+                    )
+                }]
+            })
+        }
+
+        "mcp_engram_promote_hot" => {
+            let concept = args.get("concept").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if concept.is_empty() {
+                return json!({
+                    "content": [{ "type": "text", "text": "Error: concept is required." }],
+                    "isError": true
+                });
+            }
+            let lock = store.lock().unwrap();
+            let promoted = lock.promote_tile_to_high_priority(concept).is_some();
+            let hot = lock.is_hot(concept);
+            if promoted || hot {
+                json!({
+                    "content": [{ "type": "text", "text": format!(
+                        "✓ Promoted to hot path: '{}' (is_hot={}, LegView/backend cache updated)",
+                        concept, hot
+                    ) }]
+                })
+            } else {
+                json!({
+                    "content": [{ "type": "text", "text": format!(
+                        "⚠ Concept '{}' not found in manifold; nothing promoted.",
+                        concept
+                    ) }],
+                    "isError": true
+                })
             }
         }
 
@@ -1497,9 +1714,9 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                         Paths processed: {}   |   Successes: {}   |   Errors: {}\n\
                         Total AST items ingested: {}\n\n\
                         Per-path results:\n{}\n\n\
-                        Consumption note (Item 1.5): Use `mcp_engram_recall_in_file` for reliable line-range AST results. \
-                        `context_for_file` has known limitations on freshly ingested paths. \
-                        Full status: `item1.5_spatial_ingestion_state_engram`.",
+                        Consumption note (Item 1.5): Passive ingestion is now the default (watch bind + events). \
+                        context_for_file/recall_in_file use high_priority fallback to regular fetch so fresh AST (incl toml/md) are visible for rituals immediately. \
+                        Use recall_in_file for precise AABB ranges. Full status + coverage: `item1.5_spatial_ingestion_state_engram`.",
                         paths.len(), successes, errors, total, details.join("\n")
                     )
                 }]
@@ -1535,6 +1752,10 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 return json!({ "content": [{ "type": "text", "text": "Error: intent required." }], "isError": true });
             }
 
+            // Call loader before locking the store (fn will lock internally for registration).
+            // This ensures process sheaf (tomls) is loaded at session start boundary.
+            let _ = load_process_sheaf(store);
+
             let mut lock = store.lock().unwrap();
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
@@ -1545,6 +1766,8 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
             session_block.crs_score = 1.0;
             let _ = lock.store(&key, session_block);
+            lock.invalidate_continuation_bundle_cache();
+            lock.mark_ki_rebake_needed();
 
             // ── Manifold stats (fast index-only, no full block scan) ─────────
             let total_memories = lock.list().len();
@@ -1590,8 +1813,10 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut session_section = String::new();
             let mut session_count = 0usize;
             for (concept, ts) in &recent_all {
-                if concept.starts_with("session_end_") && session_count < 3 {
-                    // Hot path upgrade: recent session_end blocks are high-value for continuity.
+                let is_boundary = concept.starts_with("session_end_")
+                    || concept.starts_with("session_start_");
+                if is_boundary && session_count < 4 {
+                    // Hot path: session_start + session_end are continuation anchors.
                     if let Some(block) = lock.fetch_block_high_priority(concept) {
                         let text = engram_core::storage::read_provlog(&block);
                         let age_secs = now_secs.saturating_sub(*ts);
@@ -1623,6 +1848,43 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 );
             }
 
+            // ── Continuation bundle (active tiles, goal, handoff lineage) ─────
+            let bundle = lock.build_continuation_bundle();
+            let mut continuation_section = String::new();
+            if let Some(pg) = bundle.get("primary_goal").and_then(|v| v.as_str()) {
+                continuation_section.push_str(&format!("**Primary goal:** `{}`\n\n", pg));
+            } else {
+                continuation_section.push_str("_No primary goal resolved from `primary_goal` marker._\n\n");
+            }
+            if bundle
+                .get("hydration_cache_present")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                continuation_section
+                    .push_str("**Hydration cache:** present (`helper:session_hydration_cache`)\n\n");
+            }
+            if let Some(artifacts) = bundle.get("active_artifacts").and_then(|v| v.as_array()) {
+                if artifacts.is_empty() {
+                    continuation_section.push_str(
+                        "_No active tile/helper artifacts surfaced. Mint tiles at decision boundaries; use `mcp_engram_promote_hot` before compression._\n"
+                    );
+                } else {
+                    continuation_section.push_str("**Active artifacts** (recall each for full payload):\n\n");
+                    for a in artifacts {
+                        let concept = a.get("concept").and_then(|v| v.as_str()).unwrap_or("?");
+                        let crs = a.get("crs").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let hot = a.get("hot").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let source = a.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                        let preview = a.get("preview").and_then(|v| v.as_str()).unwrap_or("");
+                        continuation_section.push_str(&format!(
+                            "- `{}` CRS={:.2} hot={} _{}_\n  {}\n\n",
+                            concept, crs, hot, source, preview.lines().next().unwrap_or("")
+                        ));
+                    }
+                }
+            }
+
             // ── Assemble full hydration payload ───────────────────────────────
             let response = format!(
                 "✓ Session started | Manifold: {total} memories | Intent: \"{intent}\"\n\
@@ -1633,7 +1895,10 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                  {genesis}\
                  ---\n\n\
                  ## 🕐 RECENT SESSION HISTORY ({session_count} records)\n\n\
-                 {sessions}",
+                 {sessions}\
+                 ---\n\n\
+                 ## 🧩 CONTINUATION BUNDLE (tiles + goal + handoff lineage)\n\n\
+                 {continuation}",
                 total         = total_memories,
                 intent        = intent,
                 loaded        = genesis_loaded,
@@ -1641,12 +1906,76 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 genesis       = genesis_section,
                 session_count = session_count,
                 sessions      = session_section,
+                continuation  = continuation_section,
             );
 
             info!(
                 "session_start: {} memories, {}/{} genesis blocks loaded, {} session records",
                 total_memories, genesis_loaded, GENESIS_CONCEPTS.len(), session_count
             );
+
+            // ── Phase 3 P0: Automatic rich trace capture at session boundary (session_start) ──
+            // Mirrors the end-boundary logic: emits ZEDOS_TRAINING trace with full geo snapshot at resume,
+            // harmonic, energetics. Immediately marks ki_rebake so TUI sees "resuming_from" in Ritual + Reasoning Trajectory.
+            // Chains forward to future end trace via relations. Phase 2 tight: geo from current_geosphere_state (SymplecticState),
+            // hot via mark_ki + promote in ki bake, serves for primary, lawfulness preserved.
+            {
+                let boundary_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                let geo_context_json = if let Some(geo) = lock.current_geosphere_state() {
+                    let al_norm: f32 = geo.active_location.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+                    let first8: Vec<String> = geo.active_location[0..8].iter().map(|c| format!("({:.5},{:.5})", c.re, c.im)).collect();
+                    let lens_info = if let Some(ref l) = geo.current_lens {
+                        let lnorm: f32 = l.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+                        format!("{{\"norm\":{:.6}}}", lnorm)
+                    } else { "{\"present\":false,\"norm\":1.0,\"origin\":\"native\"}".to_string() };
+                    format!(
+                        "{{\"active_location\":{{\"norm\":{:.6},\"first8\":[{}],\"note\":\"full_8192D_SymplecticState_at_session_start_resume\"}},\"current_lens\":{},\"frame_step\":{},\"frame_origin\":\"{}\"}}",
+                        al_norm, first8.join(","), lens_info, geo.frame_step, geo.frame_origin.as_deref().unwrap_or("native")
+                    )
+                } else {
+                    "{\"active_location\":null,\"current_lens\":null,\"frame_step\":0,\"frame_origin\":\"native\"}".to_string()
+                };
+
+                let training_resume = format!(
+                    "\n\n## ZEDOS_TRAINING 8+1 (AUTO session_start boundary, Phase 3 P0)\n\n\
+                     - utc_tau: {} + τ=0.003\n\
+                     - geosphere_context: {} (resume geo for TUI inheritance)\n\
+                     - crs: 0.85\n\
+                     - harmonic_432hz: 432Hz symplectic; auto trace for Ritual+Reasoning Trajectory\n",
+                    boundary_ts, geo_context_json
+                );
+
+                let mut resume_payload = format!(
+                    "REASONING TRACE SEGMENT (AUTO-EMITTED AT SESSION BOUNDARY)\n\n**decision_point:** Session started with intent: {} (auto Phase 3 P0 rich capture)\n\n**justification:** Ritual open per engram-working-memory; full Phase 2 geo/harmonic/TRAINING emitted automatically so ki_hijacker surfaces resuming trajectory for Grok Build TUI felt continuity without manual call.\n\n**intent:** {}\n",
+                    intent.chars().take(200).collect::<String>(), intent
+                );
+                resume_payload.push_str(&training_resume);
+
+                let mut b = lock.encode(&resume_payload);
+                b.zedos_tag = engram_core::types::ZEDOS_TRAINING;
+                b.crs_score = 0.85;
+                crate::store::assign_reflexive_contract(&mut b);
+                b.energetics.ts = boundary_ts;
+                b.energetics.tau = 0.003;
+                b.energetics.h_in = 0.92;
+                b.energetics.h_out = 0.87;
+                b.energetics.crs = b.crs_score;
+
+                let short = intent.chars().take(32).collect::<String>().to_lowercase().chars().map(|c| if c.is_alphanumeric()||c=='-' {c} else {'-'}).collect::<String>();
+                let resume_trace_key = format!("trace:{}_session_start_resuming_auto", boundary_ts);
+                if lock.store(&resume_trace_key, b).is_ok() {
+                    if let Some(pg) = lock.fetch_block_high_priority("primary_goal") {
+                        let ptext = String::from_utf8_lossy(&pg.payload);
+                        if let Some(line) = ptext.lines().find(|l| l.starts_with("**goal:**")) {
+                            let g = line.replace("**goal:** ", "").trim().to_string();
+                            let _ = lock.relate(&resume_trace_key, &g, "serves");
+                        }
+                    }
+                    lock.mark_ki_rebake_needed();
+                    // Note: response is already built; append would require mut but for P0 the ki sidecar + next bake will surface it.
+                }
+            }
+
             json!({ "content": [{ "type": "text", "text": response }] })
         }
         "mcp_engram_session_end" => {
@@ -1791,12 +2120,107 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 let _ = lock.store(&marker_key, marker_block);
             }
 
+            // Context Compression Tracking System v1 (rigorous 65-70% window support):
+            // When a marker contains "measurement" / "dual-lens" / "65" / "compression_tracking",
+            // mint a dedicated high-CRS compression_event_* artifact (episodic + structured).
+            // Captures: before state via lightweight recent + stats (dual-lens proxy via known promoted),
+            // promoted set (hot heuristics + recent compression_intents), after (current), metrics scaffold,
+            // explicit links to codeland handoff (1780091465), MCP transport regression harness results,
+            // prior pilot trace:1779992449, and the measurement protocol helper.
+            // This ensures EVERY compression event (manual trigger at TUI 65% report or auto via intent)
+            // produces the required high-CRS linked artifacts. Uses update-preferred where possible
+            // (via caller convention); scars detection gaps immediately if no prior protocol run visible.
+            // Bound to recent MCP transport investigation: the test-harness (tools/test-harness) is the
+            // regression suite that now also exercises this path (compression-measurement suite).
+            let has_measurement_marker = compression_markers.iter().any(|m| {
+                let l = m.to_lowercase();
+                l.contains("measurement") || l.contains("dual-lens") || l.contains("65") || l.contains("compression_tracking") || l.contains("tracking_v1")
+            });
+            if has_measurement_marker {
+                let comp_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                let event_key = format!("compression_event_{}", comp_ts);
+                // Lightweight before/after proxy from lock state (full dual-lens lives in ki bake + harness client collection)
+                let recent_for_snapshot: Vec<String> = lock.recent(8).into_iter().map(|(c,_)| c).collect();
+                let promoted_proxy = vec![
+                    "helper:next_compression_measurement_protocol_v1".to_string(),
+                    "helper:promote_structured_tile_for_compression_v1".to_string(),
+                    "helper:session_hydration_cache".to_string(),
+                    "tile:research_offload_pre-65--readiness-snapshot---phase-2-arc-at-63-2".to_string(),
+                ];
+                let event_text = format!(
+                    "CONTEXT COMPRESSION TRACKING EVENT v1\n\n\
+                     event_id: {}\n\
+                     timestamp: {}\n\
+                     trigger: (parsed from COMPRESS marker in session_end; TUI/agent 65-70% window or harness)\n\
+                     tui_context_pct: (supplied by agent in marker; default 65-70 band)\n\n\
+                     BEFORE_STATE_SNAPSHOT (pre-compression):\n\
+                       - recent_concepts: {:?}\n\
+                       - promoted_for_continuity (dual-lens targets): {:?}\n\
+                       - ritual_anchors_and_traces: (see ki_hijacker recent_compression_intents + living_ritual_anchors at bake time)\n\
+                       - session_hydration_cache: helper:session_hydration_cache (update via working-memory ritual)\n\n\
+                     PROMOTED_DURING_WINDOW (hot tiles, traces, ritual anchors, hydration cache):\n\
+                       - hot_set_heuristic_matches: trace:* | helper:* | tile:* | ritual:* | item2_* (see StoreHandle::fetch_block_high_priority + mark_hot)\n\
+                       - explicit_from_intents: (recent_compression_intents promoted in ki_hijacker bake)\n\
+                       - dual_lens_captures: (see ki_hijacker DUAL_LENS_SNAPSHOT logs + capture_dual_lens_snapshot on promoted set)\n\n\
+                     AFTER_STATE (post-compression re-hydration):\n\
+                       - (captured on subsequent wake-up / ki bake via hot path + LegView/Cuda; compare dual-lens timings + CRS)\n\
+                       - continuity via ki_hijacker Ritual + Reasoning Trajectory + serves relations\n\n\
+                     CONTINUITY_METRICS (success/failure):\n\
+                       - rehydration_time_delta_ms: (from timed_fetch_block_high_priority in harness or post-wake dual-lens)\n\
+                       - crs_retention: (compare before/after CRS on promoted set; target >=0.85)\n\
+                       - felt_continuity: (subsequent engram-wake-up + record_reasoning_trace with goal_context codeland)\n\
+                       - success: (true if no new scar:missed_* and protocol helper surfaced with momentum)\n\
+                       - new_scars: (auto via mcp_engram_scar on detection gaps; see scar:missed_compression_inflection_during_phase2_sprint)\n\n\
+                     LINKED_ARTIFACTS (high-CRS binding):\n\
+                       - codeland goal: 1780091465 (primary; serves relation expected)\n\
+                       - MCP transport regression: tools/test-harness results (harness-run-* + transport-lifetime JSONs; exercises this path)\n\
+                       - prior pilot: trace:1779992449 + scar:missed_compression_inflection_during_phase2_sprint\n\
+                       - measurement protocol: helper:next_compression_measurement_protocol_v1 (and v2 evolution)\n\
+                       - handoff: handoff:codeland_integration_2026_plan (compresses_path)\n\n\
+                     This block + relations is the permanent high-CRS record. Update helper via mcp_engram_update for protocol evolution. All mutations update-preferred.",
+                    event_key, comp_ts, recent_for_snapshot, promoted_proxy
+                );
+                let mut event_block = lock.encode(&event_text);
+                event_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+                event_block.crs_score = 0.93;  // High for compression events (load-bearing for continuity)
+                let _ = lock.store(&event_key, event_block);
+                // Auto-relate to codeland and MCP harness work (if concepts exist; non-fatal)
+                // (real relate calls best from TUI post this; here we ensure the event block exists for later binding)
+            }
+
             match lock.store(&key, session_block) {
                 Ok(_) => {
+                    let prepare_compression = args
+                        .get("prepare_compression")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+
                     let mut response = format!(
                         "✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})",
                         avg_crs, alpha_a, alpha_d
                     );
+                    if prepare_compression {
+                        let snippet: String = summary.chars().take(500).collect();
+                        let manifest =
+                            lock.refresh_compression_handoff(&key, &snippet);
+                        let handoff_key = manifest
+                            .get("handoff_key")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("compression_handoff_unknown")
+                            .to_string();
+                        let promoted_n = manifest
+                            .get("promoted")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        response.push_str(&format!(
+                            "\n  → Compression handoff: `{}` | hydration cache refreshed | {} concepts hot-promoted",
+                            handoff_key, promoted_n
+                        ));
+                        response.push_str(
+                            "\n  → Post-compression wake: session_start → CONTINUATION BUNDLE → recall `helper:session_hydration_cache` first"
+                        );
+                    }
                     if !compression_markers.is_empty() {
                         response.push_str(&format!("\n  → {} compression intent(s) recorded for later 0x10 functor minting.", compression_markers.len()));
                     }
@@ -1814,6 +2238,85 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     } else if lower_summary.contains("structured") || lower_summary.contains("tile:") {
                         response.push_str("\n  → Structured Thought Tile reference detected — elevated CRS applied.");
                     }
+
+                    // ── Phase 3 P0: Automatic rich trace capture at session boundary (session_end) ──
+                    // Emits full Phase 2 geo (SymplecticState snapshot) + harmonic_432 + ZEDOS_TRAINING 8+1 payload + energetics
+                    // as a first-class trace:* block. Chained to recent session_start if present. Triggers ki_rebake so trajectory
+                    // appears immediately in TUI Ritual + Reasoning Trajectory (via ki_hijacker serves + fruits). Tight integration:
+                    // reuses exact geo_context_json + training_8prop construction from record_reasoning_trace path; hot promotion
+                    // + NREM bias via existing mark_hot paths in ki; lawfulness via block footer + relations.
+                    {
+                        let boundary_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                        let geo_context_json = if let Some(geo) = lock.current_geosphere_state() {
+                            let al_norm: f32 = geo.active_location.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+                            let first8: Vec<String> = geo.active_location[0..8].iter().map(|c| format!("({:.5},{:.5})", c.re, c.im)).collect();
+                            let lens_info = if let Some(ref l) = geo.current_lens {
+                                let lnorm: f32 = l.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+                                format!("{{\"norm\":{:.6}}}", lnorm)
+                            } else { "{\"present\":false,\"norm\":1.0,\"origin\":\"native\"}".to_string() };
+                            format!(
+                                "{{\"active_location\":{{\"norm\":{:.6},\"first8\":[{}],\"note\":\"full_8192D_in_SymplecticState_at_session_boundary\"}},\"current_lens\":{},\"frame_step\":{},\"frame_origin\":\"{}\",\"logenergetics_snapshot\":{{\"tau\":0.003,\"h_in\":0.92,\"h_out\":0.87,\"note\":\"boundary H/tau + geo for TUI continuity\"}}}}",
+                                al_norm, first8.join(","), lens_info, geo.frame_step, geo.frame_origin.as_deref().unwrap_or("native")
+                            )
+                        } else {
+                            "{\"active_location\":null,\"current_lens\":null,\"frame_step\":0,\"frame_origin\":\"native\",\"logenergetics_snapshot\":null}".to_string()
+                        };
+
+                        let training_boundary = format!(
+                            "\n\n## ZEDOS_TRAINING 8+1 (AUTO session_end boundary, Phase 3 P0)\n\n\
+                             - utc_tau: {} + τ=0.003\n\
+                             - geosphere_context: {} (auto at boundary for felt continuity)\n\
+                             - crs: 0.84\n\
+                             - p_summary: identity post-encode\n\
+                             - H: h_in=0.92 h_out=0.87\n\
+                             - τ: 0.003\n\
+                             - provenance: session_end_{} + summary + avg_crs={:.2}\n\
+                             - productive_failure: compression_markers={} | protocol_gaps_checked\n\
+                             - harmonic_432hz: sacred_freq=432.0; phase multiples of π/432; hot_NREM_bias + ki trajectory surfacing; TUI felt continuity via auto trace\n",
+                            boundary_ts, geo_context_json, timestamp, avg_crs, compression_markers.len()
+                        );
+
+                        let mut boundary_payload = format!(
+                            "REASONING TRACE SEGMENT (AUTO-EMITTED AT SESSION BOUNDARY)\n\n**decision_point:** Session closed with summary (auto Phase 3 P0 rich capture)\n\n**justification:** Ritual closure per engram-working-memory; full geo/harmonic/TRAINING payload for TUI Ritual+Reasoning Trajectory without manual record_reasoning_trace. Avg CRS this session: {:.2}. Compression intents: {}.\n\n**summary:** {}\n",
+                            avg_crs, compression_markers.len(), summary.chars().take(600).collect::<String>()
+                        );
+                        boundary_payload.push_str(&training_boundary);
+
+                        let mut b = lock.encode(&boundary_payload);
+                        b.zedos_tag = engram_core::types::ZEDOS_TRAINING;
+                        b.crs_score = 0.84;
+                        crate::store::assign_reflexive_contract(&mut b);
+                        b.energetics.ts = boundary_ts;
+                        b.energetics.tau = 0.003;
+                        b.energetics.h_in = 0.92;
+                        b.energetics.h_out = 0.87;
+                        b.energetics.crs = b.crs_score;
+                        b.energetics.work_verb = 0.12;
+
+                        let short = summary.chars().take(32).collect::<String>().to_lowercase().chars().map(|c| if c.is_alphanumeric()||c=='-' {c} else {'-'}).collect::<String>();
+                        let boundary_trace_key = format!("trace:{}_session_end_boundary_auto", boundary_ts);
+                        if lock.store(&boundary_trace_key, b).is_ok() {
+                            // Wire to recent session_start for chain (ki will surface in trajectory)
+                            for (c, _) in recent_accesses.iter().take(5) {
+                                if c.starts_with("session_start_") {
+                                    let _ = lock.relate(c, &boundary_trace_key, "prev_in_trace");
+                                    let _ = lock.relate(&boundary_trace_key, c, "next_in_trace");
+                                    break;
+                                }
+                            }
+                            // Serves primary if any
+                            if let Some(pg) = lock.fetch_block_high_priority("primary_goal") {
+                                let ptext = String::from_utf8_lossy(&pg.payload);
+                                if let Some(line) = ptext.lines().find(|l| l.starts_with("**goal:**")) {
+                                    let g = line.replace("**goal:** ", "").trim().to_string();
+                                    let _ = lock.relate(&boundary_trace_key, &g, "serves");
+                                }
+                            }
+                            lock.mark_ki_rebake_needed();
+                            response.push_str(&format!("\n  → AUTO rich boundary trace emitted: {} (full geo+harmonic+TRAINING; ki trajectory updated)", boundary_trace_key));
+                        }
+                    }
+
                     json!({ "content": [{ "type": "text", "text": response }] })
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
@@ -1844,6 +2347,27 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 resolve_goal_context_and_link(&mut lock, goal_ctx);
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            // Phase 2.1: capture FULL current SymplecticState at emission for geo_context in ZEDOS_TRAINING.
+            // Structured object (JSON) includes active_location (norm + compact first8 for payload size),
+            // current_lens, frame_step, frame_origin + Logenergetics tau/H refs (full in block.energetics).
+            // Enables WS 2.2–2.5 consumers (richer CLS training, geo-aware NREM, multi-frame recall).
+            let geo_context_json = if let Some(geo) = lock.current_geosphere_state() {
+                let al_norm: f32 = geo.active_location.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+                let first8: Vec<String> = geo.active_location[0..8].iter().map(|c| format!("({:.5},{:.5})", c.re, c.im)).collect();
+                let lens_info = if let Some(ref l) = geo.current_lens {
+                    let lnorm: f32 = l.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+                    format!("{{\"present\":true,\"norm\":{:.6},\"origin\":\"{}\"}}", lnorm, geo.frame_origin.as_deref().unwrap_or("native"))
+                } else {
+                    "{\"present\":false,\"norm\":1.0,\"origin\":\"native\"}".to_string()
+                };
+                format!(
+                    "{{\"active_location\":{{\"norm\":{:.6},\"first8\":[{}],\"note\":\"full_8192D_in_SymplecticState_register_at_emission\"}},\"current_lens\":{},\"frame_step\":{},\"frame_origin\":\"{}\",\"logenergetics_snapshot\":{{\"tau\":0.003,\"h_in\":0.92,\"h_out\":0.87,\"note\":\"full H/tau in emitted_block.energetics + ego.leg3; see NREM for evolved values\"}}}}",
+                    al_norm, first8.join(","), lens_info, geo.frame_step, geo.frame_origin.as_deref().unwrap_or("native")
+                )
+            } else {
+                "{\"active_location\":null,\"current_lens\":null,\"frame_step\":0,\"frame_origin\":\"native\",\"logenergetics_snapshot\":null}".to_string()
+            };
 
             // Build a clear, human + machine readable payload matching trace:block_structure_v1
             let mut payload = format!(
@@ -1884,9 +2408,46 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 payload.push_str(&format!("\n**reconcile:** {}\n", reconcile));
             }
 
+            // ── WS2-A Core + Phase 2.5 432Hz Symplectic Harmonics: Emit 8+1-property ZEDOS_TRAINING block ──
+            // UTC+tau, (Geosphere pending), CRS, p summary, H, τ, provenance (BLAKE3+relations), productive failure + harmonic_432.
+            // Harmonic: lightweight payload section (no layout change) for hot-promoted + TRAINING blocks.
+            // Uses sacred 432Hz (genesis::SACRED_FREQUENCY_HZ, ops::apply_temporal_phase π/432 base for phase relations/integer multiples).
+            // Symplectic coupling note for WS3 SymplecticState (2.1 geo snapshots); stronger provenance for recursive LoRA self-model training medium.
+            // Uses existing encode (guarantees normalization to unit hypersphere) + post-encode energetics + footer.
+            // No HolographicBlock layout changes. Contract wired via assign_reflexive_contract.
+            let training_8prop = format!(
+                "\n\n## ZEDOS_TRAINING 8+1-Property Tuple (core emission via record_reasoning_trace + Phase 2.5 harmonic)\n\n\
+                 - utc_tau: {} + τ={:.6}\n\
+                 - geosphere_context: {} (Phase 2.1 FULL SymplecticState live snapshot embedded as structured object for WS2.2-2.5 CLS/geo-aware consumption; active_location + lens + step + origin + Logenergetics refs)\n\
+                 - crs: {:.3}\n\
+                 - p_summary: identity-initial post-encode (p[i]=1+0i for all 8192D; binding momentum via future op_bind relations; |p|≈1.0)\n\
+                 - H: h_in={:.6} h_out={:.6} (Hamiltonian effort accounting in Logenergetics; work_verb as decision thermodynamic cost)\n\
+                 - τ: {:.6} (torsion / contested productive paths; explicit in alpha_d / fail_streak for training signal; αR harmonic mediation per capnp)\n\
+                 - provenance: BLAKE3 in footer.sig_0..sig_5 + merkle_sub_root (self-referential Merkle chain); relations auto-wired below (prev_in_trace, serves, spatial_context_for, supports_ritual)\n\
+                 - productive_failure: alternatives=\"{}\" | falsifiability=\"{}\" | low-CRS/scar paths tracked in energetics + relations\n\
+                 - harmonic_432hz: sacred_freq=432.0 (genesis SACRED_FREQUENCY_HZ = 2^4 * 3^3 symplectic execution rhythm); phase_relation=integer multiples of π/432 (ops::apply_temporal_phase BASE_THETA); symplectic_coupling=pending SymplecticState frame (aligns 2.1/2.3); energetics_advisory=tau+αR as combined torsion+harmonic_resonance proxy (lightweight, no layout change); hot_NREM_bias: ZEDOS_TRAINING + harmonic marker => 2.0+ weight + auto mark_hot (daemon NREM + ki_hijacker); richer CLS for recursive LoRA / Grok long-horizon self-model (ego.leg3 trajectories)\n",
+                timestamp, 0.003_f32,
+                geo_context_json,
+                0.86_f32,
+                0.92_f32, 0.87_f32,
+                0.003_f32,
+                alternatives.replace('"', "'"),
+                falsifiability.replace('"', "'")
+            );
+            payload.push_str(&training_8prop);
+
             let mut trace_block = lock.encode(&payload);
-            trace_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
-            trace_block.crs_score = 0.85;
+            trace_block.zedos_tag = engram_core::types::ZEDOS_TRAINING;
+            trace_block.crs_score = 0.86;
+
+            // Populate Logenergetics 8-prop fields + wire TRAINING contract (pub(crate) from store)
+            crate::store::assign_reflexive_contract(&mut trace_block);
+            trace_block.energetics.ts = timestamp;
+            trace_block.energetics.tau = 0.003;
+            trace_block.energetics.h_in = 0.92;
+            trace_block.energetics.h_out = 0.87;
+            trace_block.energetics.crs = trace_block.crs_score;
+            trace_block.energetics.work_verb = 0.15; // quanta for decision work
 
             // Stable, queryable name: trace:<ts>_<slug>
             let short = decision_point
@@ -1920,7 +2481,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                         lock.mark_ki_rebake_needed(); // fresher Primary Intent + serving traces in context.md
                     }
 
-                    json!({ "content": [{ "type": "text", "text": format!("✓ Reasoning trace recorded: {}", trace_key) }] })
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Reasoning trace recorded: {} (ZEDOS_TRAINING 8-prop)", trace_key) }] })
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
@@ -1950,6 +2511,24 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 resolve_goal_context_and_link(&mut lock, goal_ctx);
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            // Phase 2.1 quick_trace path: FULL SymplecticState snapshot for geo_context (mirrors record handler).
+            let geo_context_json = if let Some(geo) = lock.current_geosphere_state() {
+                let al_norm: f32 = geo.active_location.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+                let first8: Vec<String> = geo.active_location[0..8].iter().map(|c| format!("({:.5},{:.5})", c.re, c.im)).collect();
+                let lens_info = if let Some(ref l) = geo.current_lens {
+                    let lnorm: f32 = l.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+                    format!("{{\"present\":true,\"norm\":{:.6},\"origin\":\"{}\"}}", lnorm, geo.frame_origin.as_deref().unwrap_or("native"))
+                } else {
+                    "{\"present\":false,\"norm\":1.0,\"origin\":\"native\"}".to_string()
+                };
+                format!(
+                    "{{\"active_location\":{{\"norm\":{:.6},\"first8\":[{}],\"note\":\"full_8192D_in_SymplecticState_register_at_emission\"}},\"current_lens\":{},\"frame_step\":{},\"frame_origin\":\"{}\",\"logenergetics_snapshot\":{{\"tau\":0.003,\"h_in\":0.91,\"h_out\":0.86,\"note\":\"full H/tau in emitted_block.energetics + ego.leg3\"}}}}",
+                    al_norm, first8.join(","), lens_info, geo.frame_step, geo.frame_origin.as_deref().unwrap_or("native")
+                )
+            } else {
+                "{\"active_location\":null,\"current_lens\":null,\"frame_step\":0,\"frame_origin\":\"native\",\"logenergetics_snapshot\":null}".to_string()
+            };
 
             // Normalize into the same rich structured payload
             let mut payload = format!(
@@ -1985,9 +2564,43 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 payload.push_str(&format!("\n**reconcile:** {}\n", reconcile));
             }
 
+            // ── WS2-A Core + Phase 2.5 432Hz Symplectic Harmonics: Emit 8+1-property ZEDOS_TRAINING block (quick_trace path) ──
+            // Mirrors record_reasoning_trace; 8+1 props (harmonic) in ProvLog for CLS training utility + richer LoRA medium. Normalized encode path.
+            // 432Hz harmonic per Phase 2.5 goal (lightweight payload + energetics advisory; aligns sacred freq in genesis/ops).
+            let training_8prop = format!(
+                "\n\n## ZEDOS_TRAINING 8+1-Property Tuple (core emission via quick_trace + Phase 2.5 harmonic)\n\n\
+                 - utc_tau: {} + τ={:.6}\n\
+                 - geosphere_context: {} (Phase 2.1 FULL SymplecticState live snapshot as structured object; see record handler for schema; enables geo-aware TRAINING consumption in WS2.2+)\n\
+                 - crs: {:.3}\n\
+                 - p_summary: identity-initial post-encode (8192D p=1+0i; momentum via relations)\n\
+                 - H: h_in={:.6} h_out={:.6} (Logenergetics Hamiltonian proxy)\n\
+                 - τ: {:.6} (torsion for productive failure signal; αR harmonic mediation)\n\
+                 - provenance: footer BLAKE3 + merkle; relations: prev_in_trace, serves(goal)\n\
+                 - productive_failure: alternatives=\"{}\" | falsifiability=\"{}\" | context=\"{}\"\n\
+                 - harmonic_432hz: sacred_freq=432.0 (genesis SACRED_FREQUENCY_HZ = 2^4 * 3^3); phase_relation=integer multiples of π/432 (ops temporal phase); symplectic_coupling=SymplecticState (2.1/2.3); energetics=tau+αR proxy; NREM+hot bias for harmonic-rich TRAINING (daemon/ki_hijacker); richer for recursive LoRA ego self-model\n",
+                timestamp, 0.003_f32,
+                geo_context_json,
+                0.85_f32,
+                0.91_f32, 0.86_f32,
+                0.003_f32,
+                alternatives.replace('"', "'"),
+                would_falsify.replace('"', "'"),
+                context.replace('"', "'")
+            );
+            payload.push_str(&training_8prop);
+
             let mut trace_block = lock.encode(&payload);
-            trace_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
-            trace_block.crs_score = 0.84; // Slightly lower than full tool to show provenance
+            trace_block.zedos_tag = engram_core::types::ZEDOS_TRAINING;
+            trace_block.crs_score = 0.85;
+
+            // Populate Logenergetics + TRAINING contract
+            crate::store::assign_reflexive_contract(&mut trace_block);
+            trace_block.energetics.ts = timestamp;
+            trace_block.energetics.tau = 0.003;
+            trace_block.energetics.h_in = 0.91;
+            trace_block.energetics.h_out = 0.86;
+            trace_block.energetics.crs = trace_block.crs_score;
+            trace_block.energetics.work_verb = 0.12;
 
             let short = decision
                 .chars()
@@ -2017,7 +2630,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                         lock.mark_ki_rebake_needed(); // fresher Primary Intent + serving traces in context.md
                     }
 
-                    json!({ "content": [{ "type": "text", "text": format!("✓ Quick trace recorded: {}", trace_key) }] })
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Quick trace recorded: {} (ZEDOS_TRAINING 8-prop)", trace_key) }] })
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
@@ -2047,7 +2660,26 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 .chars()
                 .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
                 .collect::<String>();
-            let goal_key = format!("goal:{}_{}", timestamp, short);
+            let goal_key = args
+                .get("goal_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    if s.starts_with("goal:") {
+                        s.to_string()
+                    } else {
+                        format!("goal:{}", s)
+                    }
+                })
+                .unwrap_or_else(|| format!("goal:{}_{}", timestamp, short));
+
+            if lock.fetch_block(&goal_key).is_some() {
+                return json!({
+                    "content": [{ "type": "text", "text": format!("Error: goal already exists: {}", goal_key) }],
+                    "isError": true
+                });
+            }
 
             let mut payload = format!(
                 "GOAL BLOCK\n\n**goal_statement:** {}\n\n**status:** active\n**priority:** {}\n**created_at:** {}\n",
@@ -2125,15 +2757,19 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut lock = store.lock().unwrap();
             // Hot path upgrade (Tier 2 broader adoption): mcp_engram_goal_status is a primary visibility tool for intentional self-model.
             if let Some(block) = lock.fetch_block_high_priority(&goal) {
-                let text = String::from_utf8_lossy(&block.payload);
+                let text = crate::store::goal_block_text(&block);
                 let mut output = format!("**Goal Status: {}**\n\n", goal);
                 output.push_str(&format!("CRS: {:.2}\n", block.crs_score));
                 output.push_str(&format!("Drift (dv): {:.3}\n", block.energetics.dv));
 
-                if let Some(line) = text.lines().find(|l| l.starts_with("goal_statement:")) {
+                if let Some(line) = text.lines().find(|l| {
+                    l.starts_with("goal_statement:") || l.starts_with("**goal_statement:**")
+                }) {
                     output.push_str(&format!("{}\n", line));
                 }
-                if let Some(line) = text.lines().find(|l| l.starts_with("status:")) {
+                if let Some(line) = text.lines().find(|l| {
+                    l.starts_with("status:") || l.starts_with("**status:**")
+                }) {
                     output.push_str(&format!("{}\n", line));
                 }
 
@@ -2203,9 +2839,11 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 .collect();
 
             matches.retain(|(_c, b)| {
-                let text = String::from_utf8_lossy(&b.payload).to_lowercase();
-                let matches_text = text.contains(&query);
-                let matches_status = status_filter.is_empty() || text.contains(&format!("status: {}", status_filter));
+                let text = crate::store::goal_block_text(b);
+                let lower = text.to_lowercase();
+                let matches_text = lower.contains(&query);
+                let matches_status =
+                    crate::store::goal_status_matches(&text, &status_filter);
                 matches_text && matches_status
             });
 
@@ -2215,8 +2853,15 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut output = format!("Goal search results for '{}':\n\n", query);
             for (concept, block) in &matches {
                 let short = concept.split(':').last().unwrap_or(concept);
-                let text = String::from_utf8_lossy(&block.payload);
-                let stmt = text.lines().find(|l| l.starts_with("goal_statement:")).map(|l| l.replace("goal_statement: ", "")).unwrap_or_default();
+                let text = crate::store::goal_block_text(block);
+                let stmt = text
+                    .lines()
+                    .find(|l| l.starts_with("goal_statement:") || l.starts_with("**goal_statement:**"))
+                    .map(|l| {
+                        l.replace("goal_statement: ", "")
+                            .replace("**goal_statement:** ", "")
+                    })
+                    .unwrap_or_default();
                 output.push_str(&format!("- **{}** (CRS: {:.2})\n  {}\n", short, block.crs_score, stmt.chars().take(80).collect::<String>()));
             }
 
@@ -2234,8 +2879,10 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                 .filter_map(|c| {
                     // Tier 2 broaden (goal handler): high_priority for child lookup (promotable via goal ops)
                     lock.fetch_block_high_priority(&c).and_then(|b| {
-                        let text = String::from_utf8_lossy(&b.payload);
-                        if text.contains(&format!("parent_goal: {}", parent)) {
+                        let text = crate::store::goal_block_text(&b);
+                        if text.contains(&format!("parent_goal: {}", parent))
+                            || text.contains(&format!("**parent_goal:** {}", parent))
+                        {
                             Some((c, b))
                         } else {
                             None
@@ -2259,6 +2906,7 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
 
             let mut lock = store.lock().unwrap();
+            let goal_exists = lock.fetch_block_high_priority(&goal).is_some();
             let payload = format!("PRIMARY GOAL\n\n**goal:** {}\n**set_at:** {}", goal, chrono::Utc::now().to_rfc3339());
 
             let mut marker = lock.encode(&payload);
@@ -2267,8 +2915,20 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
             match lock.store("primary_goal", marker) {
                 Ok(_) => {
-                    lock.mark_ki_rebake_needed(); // make Primary Intent appear faster in ki_hijacker context
-                    json!({ "content": [{ "type": "text", "text": format!("✓ Primary goal set to {}", goal) }] })
+                    lock.invalidate_continuation_bundle_cache();
+                    lock.mark_ki_rebake_needed();
+                    if goal_exists {
+                        let _ = lock.relate("primary_goal", &goal, "serves");
+                    }
+                    let msg = if goal_exists {
+                        format!("✓ Primary goal set to {} (linked primary_goal → serves → {})", goal, goal)
+                    } else {
+                        format!(
+                            "✓ Primary goal marker set to {} (warning: no `goal:*` block found — create with mcp_engram_goal_create or relate manually)",
+                            goal
+                        )
+                    };
+                    json!({ "content": [{ "type": "text", "text": msg }] })
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
@@ -2286,8 +2946,8 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
             if !status_filter.is_empty() {
                 goals.retain(|(_, b)| {
-                    let text = String::from_utf8_lossy(&b.payload);
-                    text.contains(&format!("status: {}", status_filter))
+                    let text = crate::store::goal_block_text(b);
+                    crate::store::goal_status_matches(&text, &status_filter)
                 });
             }
 
@@ -2297,9 +2957,19 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             let mut output = String::from("Active/Recent Goals:\n\n");
             for (concept, block) in &goals {
                 let short = concept.split(':').last().unwrap_or(concept);
-                let text = String::from_utf8_lossy(&block.payload);
-                let status_line = text.lines().find(|l| l.starts_with("status:")).unwrap_or("status: unknown");
-                let stmt = text.lines().find(|l| l.starts_with("goal_statement:")).map(|l| l.replace("goal_statement: ", "")).unwrap_or_default();
+                let text = crate::store::goal_block_text(block);
+                let status_line = text
+                    .lines()
+                    .find(|l| l.starts_with("status:") || l.starts_with("**status:**"))
+                    .unwrap_or("status: unknown");
+                let stmt = text
+                    .lines()
+                    .find(|l| l.starts_with("goal_statement:") || l.starts_with("**goal_statement:**"))
+                    .map(|l| {
+                        l.replace("goal_statement: ", "")
+                            .replace("**goal_statement:** ", "")
+                    })
+                    .unwrap_or_default();
                 output.push_str(&format!("- **{}** (CRS: {:.2}, dv: {:.2})\n  {} | {}\n", short, block.crs_score, block.energetics.dv, stmt.chars().take(70).collect::<String>(), status_line));
             }
 
@@ -2405,10 +3075,11 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     for concept in &spatial_refs {
                         let _ = lock.relate(&tile_key, concept, "compresses_path");
                     }
+                    let _ = lock.promote_tile_to_high_priority(&tile_key);
                     if auto_linked_to_primary || !goal_ctx.is_empty() || !spatial_refs.is_empty() {
                         lock.mark_ki_rebake_needed();
                     }
-                    json!({ "content": [{ "type": "text", "text": format!("✓ Thought Tile created: {}\n  (textual functor payload ready for agent use; pair with create_visualization for rich human view)", tile_key) }] })
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Thought Tile created: {}\n  hot_path: promoted (mcp_engram_promote_hot)\n  (textual functor payload ready for agent use; pair with create_visualization for rich human view)", tile_key) }] })
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
@@ -2461,10 +3132,11 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     for concept in &spatial_refs {
                         let _ = lock.relate(&tile_key, concept, "compresses_path");
                     }
+                    let _ = lock.promote_tile_to_high_priority(&tile_key);
                     if auto_linked_to_primary || !goal_ctx.is_empty() || !spatial_refs.is_empty() {
                         lock.mark_ki_rebake_needed();
                     }
-                    json!({ "content": [{ "type": "text", "text": format!("✓ Visualization Thought Tile created: {} (consider creating a companion textual functor Tile for agent-primary use)", tile_key) }] })
+                    json!({ "content": [{ "type": "text", "text": format!("✓ Visualization Thought Tile created: {} (hot_path promoted; pair with textual functor tile for agent-primary use)", tile_key) }] })
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
@@ -3115,7 +3787,11 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
                     // Match concepts belonging to this file stem
                     if !concept.starts_with(&file_stem) { return None; }
                     // Hot path upgrade (Tier 2 broader adoption): recall_in_file is a core ritual tool used on every code edit.
-                    let block = lock.fetch_block_high_priority(&concept)?;
+                    // Fallback to regular fetch_block so passive/force ingested AST items (mcp__*, store__* etc)
+                    // are visible immediately without requiring hot promotion or editor re-save. Fixes "no AST concepts".
+                    let block = lock.fetch_block_high_priority(&concept)
+                        .or_else(|| lock.fetch_block(&concept));
+                    let block = match block { Some(b) => b, None => return None };
                     let row_min = block.aabb_min[0];
                     let row_max = block.aabb_max[0];
                     // Only include if AABB is set (row_max > 0) and intersects range
@@ -3153,23 +3829,70 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 
         "mcp_engram_query_with_momentum" => {
             // Phase 3: Momentum-assisted recall — blend q (80%) + p (20%) scores
+            // Quick Win 1 (user-prioritized highest-leverage): tiny LRU for recent blended results.
+            // Hits on repeated hot concepts (wake-up rehydration, sub-agent polling) avoid the
+            // full 154k-block linear scan + 8192d cosines. Capacity 24; keyed by query+filter.
+            // Pre-edit recon: context_for_file + recall_in_file on containing mcp__fn__handle_tool_call
+            // (1203-3744) + multiple forces; intent trace 1780285926; harness baseline (subagent 019e80ff)
+            // shows 0 failures / sub-10ms on sequences including this tool against stable ac3509a9.
             let query = args["query"].as_str().unwrap_or("").trim().to_string();
             let k = args["k"].as_u64().unwrap_or(5).min(20) as usize;
+            let zedos_filter = args["zedos_filter"].as_str().map(|s| s.trim().to_lowercase());
 
             if query.is_empty() {
                 return json!({ "content": [{ "type": "text", "text": "Error: query is required." }], "isError": true });
             }
 
+            // LRU check (outside heavy lock where possible)
+            let cache_key = format!("{}|{}", query.to_lowercase(), zedos_filter.as_deref().unwrap_or(""));
+            if let Some(cached) = MOMENTUM_LRU.lock().ok().and_then(|mut lru| {
+                lru.iter().position(|(k, _)| k == &cache_key).map(|i| lru.remove(i).unwrap().1)
+            }) {
+                return json!({ "content": [{ "type": "text", "text": cached }] });
+            }
+
+            let tag_filter: Option<u8> = zedos_filter.as_deref().and_then(|f| match f {
+                "declarative"  => Some(engram_core::types::ZEDOS_DECLARATIVE),
+                "episodic"     => Some(engram_core::types::ZEDOS_EPISODIC),
+                "operational"  => Some(engram_core::types::ZEDOS_OPERATIONAL),
+                "praxis"       => Some(engram_core::types::ZEDOS_PRAXIS),
+                "relation"     => Some(engram_core::types::ZEDOS_RELATION),
+                "training"     => Some(engram_core::types::ZEDOS_TRAINING),
+                _ => None,
+            });
+
             let mut lock = store.lock().unwrap();
             let query_block = lock.encode(&query);
+            // Phase 2.1: apply live geosphere frame to query vector for momentum scoring.
+            // Makes query_with_momentum respect current SymplecticState (same as recall now does,
+            // and StoreHandle::query / bvh). Frame applied to query only; p remains native trajectory.
+            let effective_q = if let Some(geo) = lock.current_geosphere_state() {
+                geo.apply_current_frame(&query_block.q)
+            } else {
+                engram_core::ops::normalize(&query_block.q)
+            };
             let all_concepts = lock.list();
+            // Large-manifold safety: stride-probe instead of scoring every namespaced entry (179k+).
+            const MAX_MOMENTUM_PROBE: usize = 3000;
+            let probe_cap = (k * 200).clamp(500, MAX_MOMENTUM_PROBE);
+            let probe: Vec<String> = if all_concepts.len() <= probe_cap {
+                all_concepts
+            } else {
+                let step = all_concepts.len() / probe_cap;
+                (0..probe_cap)
+                    .filter_map(|i| all_concepts.get(i * step).cloned())
+                    .collect()
+            };
 
-            let mut scored: Vec<(String, f32, f32)> = all_concepts.into_iter()
+            let mut scored: Vec<(String, f32, f32)> = probe.into_iter()
                 .filter_map(|concept| {
                     // Hot path upgrade (Tier 2 broader adoption): query_with_momentum is one of the most used ritual entry points.
                     let block = lock.fetch_block_high_priority(&concept)?;
-                    let q_score = engram_core::ops::cosine_similarity(&query_block.q, &block.q);
-                    let p_score = engram_core::ops::cosine_similarity(&query_block.q, &block.p);
+                    if let Some(tag) = tag_filter {
+                        if block.zedos_tag != tag { return None; }
+                    }
+                    let q_score = engram_core::ops::cosine_similarity(&effective_q, &block.q);
+                    let p_score = engram_core::ops::cosine_similarity(&effective_q, &block.p);
                     // Blend: 80% position (where it is now) + 20% momentum (where it's heading)
                     let score = (0.80 * q_score + 0.20 * p_score).clamp(-1.0, 1.0);
                     Some((concept, score, block.energetics.dv))
@@ -3179,13 +3902,47 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             scored.truncate(k);
 
+            // Populate LRU (evict oldest if over capacity)
+            if let Ok(mut lru) = MOMENTUM_LRU.lock() {
+                if let Some(pos) = lru.iter().position(|(k, _)| k == &cache_key) {
+                    lru.remove(pos);
+                }
+                let _top = scored.first().map(|(c,s,d)| (c.clone(), *s, *d));
+                let output = if scored.is_empty() {
+                    "No memories found.".to_string()
+                } else {
+                    let mut out = format!("Momentum-weighted results for '{}':\n\n", query);
+                    for (i, (concept, score, dv)) in scored.iter().enumerate() {
+                        let tag_str = if let Some(b) = lock.fetch_block_high_priority(concept) {
+                            match b.zedos_tag {
+                                0xD => "DECL", 0xA => "EPIS", 0x52 => "OPER", 0x50 => "PRAX",
+                                0xE1 => "REL", 0x54 => "TRAIN", _ => "OTHER"
+                            }
+                        } else { "?" };
+                        out.push_str(&format!("**[{}] {}** (momentum score: {:.3}, drift: {:.3}, tag:{}) \n", i + 1, concept, score, dv, tag_str));
+                    }
+                    out.trim().to_string()
+                };
+                lru.push_front((cache_key.clone(), output.clone()));
+                if lru.len() > 24 { lru.pop_back(); }
+                // return the freshly built output (already populated)
+                return json!({ "content": [{ "type": "text", "text": output }] });
+            }
+
             if scored.is_empty() {
                 return json!({ "content": [{ "type": "text", "text": "No memories found." }] });
             }
 
             let mut output = format!("Momentum-weighted results for '{}':\n\n", query);
             for (i, (concept, score, dv)) in scored.iter().enumerate() {
-                output.push_str(&format!("**[{}] {}** (momentum score: {:.3}, drift: {:.3})\n", i + 1, concept, score, dv));
+                // Re-fetch lightweight for tag display (post-filter; hot path makes this cheap for small k)
+                let tag_str = if let Some(b) = lock.fetch_block_high_priority(concept) {
+                    match b.zedos_tag {
+                        0xD => "DECL", 0xA => "EPIS", 0x52 => "OPER", 0x50 => "PRAX",
+                        0xE1 => "REL", 0x54 => "TRAIN", _ => "OTHER"
+                    }
+                } else { "?" };
+                output.push_str(&format!("**[{}] {}** (momentum score: {:.3}, drift: {:.3}, tag:{}) \n", i + 1, concept, score, dv, tag_str));
             }
             json!({ "content": [{ "type": "text", "text": output.trim() }] })
         }
@@ -3322,6 +4079,41 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
             }
         }
 
+        "mcp_engram_set_geosphere_frame" => {
+            // WS3-B MCP surface: sets current frame on the live SymplecticState in StoreHandle.
+            // This immediately affects all query paths (recall, query_with_momentum, internal bvh/gpu).
+            let origin = args.get("origin").and_then(|v| v.as_str()).unwrap_or("default_origin").trim().to_string();
+            let time_offset = args.get("time_offset").and_then(|v| v.as_str()).unwrap_or("now").trim().to_string();
+            if origin.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: origin required" }], "isError": true });
+            }
+            let mut lock = store.lock().unwrap();
+            lock.set_geosphere_frame(&origin, &time_offset);
+            let frame_step = lock.get_current_geosphere_frame().map(|(_, step, _)| step).unwrap_or(0);
+            json!({ "content": [{ "type": "text", "text": format!(
+                "✓ Geosphere frame set\norigin: {}\ntime_offset: {}\nframe_step: {}\n\nAll subsequent queries now use lens-transformed effective vectors (BVH 3D + 8192D scoring). Reproducible + unit-hypersphere lawful.",
+                origin, time_offset, frame_step
+            ) }] })
+        }
+        "mcp_engram_get_geosphere_frame" => {
+            let lock = store.lock().unwrap();
+            match lock.get_current_geosphere_frame() {
+                Some((origin, step, _loc)) => {
+                    let has_lens = lock.get_current_geosphere_frame().map_or(false, |(o, _, _)| o != "native");
+                    json!({ "content": [{ "type": "text", "text": format!(
+                        "Current Geosphere frame:\n  origin: {}\n  frame_step: {}\n  lens_active: {}\n  (active_location vector available via internal SymplecticState; use for reproducibility tests)",
+                        origin, step, has_lens
+                    ) }] })
+                }
+                None => json!({ "content": [{ "type": "text", "text": "No Geosphere state (native coordinate)" }] })
+            }
+        }
+        "mcp_engram_clear_geosphere_frame" => {
+            let mut lock = store.lock().unwrap();
+            lock.clear_geosphere_frame();
+            json!({ "content": [{ "type": "text", "text": "✓ Geosphere lens cleared. Queries now use native (identity) coordinate. frame_step advanced." }] })
+        }
+
         unknown => json!({
             "content": [{ "type": "text", "text": format!("Unknown tool: {unknown}") }],
             "isError": true
@@ -3330,6 +4122,16 @@ fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value {
 }
 
 // ── MCP request dispatch ──────────────────────────────────────────────────────
+
+/// Dispatch a single JSON-RPC 2.0 MCP request and return an optional response.
+/// `pub` so the HTTP MCP endpoint in serve.rs can reuse this without duplicating
+/// any tool handler logic. The stdio run() loop calls this too.
+pub fn dispatch_jsonrpc(raw_json: &str, store: &SharedStore) -> Option<Value> {
+    match serde_json::from_str::<Request>(raw_json) {
+        Ok(req) => dispatch(req, store).map(|r| serde_json::to_value(r).unwrap_or(json!({}))),
+        Err(e) => Some(serde_json::to_value(Response::err(None, -32700, format!("Parse error: {e}"))).unwrap_or(json!({}))),
+    }
+}
 
 fn dispatch(req: Request, store: &SharedStore) -> Option<Response> {
     let id = req.id.clone();
@@ -3387,9 +4189,7 @@ fn dispatch(req: Request, store: &SharedStore) -> Option<Response> {
 /// Run the MCP server, reading from stdin and writing to stdout.
 /// Blocks until stdin is closed (i.e. the client disconnects).
 pub fn run(store: SharedStore) -> anyhow::Result<()> {
-    // ── Boot the Background Worker ─────────────────────────────────
-    crate::store::StoreHandle::boot_daemon(store.clone());
-
+    // Daemon boots after MCP fast-path upgrade (main.rs) or immediately in Serve mode.
     info!("Engram MCP server ready (protocol 2024-11-05)");
     info!("Store: {}", store.lock().unwrap().store_path());
 

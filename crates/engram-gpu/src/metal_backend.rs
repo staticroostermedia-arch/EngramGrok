@@ -21,15 +21,20 @@
 
 use engram_core::backend::{Memory, VsaBackend};
 use engram_core::types::{Leg3Pointer, DIMENSION};
+#[cfg(target_os = "macos")]
+use engram_core::types::SymplecticState;
 use num_complex::Complex32;
 use anyhow::Result;
 
 #[cfg(target_os = "macos")]
 use {
     crate::bvh::BvhManifold,
+    crate::backend::compute_eviction_score,
     engram_core::backend::CpuBackend,
+    engram_core::mmap::LegView,
     engram_core::types::HolographicBlock,
     metal::*,
+    std::collections::HashMap,
     std::path::PathBuf,
     std::sync::RwLock,
     tracing::{info, warn},
@@ -72,6 +77,21 @@ pub struct MetalBackend {
     /// Pre-built pipeline state for `engram_project_8k_to_3d`
     #[allow(dead_code)]
     project_pipeline: ComputePipelineState,
+    /// In-memory high-priority cache for low-latency access to high-momentum
+    /// Thought Tiles, ritual/state blocks, and promoted substrate artifacts.
+    /// Mirrors CudaBackend for full CUDA/Metal symmetry (WS1-C).
+    ///
+    /// Subsequent fetch_block_high_priority for hot items serve from RAM or
+    /// LegView mmap (zero-copy) instead of CpuBackend's O_DIRECT read_block path
+    /// (explicit bypass documented here and in hot methods per formal plan).
+    high_priority_cache: RwLock<HashMap<String, Leg3Pointer>>,
+
+    /// Phase 2.3: Hot residency for full SymplecticState (active geo state + lens/frame snapshots)
+    /// inside the high_priority mechanism. Exact mirror of CudaBackend field + API for parity.
+    /// Populated via promote_geo_snapshot_to_high_priority (invoked from StoreHandle mark_hot
+    /// for geo:* keys). Feeds hot framed effective_q paths. No layout changes; leverages existing
+    /// hot_set / promote / is_hot discipline.
+    hot_geo_states: RwLock<HashMap<String, SymplecticState>>,
 }
 
 // Metal objects are thread-safe Objective-C objects with retain/release semantics.
@@ -132,6 +152,8 @@ impl MetalBackend {
             command_queue,
             cosine_pipeline,
             project_pipeline,
+            high_priority_cache: RwLock::new(HashMap::new()),
+            hot_geo_states: RwLock::new(HashMap::new()),
         }
     }
 
@@ -315,6 +337,129 @@ impl MetalBackend {
     }
 }
 
+// ── High-priority hot-path methods (symmetric with CudaBackend, WS1-C) ───────
+// These provide the canonical fast path for promoted blocks so that high-CRS
+// tiles, traces, goals, ritual anchors etc. bypass the O_DIRECT cold path
+// (CpuBackend::fetch_block → storage::read_block with libc::O_DIRECT on Linux)
+// and instead use LegView (mmap zero-copy) + RAM cache. Exact mirror of CUDA
+// implementation for symmetry across backends. No changes to HolographicBlock.
+#[cfg(target_os = "macos")]
+impl MetalBackend {
+    /// High-priority fast path for promoted hot blocks.
+    /// Attempts LegView mmap (O_DIRECT bypass) first for zero-copy origin,
+    /// falls back to in-memory cache copy, finally to normal (O_DIRECT) fetch.
+    pub fn fetch_block_high_priority(&self, concept: &str) -> Option<Leg3Pointer> {
+        if let Ok(cache) = self.high_priority_cache.read() {
+            if cache.contains_key(concept) {
+                // Hot item — try LegView first (zero-copy when possible, explicit O_DIRECT bypass)
+                let leg_path = self.store_path.join(format!("{}.leg", concept));
+                if let Ok(view) = LegView::open(&leg_path) {
+                    let fresh = view.to_leg3_pointer();
+                    if let Ok(mut wcache) = self.high_priority_cache.write() {
+                        wcache.insert(concept.to_string(), fresh.clone());
+                    }
+                    tracing::debug!("[high-priority][metal] LegView zero-copy hit for {}", concept);
+                    return Some(fresh);
+                }
+                if let Some(cached) = cache.get(concept) {
+                    return Some(cached.clone());
+                }
+            }
+        }
+        self.fetch_block(concept)
+    }
+
+    /// Promote a block to the high-priority cache (with recency for LRU).
+    /// Sources via LegView + to_leg3_pointer when possible (O_DIRECT bypass at promotion site too).
+    /// Uses shared compute_eviction_score for AccessIndex-aware hybrid LRU (MAX 1024).
+    pub fn promote_to_high_priority(&self, concept: &str, last_accessed: Option<u64>) -> Option<Leg3Pointer> {
+        let block = {
+            let leg_path = self.store_path.join(format!("{}.leg", concept));
+            if let Ok(view) = LegView::open(&leg_path) {
+                view.to_leg3_pointer()
+            } else {
+                match self.fetch_block(concept) {
+                    Some(b) => b,
+                    None => return None,
+                }
+            }
+        };
+        if let Ok(mut cache) = self.high_priority_cache.write() {
+            const MAX_HOT: usize = 1024;
+            if cache.len() >= MAX_HOT {
+                if let Some(old_key) = cache.iter()
+                    .min_by(|a, b| {
+                        let score_a = compute_eviction_score(&a.0, a.1, last_accessed);
+                        let score_b = compute_eviction_score(&b.0, b.1, last_accessed);
+                        score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(k, _)| k.clone())
+                {
+                    cache.remove(&old_key);
+                }
+            }
+            cache.insert(concept.to_string(), block.clone());
+        }
+        Some(block)
+    }
+
+    /// Lightweight is_hot query against the Metal high_priority_cache.
+    /// Mirrors CudaBackend exactly for dispatch symmetry in StoreHandle.
+    pub fn is_hot(&self, concept: &str) -> bool {
+        if let Ok(cache) = self.high_priority_cache.read() {
+            cache.contains_key(concept)
+        } else {
+            false
+        }
+    }
+
+    // ── Phase 2.3: Geo / SymplecticState hot residency (exact parity with CudaBackend) ──
+    /// Promote full SymplecticState snapshot into high-priority geo residency.
+    /// Invoked from StoreHandle when marking geo:* or active_symplectic_state.
+    /// Syncs to bvh lens for framed BVH/OptiX candidate filtering + scoring (effective_q).
+    pub fn promote_geo_snapshot_to_high_priority(&self, name: &str, state: SymplecticState) {
+        let lens = state.current_lens;
+        if let Ok(mut cache) = self.hot_geo_states.write() {
+            const MAX_GEO_HOT: usize = 128;
+            if cache.len() >= MAX_GEO_HOT {
+                if let Some(old) = cache.keys().next().cloned() {
+                    cache.remove(&old);
+                }
+            }
+            cache.insert(name.to_string(), state);
+            tracing::debug!("[high-priority][geo][metal] promoted SymplecticState snapshot {}", name);
+        }
+        if let Ok(guard) = self.bvh.read() {
+            if let Some(bvh) = guard.as_ref() {
+                if let Some(lens) = lens {
+                    bvh.set_current_geosphere_lens(Some(lens));
+                }
+            }
+        }
+    }
+
+    pub fn is_geo_hot(&self, name: &str) -> bool {
+        if let Ok(cache) = self.hot_geo_states.read() {
+            cache.contains_key(name)
+        } else {
+            false
+        }
+    }
+
+    pub fn fetch_geo_high_priority(&self, name: &str) -> Option<SymplecticState> {
+        if let Ok(cache) = self.hot_geo_states.read() {
+            cache.get(name).cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Legacy wrapper for compatibility (delegates with None recency).
+    pub fn promote_to_high_priority_legacy(&self, concept: &str) -> Option<Leg3Pointer> {
+        self.promote_to_high_priority(concept, None)
+    }
+}
+
 // ── VsaBackend implementation ─────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -356,6 +501,15 @@ impl VsaBackend for MetalBackend {
                             score,
                             crs,
                             provlog,
+                            drift_velocity: block.energetics.dv,
+                            superposition_depth: block.superposition_count,
+                            zedos_tag: block.zedos_tag,
+                            alpha_a: block.energetics.alpha_a,
+                            alpha_d: block.energetics.alpha_d,
+                            aabb_min: block.aabb_min,
+                            aabb_max: block.aabb_max,
+                            explain: format!("Metal GPU SIM => score={:.4} (crs={:.3})", score, crs),
+                            l2_norm_residual: block.l2_norm_residual,
                         }
                     })
                     .collect();
@@ -417,6 +571,13 @@ impl MetalBackend {
     pub fn is_available() -> bool {
         false
     }
+
+    // Symmetric no-op hot-path stubs (for API uniformity across cfgs; never reached
+    // when engram_backend_metal is unset). Explicit O_DIRECT bypass contract preserved.
+    pub fn fetch_block_high_priority(&self, _concept: &str) -> Option<Leg3Pointer> { None }
+    pub fn promote_to_high_priority(&self, _concept: &str, _last_accessed: Option<u64>) -> Option<Leg3Pointer> { None }
+    pub fn is_hot(&self, _concept: &str) -> bool { false }
+    pub fn promote_to_high_priority_legacy(&self, _concept: &str) -> Option<Leg3Pointer> { None }
 }
 
 #[cfg(not(target_os = "macos"))]

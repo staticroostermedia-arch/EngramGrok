@@ -1,7 +1,8 @@
 use crate::store::SharedStore;
 use axum::{
+    body::Bytes,
     extract::State,
-    http::{header, Request, StatusCode},
+    http::{header, HeaderMap, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -680,6 +681,65 @@ async fn scout_handler(
     }
 }
 
+// ── HTTP MCP Transport (Streamable HTTP, MCP 2025-03-26) ─────────────────────
+//
+// POST /mcp
+// Accepts JSON-RPC 2.0 bodies and returns JSON-RPC 2.0 responses.
+// This lets multiple clients (Grok, Antigravity) share ONE engram serve instance
+// instead of each spawning their own private stdio subprocess. The store lock
+// (Arc<Mutex<Store>>) is already thread-safe; this is just a new transport.
+//
+// Session state note: namespace and session_id are stored in the Store itself
+// (not in a per-connection struct), so concurrent requests are safe. Agents that
+// need namespace isolation should use mcp_engram_set_namespace per session.
+async fn mcp_http(
+    State(store): State<SharedStore>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    // Validate Content-Type
+    let ct = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !ct.contains("application/json") {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            [(header::CONTENT_TYPE, "application/json")],
+            axum::body::Body::from(r#"{"error":"Content-Type must be application/json"}"#),
+        );
+    }
+
+    let raw = match std::str::from_utf8(&body) {
+        Ok(s) => s,
+        Err(_) => return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "application/json")],
+            axum::body::Body::from(r#"{"error":"Invalid UTF-8 body"}"#),
+        ),
+    };
+
+    // Dispatch through the exact same handler as stdio MCP — zero duplication
+    let response_value = crate::mcp::dispatch_jsonrpc(raw, &store);
+
+    match response_value {
+        Some(val) => {
+            let out = serde_json::to_vec(&val).unwrap_or_else(|_| br#"{"error":"serialization error"}"#.to_vec());
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                axum::body::Body::from(out),
+            )
+        }
+        // MCP notifications have no response — return 202 Accepted with empty body
+        None => (
+            StatusCode::ACCEPTED,
+            [(header::CONTENT_TYPE, "application/json")],
+            axum::body::Body::from(b"{}".to_vec()),
+        ),
+    }
+}
+
 // ── System Process Management ────────────────────────────────────────────────────
 async fn boot_agent() -> impl IntoResponse {
     use std::process::Command;
@@ -729,7 +789,7 @@ async fn shutdown_signal() {
     }
 }
 
-pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
+pub async fn run(store: SharedStore, port: u16, mcp_http_enabled: bool) -> anyhow::Result<()> {
     // ── Boot the Background Worker ─────────────────────────────────
     crate::store::StoreHandle::boot_daemon(store.clone());
 
@@ -762,7 +822,18 @@ pub async fn run(store: SharedStore, port: u16) -> anyhow::Result<()> {
                 "status": "ok",
                 "version": env!("CARGO_PKG_VERSION")
             }))
-        }))
+        }));
+
+    // ─ HTTP MCP Transport (conditional on --mcp-http flag) ─
+    let app = if mcp_http_enabled {
+        info!("[MCP-HTTP] Streamable HTTP MCP transport enabled at POST /mcp");
+        info!("[MCP-HTTP] Clients: set MCP url = \"http://127.0.0.1:{port}/mcp\" instead of command/args");
+        app.route("/mcp", post(mcp_http))
+    } else {
+        app
+    };
+
+    let app = app
         .layer(middleware::from_fn(auth_middleware))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(store.clone());

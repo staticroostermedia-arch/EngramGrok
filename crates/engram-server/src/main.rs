@@ -76,6 +76,13 @@ enum Commands {
         /// Disable the scout_daemon.py supervisor (port 8088 web-search companion). Recommended with --light when only using serve for live leg-browser views (no /api/scout needed).
         #[arg(long, default_value_t = false)]
         no_scout: bool,
+
+        /// Enable the Streamable HTTP MCP transport at POST /mcp.
+        /// Allows multiple agents (Grok, Antigravity) to share ONE engram process
+        /// instead of each spawning their own private stdio subprocess.
+        /// Config: set `url = "http://127.0.0.1:<port>/mcp"` in your MCP client config.
+        #[arg(long, default_value_t = false)]
+        mcp_http: bool,
     },
 }
 
@@ -130,6 +137,7 @@ fn main() -> anyhow::Result<()> {
             // This loads the full Sheaf/Cuda backends, BVH indexes, embed matrix, etc.
             // We create a dedicated Tokio runtime inside this thread so that
             // boot_daemon / ki_hijacker (which use tokio::spawn) do not panic.
+            let store_for_upgrade = store.clone();
             let real_path = cli.store.clone();
             std::thread::spawn(move || {
                 tracing::info!("[MCP-FAST] Starting full manifold initialization in background...");
@@ -148,43 +156,37 @@ fn main() -> anyhow::Result<()> {
 
                 let _rt_guard = rt.enter();
 
-                let real = store::open_store(&real_path);
+                let mut full = store::StoreHandle::new(&real_path);
 
                 if !no_genesis {
-                    match real.lock().unwrap().seed_genesis() {
+                    match full.seed_genesis() {
                         Ok(msg)  => tracing::info!("[MCP-FAST] {msg}"),
                         Err(e)   => tracing::warn!("[MCP-FAST] Genesis seed failed: {e}"),
                     }
                 }
 
-                // Boot the long-running daemons on the real store (now safe)
-                store::StoreHandle::boot_daemon(real.clone());
-                let _hijacker = ki_hijacker::spawn(real.clone());
+                // Hot-swap into the SAME Arc the MCP stdio loop uses (fixes split-brain).
+                {
+                    let mut guard = store_for_upgrade.lock().unwrap();
+                    guard.upgrade_from(full);
+                    guard.mark_fully_initialized();
+                }
 
-                // Item 1.5: Signal to the agent layer that the full heavy backend is now ready.
-                // This allows wake-up / rituals to distinguish "MCP protocol ready" from
-                // "heavy OptiX + manifold work actually complete".
-                real.lock().unwrap().mark_fully_initialized();
+                store::StoreHandle::boot_daemon(store_for_upgrade.clone());
+                let _hijacker = ki_hijacker::spawn(store_for_upgrade.clone());
 
-                tracing::info!("[MCP-FAST] Full initialization complete. Heavy features now active.");
+                tracing::info!("[MCP-FAST] Full initialization complete — MCP tools now use real backend.");
 
                 // Keep the runtime alive for the background work.
-                // We intentionally leak the runtime here (it lives as long as the process).
                 std::mem::forget(rt);
             });
 
-            // Boot a minimal daemon on the placeholder so basic file watching can work
-            // (real one will be booted in the background thread above for the heavy store).
-            store::StoreHandle::boot_daemon(store.clone());
-
-            // We intentionally do NOT spawn the full KI Hijacker on the placeholder.
-            // It will be started on the real store in the background thread.
-
+            // Daemon + ki_hijacker start only after upgrade (same Arc as MCP loop).
             tracing::info!("[MCP-FAST] Fast MCP path active — replying to protocol immediately.");
 
             mcp::run(store)?;
         }
-        Commands::Serve { port, no_genesis, light, no_scout: _ } => {
+        Commands::Serve { port, no_genesis, light, no_scout: _, mcp_http } => {
             // Serve mode (HTTP) — stabilized for leg-browser dynamic GUI (parent goal:1780106168_make-the-leg-browser-a-seamless--truly-dynamic-g ; sub0:1780106172).
             if light {
                 std::env::set_var("ENGRAM_FORCE_CPU_BACKEND", "1");
@@ -211,7 +213,7 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("[KI_HIJACKER] Logophysical Antigravity Bridge spawned (REST mode).");
 
             // Concrete improvement: serve now supports clean shutdown signals (see serve.rs); "Keyboard interrupt received" will be logged on intentional Ctrl-C.
-            rt.block_on(serve::run(store, port))?;
+            rt.block_on(serve::run(store, port, mcp_http))?;
         }
     }
 

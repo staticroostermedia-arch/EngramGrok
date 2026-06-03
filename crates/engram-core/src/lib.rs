@@ -50,8 +50,16 @@ pub use types::{
     ZEDOS_NREM_CENTROID, ZEDOS_SYNTHESIS, LAW_CONSTANT,
     // External pointer support (smart refs for >256KB data, guardrail-compliant)
     ZEDOS_POINTER,
+    // Phase 2 WS2-B: richer CLS TRAINING tag for NREM bias + MCP surface (child goal sub1)
+    ZEDOS_TRAINING,
+    // WS3-A Substrate Phase 2: live Geosphere 5th coordinate runtime register
+    // (SymplecticState + reserved persistence tag; no HolographicBlock layout impact)
+    SymplecticState, ZEDOS_GEOSPHERE,
+    // Phase 2.2 VSA Calculus + ZEDOS_OPERATOR: explicit VSA ops as first-class tagged
+    // instances (for sheaf/harmonics consumption). Tag only; layout invariant preserved.
+    ZEDOS_OPERATOR,
 };
-pub use ops::{op_add, op_bind, cosine_similarity};
+pub use ops::{op_add, op_bind, cosine_similarity, frame_combine, apply_frame};
 pub use backend::{VsaBackend, CpuBackend, SheafBackend};
 pub use genesis::{
     SACRED_PI, SACRED_VESICA, SACRED_PHI, SACRED_ZETA_CRITICAL,

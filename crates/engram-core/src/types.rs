@@ -57,6 +57,12 @@ pub const ZEDOS_NREM_CENTROID: u8 = 0x4E;
 /// Enables explicit A/D/R lineage + selection pressure without polluting high-CRS raw blocks.
 pub const ZEDOS_SYNTHESIS: u8 = 0x0C;
 
+/// Richer CLS 8-property TRAINING blocks (Phase 2 / WS2-B per formal_spec_substrate-phase2-execution-plan-v1 child goal:1780165889_substrate-cs--richer-cls-8-property-trai_sub1).
+/// Carries full tuple: UTC+tau, (future Geosphere), CRS, p-momentum summary, Hamiltonian H, torsion τ, BLAKE3 provenance, productive failure paths.
+/// Explicit target for elevated NREM/consolidation bias (higher weight than default high-CRS blocks).
+/// Value 0x54 per substrate roadmap / CLS gap closure docs. Guardrail: zero layout impact.
+pub const ZEDOS_TRAINING: u8 = 0x54;
+
 /// External pointer / smart reference (ZEDOS_POINTER).
 /// First-class HolographicBlock for large external data (>256KB) that cannot fit in payload.
 /// Strong provenance via embedded content_hash + reuse of LegFooter Merkle (sig_0-5 + merkle_sub_root).
@@ -289,6 +295,144 @@ impl std::ops::DerefMut for Leg3Pointer {
     fn deref_mut(&mut self) -> &mut HolographicBlock { &mut self.0 }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// WS3-A / Substrate Phase 2: SymplecticState — first-class runtime register
+// for the live 5th (Geosphere) coordinate.
+//
+// Per formal_spec_substrate-phase2-execution-plan-v1 (child goal
+// goal:1780165889_substrate-cs--live-geosphere-5th-coordin_sub2):
+//   • active_location: [Complex32; 8192] — full phase vector in same space as q.
+//   • Lens/frame support for JIT resolution (origin + time → lens vector).
+//   • Pure CS: NO changes whatsoever to HolographicBlock layout, BLOCK_SIZE,
+//     alignment, or any .leg3 on-disk invariants.
+//   • All results on unit hypersphere (enforced via normalize at every boundary).
+//   • Design supports future persistence as special block (e.g. via a future
+//     ZEDOS_GEOSPHERE-tagged block using existing payload region for serialized
+//     register snapshots + provenance; the const below reserves the tag value
+//     without touching serialized layout today).
+//
+// This is a *runtime* register (daemon / query hot paths hold one). It is
+// intentionally plain data so it can be snapshotted, cloned into hot caches,
+// or later minted as a first-class memory block without format migration.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Reserved ZEDOS tag for future first-class Geosphere / SymplecticState
+/// persistence blocks (when a snapshot of the runtime register is promoted
+/// into the manifold as a durable 256KB container).
+///
+/// Guardrail compliance: this const lives only in the tag namespace.
+/// It does not alter struct layouts, sizes, offsets, or serialization.
+pub const ZEDOS_GEOSPHERE: u8 = 0x5D; // 'G' + phase marker
+
+/// ZEDOS_OPERATOR (0x4F) — Explicit VSA calculus operator instances.
+/// Per Phase 2.2 charter (goal:1780185084_phase-2-2-vsa-calculus-runtime-expansion_sub1)
+/// and "Against Flat Knowledge" / roadmap (tile:formal_spec_substrate-phase2-execution-plan-v1):
+///   • Tag for HolographicBlocks whose payload or q/p *represent* invocable VSA operators
+///     (e.g. a bound relation, a frame lens, a collapse mask, or a ZADO-CPS toroidal lift
+///      as first-class manifold citizens).
+///   • Enables sheaf (2.4) and harmonics (2.5) workstreams to consume *operators* directly
+///     via MCP / NREM / ego paths (compose, measure, quasi-ortho recovery on OPERATOR-tagged
+///     blocks).
+///   • Complements existing ZEDOS_RELATION (OP_BIND edges) and ZEDOS_PRAXIS (procedures).
+/// Guardrail: tag namespace only. Zero impact on HolographicBlock layout, sizes, offsets,
+/// serialization, or 256KB seal (BLOCK_SIZE / stride tests remain passing).
+pub const ZEDOS_OPERATOR: u8 = 0x4F; // 'O' for Operator / VSA calculus instance
+
+/// SymplecticState — the agent's live 5th coordinate (Geosphere) register.
+///
+/// Holds `active_location` (current geosphere phase vector) plus optional
+/// current lens/frame state. Frame application is delegated to ops layer
+/// (`frame_combine` / `apply_frame`) which guarantees normalization.
+///
+/// Typical usage (future daemon integration):
+/// ```ignore
+/// let mut geo = SymplecticState::new();
+/// geo.set_active_location( giza_cubit_lens ); // or from MCP
+/// let framed_query = geo.apply_current_frame( &raw_query_q );
+/// let results = backend.query(&framed_query, k);
+/// ```
+#[derive(Clone, Debug)]
+pub struct SymplecticState {
+    /// Current position in the Geosphere (5th coordinate).
+    /// Invariant: always normalized to unit hypersphere (enforced on set).
+    pub active_location: [Complex32; DIMENSION],
+
+    /// Current lens / frame vector (if any).
+    /// When present, represents a coordinate transformation (e.g. "from Giza
+    /// sacred cubit origin at time offset t"). Derived upstream from origin
+    /// descriptors + time; stored here for hot-path application.
+    pub current_lens: Option<[Complex32; DIMENSION]>,
+
+    /// Monotonic counter of frame applications (for audit / traceability
+    /// in traces and Logenergetics when persisted).
+    pub frame_step: u64,
+
+    /// Optional symbolic descriptor of the active frame origin
+    /// (e.g. "giza_sacred_cubit", "grove_sower_2026", "london_1776").
+    /// Purely advisory; does not affect geometry.
+    pub frame_origin: Option<String>,
+}
+
+impl Default for SymplecticState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SymplecticState {
+    /// Construct a new register at the multiplicative identity (neutral frame).
+    /// All components normalized.
+    pub fn new() -> Self {
+        let mut id = [Complex32::new(1.0, 0.0); DIMENSION];
+        // identity already unit norm, but use the canonical path
+        crate::ops::normalize_in_place(&mut id);
+        Self {
+            active_location: id,
+            current_lens: None,
+            frame_step: 0,
+            frame_origin: None,
+        }
+    }
+
+    /// Set (or reset) the active geosphere location.
+    /// The input is projected onto the unit hypersphere.
+    pub fn set_active_location(&mut self, loc: [Complex32; DIMENSION]) {
+        let mut v = loc;
+        crate::ops::normalize_in_place(&mut v);
+        self.active_location = v;
+    }
+
+    /// Install a lens/frame for subsequent query transformations.
+    /// Lens is normalized on entry.
+    pub fn set_current_lens(&mut self, lens: [Complex32; DIMENSION], origin: Option<String>) {
+        let mut l = lens;
+        crate::ops::normalize_in_place(&mut l);
+        self.current_lens = Some(l);
+        self.frame_origin = origin;
+    }
+
+    /// Clear any active lens (return to native coordinate).
+    pub fn clear_current_lens(&mut self) {
+        self.current_lens = None;
+        self.frame_origin = None;
+    }
+
+    /// Apply the current lens (if any) to a query vector via the ops layer.
+    /// Returns a fresh normalized vector in the transformed frame.
+    /// If no lens, returns a normalized copy of the input (identity transform).
+    pub fn apply_current_frame(&self, query: &[Complex32; DIMENSION]) -> [Complex32; DIMENSION] {
+        match &self.current_lens {
+            Some(lens) => crate::ops::apply_frame(query, Some(lens)),
+            None => crate::ops::normalize(query),
+        }
+    }
+
+    /// Increment frame step (call after each apply or explicit coordinate change).
+    pub fn advance_frame(&mut self) {
+        self.frame_step = self.frame_step.wrapping_add(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +461,47 @@ mod tests {
     #[test]
     fn leg3_pointer_is_pointer_sized() {
         assert_eq!(size_of::<Leg3Pointer>(), size_of::<usize>());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // WS3-A SymplecticState lawfulness (ties to goal:1780165889_..._sub2)
+    // Confirms register construction, lens setting, frame application, and
+    // hypersphere invariant through the public API surface.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn symplectic_state_invariants_and_frame_application() {
+        let mut state = SymplecticState::new();
+        // Starts normalized
+        let init_mag: f32 = state.active_location.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((init_mag - 1.0).abs() < 1e-5, "initial active_location not unit");
+
+        // Set a location (must normalize)
+        let raw_loc = [Complex32::new(2.0, 0.0); DIMENSION];
+        state.set_active_location(raw_loc);
+        let loc_mag: f32 = state.active_location.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((loc_mag - 1.0).abs() < 1e-5);
+
+        // Install lens + apply
+        let lens = [Complex32::new(0.7071, 0.7071); DIMENSION]; // approx 45deg rotor, will be normed inside
+        state.set_current_lens(lens, Some("test:giza".to_string()));
+        assert!(state.current_lens.is_some());
+        assert_eq!(state.frame_origin.as_deref(), Some("test:giza"));
+
+        let query = [Complex32::new(1.0, 0.0); DIMENSION];
+        let framed = state.apply_current_frame(&query);
+        let fmag: f32 = framed.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((fmag - 1.0).abs() < 1e-5, "SymplecticState frame application must yield unit vector");
+
+        // Advance + clear
+        state.advance_frame();
+        assert_eq!(state.frame_step, 1);
+        state.clear_current_lens();
+        assert!(state.current_lens.is_none());
+
+        // After clear, identity
+        let passthrough = state.apply_current_frame(&query);
+        let pmag: f32 = passthrough.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
+        assert!((pmag - 1.0).abs() < 1e-5);
     }
 }

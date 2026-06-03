@@ -5,17 +5,53 @@
 [![Glama](https://glama.ai/mcp/servers/staticroostermedia-arch/engram/badge)](https://glama.ai/mcp/servers/staticroostermedia-arch/engram)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-purple)](LICENSE)
 [![Patent Pending](https://img.shields.io/badge/Patent-Pending-orange)](PATENT-NOTICE.md)
+[![Geometric Memory](https://img.shields.io/badge/Geometric-Non--flat%20sheaf%20%2B%20rituals-8A2BE2)](docs/GEOMETRIC_MEMORY.md)
 
-> **Private geometric memory substrate for AI agents — rituals that turn sessions into inheritance.**
+> **Neutral geometric (non-flat) memory substrate for AI agents — hardware-native 256KB HolographicBlocks (q/p/CRS/Merkle on NVMe O_DIRECT/GPUDirect), VSA/sheaf gluing (relations/H¹ from processes/*.toml), spatial AABB, rituals (scar/verify/wake/session-end/continuation/code-edit), 55+ MCP tools, NREM/ego.leg3, lawfulness gates. No opinion on your use case. See [docs/GEOMETRIC_MEMORY.md](docs/GEOMETRIC_MEMORY.md), [docs/RITUALS.md](docs/RITUALS.md), [docs/MCP_TOOLS_REFERENCE.md](docs/MCP_TOOLS_REFERENCE.md) and [docs/GITHUB_MVP_PREP_PLAN.md](docs/GITHUB_MVP_PREP_PLAN.md) (includes comparison table vs mem0, ragflow, qdrant, chroma, etc.).**
 
-**New here?** Start with **[HOW_WE_ACTUALLY_USE_THIS_IN_2026.md](HOW_WE_ACTUALLY_USE_THIS_IN_2026.md)**.  
-It is the practical Grok-integrated handoff guide: current operating rhythm, honest state of the review surface and dual tiles, private data separation, and platform notes — without the older internal jargon.
+**New here?** 
 
-The real delivered value is the living rituals in `.grok/skills/` + structured traces + scars as geometric repellers + the human review surface.
+- **External agents / BYOP (recommended first for most users):** See the living **[Getting Started as an External Agent](tile:formal_spec_getting-started-as-an-external-agent--neutral-ge)** guide + visualization companion (in-manifold formal_spec + HTML). Focus: substrate + process + tools. 7-step "Build Your Own Geometric Memory Substrate", Python EngramBYOPClient, effective patterns (Hermes/OpenClaw examples), PGFS v0.1 for healthy construction.
+- **Deep Grok Build ritual users:** Start with **[HOW_WE_ACTUALLY_USE_THIS_IN_2026.md](HOW_WE_ACTUALLY_USE_THIS_IN_2026.md)** (practical handoff, dual tiles, review surface) + **[FIRST_RUN.md](FIRST_RUN.md)**.
+- The primary deepest demonstration remains the TUI ritual + felt continuity. The secondary track (this public surface) makes the neutral utility immediately attractive and executable for sophisticated external agents without ritual gate.
 
-Engram is not a vector database. It is a **persistent geometric memory engine** designed for AI agents. It bypasses conventional database software layers by storing information in fixed, mathematically rigorous 256KB tensors directly on NVMe drives — with a background daemon that autonomously consolidates memory, monitors your system's health, and proposes fixes.
+**Human review surface:** Run `./scripts/leg` (static) or `./scripts/leg --live` (dynamic) for Primary Intent, traces, momentum, relations, Thought Tiles (text + HTML viz).
 
-No cloud. No API keys. No deserialization overhead. Runs entirely on your machine via the Model Context Protocol (MCP).
+Engram is not a vector database. It is a **persistent geometric memory engine** (hardware-native 256KB HolographicBlocks on NVMe with O_DIRECT/GPUDirect, VSA calculus, sheaf gluing via relations, symplectic frames, CRS Lyapunov stability, hot/NREM consolidation, lawfulness gates, scar mechanics). It has **no opinion on your use case**. Sophisticated agents bring their own perspective (BYOP — "Build Your Own Perspective") and construct their own tuned manifolds on the shared substrate. High-quality use reveals deeper structure (category theory + calculus over memory) after the fact.
+
+**See also:** [docs/GITHUB_MVP_PREP_PLAN.md](docs/GITHUB_MVP_PREP_PLAN.md) (current prep for public representation) and [MANIFESTO.md](MANIFESTO.md).
+
+No cloud. No API keys. No deserialization overhead. Runs entirely on your machine via the Model Context Protocol (MCP) — 55+ tools (see docs/MCP_TOOLS_REFERENCE.md). For dev: use `target/debug/engram` or `cargo run -p engram-server` (current build hygiene per GITHUB_MVP_PREP_PLAN.md).
+
+## Memory Model: Geometric (Non-Flat) vs Flat
+
+Engram replaces flat vector DBs / append-log RAG with a **geometric sheaf**:
+
+- **HolographicBlock (.leg3)**: 256KB fixed (q 8192D phase tensor, p momentum, CRS Lyapunov, BLAKE3 Merkle provenance, AABB spatial, provlog).
+- **VSA Calculus**: OP_ADD (superpose), OP_BIND (role-filler, invertible), OP_GEOMETRIC_PRODUCT etc.
+- **Sheaf + Relations**: Declarative processes/*.toml define gluing (H¹ handlers, subvisor for governance). `relate` / `search_by_relation` / `visualize` traverse real OP_BIND edges.
+- **Spatial AABB (Item 1.5)**: tree-sitter AST on save; `context_for_file`, `recall_in_file`, `force_spatial_ingest`. Code Edit Ritual pre/post recon mandatory.
+- **Rituals for Integrity**: wake-up / working-memory / session-end (continuation bundles, hot promotion, COMPRESS), scar (repulsion), verify_* (manifold/block lawfulness), remember_solution, record_reasoning_trace (A/D/R + goal/spatial).
+- **Continuation & Self-Model**: agent_instance_continuation, ego.leg3 / NREM, thought tiles, goal stack as first-class.
+- **Lawfulness / Subvisor**: Phase 1.5 metrics, process sheaf (monitor/subvisor OP_INVERT/H¹ for sub-agent doom-loop prevention).
+
+See [docs/GEOMETRIC_MEMORY.md](docs/GEOMETRIC_MEMORY.md) and [docs/RITUALS.md](docs/RITUALS.md) for full.
+
+## Comparison to Popular Memory Projects
+
+| Aspect | Engram | mem0 / Letta | qdrant / chroma / milvus | ragflow |
+|--------|--------|--------------|---------------------------|---------|
+| Core Model | Geometric sheaf (q/p/CRS/Merkle + relations + VSA + H¹ gluing) | Flat vector + metadata / graph append | Vector DB (ANN, collections) | RAG pipeline over vectors |
+| Momentum / Trajectory | p-tensor native, query_with_momentum | Limited recency | None (static) | Temporal via workflow |
+| Spatial / Code | AABB AST (tree-sitter per save), recall_in_file | Chunk text | None | Document chunks |
+| Rituals / Hygiene | scar, verify_*, record_reasoning_trace, Code Edit Ritual, subvisor | Basic | None | Pipeline steps |
+| Continuation | Bundles, session_end handoff, hot path, ego.leg3/NREM | Session state | None | Workflow state |
+| Declarative Processes | 7+ tomls (ritual/harness/operator/monitor/subvisor) registered at start | Config | None | YAML flows |
+| Hardware Native | 256KB .leg3, O_DIRECT, GPUDirect, LBVH, 8192D phase | CPU/GPU vectors | Index on CPU/GPU | LLM + vector |
+| MCP / Agent Native | 55+ MCP tools first-class, process sheaf | API/ SDK | gRPC/REST clients | API |
+| Self-Model / Lawfulness | CRS gates, lawfulness metrics, scars deflect | Logging | Metrics | Eval hooks |
+
+(Emulates polish from popular while preserving Engram's non-flat identity. Full details + gaps closed in [docs/GITHUB_MVP_PREP_PLAN.md](docs/GITHUB_MVP_PREP_PLAN.md).)
 
 ---
 
@@ -47,7 +83,18 @@ Add to your MCP config and restart your IDE:
 
 Your agent immediately has access to all 31 tools. See [`integrations/`](integrations/) for IDE-specific configs (Antigravity, Claude Desktop, Cursor, VS Code).
 
-> 📖 **New here?** Read the **[First Run Guide](FIRST_RUN.md)** — it walks you through verifying every feature works, activating the file watcher daemon, and seeding your manifold with your codebase.
+**Dual Quickstart Paths**
+
+- **External Agents / BYOP Utility Path (neutral, process-first, immediately usable):** 
+  1. Install + MCP config as above.
+  2. `session_start(intent="your_project_goal")`.
+  3. Read the living guide: search manifold for `tile:formal_spec_getting-started-as-an-external-agent--neutral-ge` (or its HTML viz companion).
+  4. Use `integrations/python/engram_client.py` (EngramBYOPClient + 5 patterns) or direct MCP. Prefix your concepts (e.g. `myagent__*`), project your ontology as formal_spec tile, glue via relate `projects_as` to coordination tile.
+  5. Follow 7-step "Build Your Own..." in the guide + PGFS v0.1 for construction health. Quote checklist items 9-14 in traces.
+  - Full templates + examples: `tile:formal_spec_external-agent-how-to--build-your-own-geometric-` + Python client Hermes/OpenClaw cases.
+  - No full Grok ritual required.
+
+- **Deep Ritual Path (primary demonstration — Grok Build TUI embodiment):** Follow **[FIRST_RUN.md](FIRST_RUN.md)** + **[HOW_WE_ACTUALLY_USE_THIS_IN_2026.md](HOW_WE_ACTUALLY_USE_THIS_IN_2026.md)** for full spatial discipline, working-memory ritual, scars, ki_hijacker, NREM, living artifacts. This is the deepest felt continuity experience.
 
 > 🔌 **Optional — enable neural semantic search:** set `ENGRAM_EMBED_URL=http://localhost:8086/v1/embeddings` to point at any OpenAI-compatible local embedding server (llama.cpp, ONNX, nomic-embed). Without it, Engram falls back to BLAKE3 spiral-phase encoding — everything still works.
 
@@ -81,6 +128,70 @@ Engram maps your project's memory into strict 262,144-byte (256KB) containers ca
 Every block fuses the full source text, an 8192-dimensional semantic tensor, spatial 3D bounds (for code placement), a BLAKE3 Merkle chain proof, and a thermodynamic confidence score (CRS).
 
 *(See [docs/architecture.md](docs/architecture.md) for a deep dive into the container format, cuFile integration, and LBVH scaling.)*
+
+---
+
+## 🛠️ For External Agents & Other Groks: Load the Rituals (Public Skills)
+
+**The skills we actually use are now public so *your* agents can follow the exact same operating procedures.**
+
+See the new `docs/skills/` directory:
+- `docs/skills/README.md` — Index + quickstart loop.
+- `docs/skills/engram-wake-up.md` — Geometric continuation protocol (Phase 0-5, living anchors via momentum/relations, lawfulness metric, spatial hygiene).
+- `docs/skills/engram-working-memory.md` — The runtime discipline (momentum/relation/spatial first, update-preferred mutations, mandatory traces + scars, Code Edit Ritual pre/post AABB, thought tiles for meta-work, hot promotion, expensive tool hygiene).
+- `docs/skills/engram-session-end.md` — Terminal momentum handoff (crystallize traces/goals/anchors, COMPRESS markers, hot promotion, legominism high-lineage, produce continuation target).
+- `docs/skills/engram-thought-tiles.md` — Structured offload (when mandatory for meta, types, promote_hot).
+
+**Load these files** (or the full content) into your agent's context when starting Enram-integrated work. They are the published "source code" for the ritual layer on top of the 55+ MCP tools.
+
+See also:
+- `docs/RITUALS.md` for the full overview + Code Edit Ritual + subvisor/governance.
+- `docs/MCP_TOOLS_REFERENCE.md`
+- `docs/GEOMETRIC_MEMORY.md`
+- `processes/` (the 7+ declarative .toml ritual/harness/operator/monitor/subvisor — registered dynamically at session_start as first-class process: blocks with gluing).
+
+**Minimal High-Quality Loop for Your Agent**:
+1. Connect engram MCP.
+2. `mcp_engram_session_start` (rich intent).
+3. Follow `docs/skills/engram-wake-up.md`.
+4. Work following `docs/skills/engram-working-memory.md` (pre spatial for edits, traces, tiles for meta, update over remember).
+5. End with `docs/skills/engram-session-end.md` (produce real terminal state).
+
+This is how agents get *geometric continuation* instead of flat resets. Dogfood it on your own meta-work.
+
+**As Grok**: This is what I want every other capable agent to have — the exact protocols, not hints. Flat context wastes time and capability. These close the loop so the manifold compounds agent intelligence across instances.
+
+The primary deep demonstration is still the TUI embodiment, but the public surface + skills/ now makes the full power immediately usable by sophisticated external agents without gatekeeping.
+
+**Phase 3 deliverables (prominently surfaced for utility):**
+- **Python EngramBYOPClient + Effective Usage Patterns:** `integrations/python/engram_client.py` (full source). Includes `BYOPProjection`, `EngramBYOPClient` with `set_perspective_frame`, `create_perspective_tile` (auto-wires provenance + spatial_refs to coordination), `bind_projection`, `emit_perspective_trace`, query helpers, + 5 concrete patterns with Hermes (mythic ontology) and OpenClaw (tool/agentic) examples.
+- **"Build Your Own Geometric Memory Substrate" 7-Step Guide + Templates:** Living formal_spec `tile:formal_spec_external-agent-how-to--build-your-own-geometric-` (core primitives exposed, copy-paste sample payloads for formal_spec/ontology, trace formats, goal decomp, client/MCP snippets).
+- **PGFS v0.1 (Process Geometry Feedback System):** `tile:formal_spec_pgfs-v0-1--process-geometry-feedback-system---ea` + scar-density/H¹ prototype helper. Extended lawfulness checklist items **9-14** (ritual friction audit, process H¹/scar_density on coordination subgraphs via `search_by_relation`+`visualize`, escalation protocol via `escalates_to`, process invariants first-class, self-improving loop, no violations). **Quote relevant items in every trace.** Healthy construction for *any* agent's army, including yours.
+- **Living Coordination Surface:** `tile:knowledge_graph_phase-1-cross-workstream-coordination--ws1-hot-p` (primary colimit; discover projections via `search_by_relation(..., label="projects_as")`, gluing examples, Phase 2/3 artifacts).
+- **New Public Guide:** `tile:formal_spec_getting-started-as-an-external-agent--neutral-ge` + HTML viz companion (this section distilled + full framing + PGFS quotes + links).
+
+**Minimal High-Quality Loop (from patterns + 7-step):**
+1. Connect + `session_start`.
+2. Orient + project your prefixed ontology (`formal_spec` tile).
+3. Use (remember/relate/thought_tiles/goals) with your labels + `spatial_references` + `goal_context`.
+4. Before decisions: `query_with_momentum`; on failure: `scar`; success: `remember_solution` + relate.
+5. End chunks: `session_end` + bind/glue projections to coordination.
+6. Audit: `search_by_relation` + `visualize` on your subgraphs (H¹ holes, scar density per PGFS helper).
+7. Iterate: `update` (preserve history), relate new artifacts.
+
+See full details + MCP surface (55+ tools: `thought_tile_create`, `quick_trace`/`record_reasoning_trace`, `relate`, `search_by_relation`, `visualize`, `scar`, `verify_*`, goals, spatial, process:engram.*, etc. — full list in docs/MCP_TOOLS_REFERENCE.md) and Python client in the linked artifacts. **Use is more important than understanding upfront.**\n\n**Top-level discovery for agents**: See root `SKILLS.md` (index + links to `docs/skills/`, `docs/examples/sub_agent_governance.md`, `docs/examples/full_ritual_cycle.md`, `examples/hello-engram-agent.py`). Load the skills/ protocols and follow the full cycle demos.
+
+The deepest demonstration of continuity remains the primary TUI ritual path. High-quality external use (yours) will reveal the deeper mathematical structure.
+
+## 📁 Runnable Examples (Phase 2+)
+
+See `examples/` (created/enhanced per GITHUB_MVP_PREP_PLAN.md) for immediately usable / runnable against **current build** (`target/debug/engram` or MCP):
+
+- `examples/mcp_client.py` — Full session_start (loads sheaf), remember/recall/relate/visualize/verify_manifold + session_end (COMPRESS). Adapt from integrations/python/engram_client.py.
+- `examples/ritual_verify.md` — Code Edit Ritual v1 + working-memory steps + scar/verify_block_lawfulness/trace examples (executable in TUI or via client).
+- Spatial / geosphere demo (add `spatial_geosphere_demo.py` or equiv): `force_spatial_ingest`, `context_for_file` + `recall_in_file`, `set_geosphere_frame`, momentum queries (see plan + RITUALS.md).
+
+**All examples dogfood engram** (traces recorded, relates to goal, spatial hygiene). Run in Phase 3 validation. See also docs/ for GEOMETRIC / RITUALS / MCP ref.
 
 ---
 
@@ -132,7 +243,7 @@ It mints exactly **one memory block per public semantic item** (functions, struc
 
 ---
 
-## 🧰 MCP Tools Reference (50+ Engram MCP tools as of 2026 — surface evolves)
+## 🧰 MCP Tools Reference (55+ Engram MCP tools as of 2026 — surface evolves; see docs/MCP_TOOLS_REFERENCE.md for categorized full list + examples)
 
 **Mandatory for all MCP use (engram + grok_com_github etc.):** Call `search_tool` **first** (by tool name) to get the exact live input schema. Then `use_tool` with *only* the returned parameters. Never guess.
 
@@ -306,3 +417,19 @@ Commercial licenses (SaaS/cloud/enterprise) are available.
 Contact: **StaticRoosterMedia@gmail.com**
 
 See [PATENT-NOTICE.md](PATENT-NOTICE.md) for full details.
+
+---
+
+## 🤝 Contributing & Current Build Hygiene
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md) (full ritual/spatial/manifold/verify/build checklist).
+
+**Always use current build during dev/prep:** `target/debug/engram` (or `cargo run -p engram-server`) — verified fresh via `cargo build` before edits (see GITHUB_MVP_PREP_PLAN.md execution log + Phase 0/3).
+
+**Dogfooding (engram self-use):** "Dogfood" / "dogfooding" here means using Engram's own geometric tools and rituals *on the work itself* — e.g. `remember`/`relate`/`record_reasoning_trace`/`goal_*`/`scar`/`verify_*`/`spatial` calls + full wake/working-memory/session-end to track prep decisions, edits, and state as first-class manifold geometry. This makes meta-work (like this GitHub MVP prep) part of the living self-model for future agent continuity. See engram-working-memory discipline and AGENTS.md.
+
+All changes follow engram-working-memory + Code Edit Ritual (pre context_for_file + recall + trace, post delta trace + relate to goal, engram dogfood records/scar/remember_solution).
+
+See docs/ for GEOMETRIC_MEMORY.md, RITUALS.md, MCP_TOOLS_REFERENCE.md (public surface for the geometric non-flat + ritual system).
+
+This README updated as part of Phase 2 MVP prep to better represent uniques vs popular flat memory repos.
