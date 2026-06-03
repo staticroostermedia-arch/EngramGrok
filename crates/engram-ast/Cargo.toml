@@ -16,7 +16,7 @@ streaming-iterator = "0.1"
 # Use 0.23.x for the full grammar suite.
 tree-sitter            = { version = "0.23" }
 tree-sitter-rust       = { version = "0.23" }
-tree-sitter-python     = { version = "0.23" }
+tree-sitter-python     = { version = "0.25" }
 tree-sitter-typescript = { version = "0.23" }
 tree-sitter-javascript = { version = "0.23" }
 tree-sitter-go         = { version = "0.23" }
