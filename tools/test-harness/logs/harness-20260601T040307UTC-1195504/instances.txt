@@ -1,0 +1,2 @@
+/home/a/.engram-ac3509a9/bin/engram|/tmp/engram-harness-harness-20260601T040307UTC-1195504-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260601T040307UTC-1195504-engram-transport-lifetime,full-wakeup,lawfulness-metric,compression-measurement.json|2
+/home/a/Documents/Engram/target/debug/engram|/tmp/engram-harness-harness-20260601T040307UTC-1195504-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260601T040307UTC-1195504-engram-transport-lifetime,full-wakeup,lawfulness-metric,compression-measurement.json|2

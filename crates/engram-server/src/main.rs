@@ -22,6 +22,8 @@
 //!   --no-scout  : Skip scout_daemon supervisor (avoids port 8088 contention/spam when only using /api/* for dynamic views).
 
 mod mcp;
+mod mcp_lock;
+mod profile;
 mod serve;
 mod store;
 pub mod daemon;
@@ -97,6 +99,13 @@ fn main() -> anyhow::Result<()> {
         .without_time()
         .init();
 
+    // Raise fd limit early for large stores (181k+ .leg files). Default soft ulimit 1024 causes EMFILE
+    // during bvh build (scan_dir opens many .leg), spatial force_ingest, hot cache, etc.
+    // This is required for the CUDA/BVH/NVMe-GPU path to work on real data without "too many open files".
+    // Hard limit is usually high (1M+); we raise soft to 64k.
+    // Ties to "NVMe to GPU" design + large manifold support post our bvh guard lift.
+    raise_fd_limit();
+
     let cli = Cli::parse();
 
     // Boot scout daemon in background — only for HTTP serve mode (unless --no-scout for minimal leg-browser UI use).
@@ -117,6 +126,9 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Mcp { no_genesis } => {
+            profile::EngramProfile::from_env().apply();
+            let _mcp_lock = mcp_lock::McpStoreLock::acquire(&cli.store)?;
+
             // === Early MCP Ready Path ===
             // Create an ultra-light placeholder instantly so we can answer
             // initialize / tools/list before the heavy manifold + GPU + BVH work.
@@ -141,6 +153,7 @@ fn main() -> anyhow::Result<()> {
             let real_path = cli.store.clone();
             std::thread::spawn(move || {
                 tracing::info!("[MCP-FAST] Starting full manifold initialization in background...");
+                maybe_defer_bvh_for_large_store(&real_path);
 
                 // Create a minimal multi-thread runtime just for this init thread.
                 let rt = match tokio::runtime::Builder::new_multi_thread()
@@ -189,8 +202,11 @@ fn main() -> anyhow::Result<()> {
         Commands::Serve { port, no_genesis, light, no_scout: _, mcp_http } => {
             // Serve mode (HTTP) — stabilized for leg-browser dynamic GUI (parent goal:1780106168_make-the-leg-browser-a-seamless--truly-dynamic-g ; sub0:1780106172).
             if light {
-                std::env::set_var("ENGRAM_FORCE_CPU_BACKEND", "1");
-                tracing::info!("[SERVE] --light: ENGRAM_FORCE_CPU_BACKEND=1 (CPU-only, no GPU/CUDA init or heavy BVH for fast leg-browser UI testing + reliable bg launch). See codeland goal:1780091465_codeland-integration-2026---systematically-incor for related substrate work.");
+                if std::env::var("ENGRAM_PROFILE").is_err() {
+                    std::env::set_var("ENGRAM_PROFILE", "ui");
+                }
+                profile::EngramProfile::Ui.apply();
+                tracing::info!("[SERVE] --light: ui profile (CPU-only, fast leg-browser).");
             }
 
             // Serve mode (HTTP) can afford the full heavy initialization (unless light).
@@ -218,4 +234,58 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Defer the memory-heavy BVH full scan on very large stores.
+/// Queries fall back to CPU linear scan until BVH is built on demand.
+fn maybe_defer_bvh_for_large_store(path: &str) {
+    if std::env::var("ENGRAM_DEFER_BVH").is_ok() {
+        return;
+    }
+    let expanded = shellexpand::tilde(path).into_owned();
+    let count = std::fs::read_dir(&expanded)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .and_then(|x| x.to_str())
+                        == Some("leg")
+                })
+                .count()
+        })
+        .unwrap_or(0);
+
+    if count > 50_000 {
+        std::env::set_var("ENGRAM_DEFER_BVH", "1");
+        tracing::info!(
+            "[MCP-FAST] Large manifold (~{count} .leg files) — ENGRAM_DEFER_BVH=1. \
+             MCP stays responsive; recall uses CPU scan until BVH built on demand."
+        );
+    }
+}
+
+/// Raise soft RLIMIT_NOFILE early (for large stores with 100k+ .leg files).
+/// Prevents EMFILE during bvh::scan_dir / build (opens many .leg), spatial force_ingest
+/// (on source + manifold), hot cache residency, etc.
+/// Required for reliable CudaBackend + LBVH + device_residency (NVMe-GPU) on real data.
+/// We set soft to 64k (or hard if lower); hard is typically 1M+ from OS.
+fn raise_fd_limit() {
+    unsafe {
+        let mut rlim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) == 0 {
+            let target: libc::rlim_t = 65536;
+            if rlim.rlim_cur < target {
+                let new_cur = if rlim.rlim_max > 0 { target.min(rlim.rlim_max) } else { target };
+                rlim.rlim_cur = new_cur;
+                if libc::setrlimit(libc::RLIMIT_NOFILE, &rlim) == 0 {
+                    tracing::info!("[FD] Raised RLIMIT_NOFILE soft limit to {} (was {}; hard {})", new_cur, rlim.rlim_cur, rlim.rlim_max);
+                } else {
+                    tracing::warn!("[FD] Failed to raise RLIMIT_NOFILE (errno {}) — large store bvh/spatial may hit EMFILE", *libc::__errno_location());
+                }
+            } else {
+                tracing::info!("[FD] RLIMIT_NOFILE already >= {} (cur {})", target, rlim.rlim_cur);
+            }
+        }
+    }
 }

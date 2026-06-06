@@ -1,0 +1,170 @@
+{
+  "ok": true,
+  "summary": {
+    "binary": "/home/a/Documents/Engram/target/debug/engram",
+    "store": "/tmp/engram-harness-harness-20260606T231038UTC-2244247-engram_-store",
+    "still_alive": true,
+    "transport_failures": 0,
+    "total_tool_calls": 14,
+    "errors": [],
+    "timings_sample": [
+      {
+        "id": 7,
+        "method": "tools/call",
+        "elapsed_ms": 95.51,
+        "timestamp": "2026-06-06T23:10:39.974553Z",
+        "is_error": false
+      },
+      {
+        "id": 8,
+        "method": "tools/call",
+        "elapsed_ms": 78.15,
+        "timestamp": "2026-06-06T23:10:40.052755Z",
+        "is_error": false
+      },
+      {
+        "id": 9,
+        "method": "tools/call",
+        "elapsed_ms": 8.01,
+        "timestamp": "2026-06-06T23:10:40.060816Z",
+        "is_error": false
+      },
+      {
+        "id": 10,
+        "method": "tools/call",
+        "elapsed_ms": 425.52,
+        "timestamp": "2026-06-06T23:10:40.486378Z",
+        "is_error": false
+      },
+      {
+        "id": 11,
+        "method": "tools/call",
+        "elapsed_ms": 243.62,
+        "timestamp": "2026-06-06T23:10:40.730061Z",
+        "is_error": false
+      },
+      {
+        "id": 12,
+        "method": "tools/call",
+        "elapsed_ms": 0.27,
+        "timestamp": "2026-06-06T23:10:40.730397Z",
+        "is_error": false
+      },
+      {
+        "id": 13,
+        "method": "tools/call",
+        "elapsed_ms": 0.79,
+        "timestamp": "2026-06-06T23:10:40.731230Z",
+        "is_error": false
+      },
+      {
+        "id": 14,
+        "method": "tools/call",
+        "elapsed_ms": 1.16,
+        "timestamp": "2026-06-06T23:10:40.732497Z",
+        "is_error": false
+      }
+    ],
+    "stderr_log": "/tmp/engram-harness-2244266.stderr.log"
+  },
+  "timings": [
+    {
+      "id": 1,
+      "method": "initialize",
+      "elapsed_ms": 0.24,
+      "timestamp": "2026-06-06T23:10:39.300288Z",
+      "is_error": false
+    },
+    {
+      "id": 2,
+      "method": "tools/list",
+      "elapsed_ms": 13.31,
+      "timestamp": "2026-06-06T23:10:39.613750Z",
+      "is_error": false
+    },
+    {
+      "id": 3,
+      "method": "tools/call",
+      "elapsed_ms": 0.76,
+      "timestamp": "2026-06-06T23:10:39.614556Z",
+      "is_error": false
+    },
+    {
+      "id": 4,
+      "method": "tools/call",
+      "elapsed_ms": 238.02,
+      "timestamp": "2026-06-06T23:10:39.852615Z",
+      "is_error": false
+    },
+    {
+      "id": 5,
+      "method": "tools/call",
+      "elapsed_ms": 0.58,
+      "timestamp": "2026-06-06T23:10:39.853241Z",
+      "is_error": false
+    },
+    {
+      "id": 6,
+      "method": "tools/call",
+      "elapsed_ms": 25.75,
+      "timestamp": "2026-06-06T23:10:39.879012Z",
+      "is_error": false
+    },
+    {
+      "id": 7,
+      "method": "tools/call",
+      "elapsed_ms": 95.51,
+      "timestamp": "2026-06-06T23:10:39.974553Z",
+      "is_error": false
+    },
+    {
+      "id": 8,
+      "method": "tools/call",
+      "elapsed_ms": 78.15,
+      "timestamp": "2026-06-06T23:10:40.052755Z",
+      "is_error": false
+    },
+    {
+      "id": 9,
+      "method": "tools/call",
+      "elapsed_ms": 8.01,
+      "timestamp": "2026-06-06T23:10:40.060816Z",
+      "is_error": false
+    },
+    {
+      "id": 10,
+      "method": "tools/call",
+      "elapsed_ms": 425.52,
+      "timestamp": "2026-06-06T23:10:40.486378Z",
+      "is_error": false
+    },
+    {
+      "id": 11,
+      "method": "tools/call",
+      "elapsed_ms": 243.62,
+      "timestamp": "2026-06-06T23:10:40.730061Z",
+      "is_error": false
+    },
+    {
+      "id": 12,
+      "method": "tools/call",
+      "elapsed_ms": 0.27,
+      "timestamp": "2026-06-06T23:10:40.730397Z",
+      "is_error": false
+    },
+    {
+      "id": 13,
+      "method": "tools/call",
+      "elapsed_ms": 0.79,
+      "timestamp": "2026-06-06T23:10:40.731230Z",
+      "is_error": false
+    },
+    {
+      "id": 14,
+      "method": "tools/call",
+      "elapsed_ms": 1.16,
+      "timestamp": "2026-06-06T23:10:40.732497Z",
+      "is_error": false
+    }
+  ]
+}

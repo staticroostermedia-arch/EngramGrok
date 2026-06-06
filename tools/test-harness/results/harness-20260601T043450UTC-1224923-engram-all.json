@@ -1,0 +1,1027 @@
+{
+  "ok": true,
+  "summary": {
+    "binary": "/home/a/Documents/Engram/target/debug/engram",
+    "store": "/tmp/engram-harness-harness-20260601T043450UTC-1224923-engram_-store",
+    "still_alive": true,
+    "transport_failures": 0,
+    "total_tool_calls": 136,
+    "errors": [
+      "Lawfulness metric assert failed for metric:wake_up_verification_20260601T043457Z",
+      "Lawfulness metric assert failed for metric:wake_up_verification_20260601T043501Z"
+    ],
+    "timings_sample": [
+      {
+        "id": 129,
+        "method": "tools/call",
+        "elapsed_ms": 0.17,
+        "timestamp": "2026-06-01T04:35:01.862109Z",
+        "is_error": false
+      },
+      {
+        "id": 130,
+        "method": "tools/call",
+        "elapsed_ms": 0.16,
+        "timestamp": "2026-06-01T04:35:01.862275Z",
+        "is_error": false
+      },
+      {
+        "id": 131,
+        "method": "tools/call",
+        "elapsed_ms": 0.15,
+        "timestamp": "2026-06-01T04:35:01.862437Z",
+        "is_error": false
+      },
+      {
+        "id": 132,
+        "method": "tools/call",
+        "elapsed_ms": 0.17,
+        "timestamp": "2026-06-01T04:35:01.862612Z",
+        "is_error": false
+      },
+      {
+        "id": 133,
+        "method": "tools/call",
+        "elapsed_ms": 84.1,
+        "timestamp": "2026-06-01T04:35:01.946728Z",
+        "is_error": false
+      },
+      {
+        "id": 134,
+        "method": "tools/call",
+        "elapsed_ms": 0.28,
+        "timestamp": "2026-06-01T04:35:01.947079Z",
+        "is_error": false
+      },
+      {
+        "id": 135,
+        "method": "tools/call",
+        "elapsed_ms": 89.94,
+        "timestamp": "2026-06-01T04:35:02.037084Z",
+        "is_error": false
+      },
+      {
+        "id": 136,
+        "method": "tools/call",
+        "elapsed_ms": 0.24,
+        "timestamp": "2026-06-01T04:35:02.037381Z",
+        "is_error": false
+      }
+    ],
+    "stderr_log": "/tmp/engram-harness-1225057.stderr.log"
+  },
+  "timings": [
+    {
+      "id": 1,
+      "method": "initialize",
+      "elapsed_ms": 0.53,
+      "timestamp": "2026-06-01T04:34:55.893994Z",
+      "is_error": false
+    },
+    {
+      "id": 2,
+      "method": "tools/list",
+      "elapsed_ms": 15.72,
+      "timestamp": "2026-06-01T04:34:56.209874Z",
+      "is_error": false
+    },
+    {
+      "id": 3,
+      "method": "tools/call",
+      "elapsed_ms": 0.52,
+      "timestamp": "2026-06-01T04:34:56.210485Z",
+      "is_error": false
+    },
+    {
+      "id": 4,
+      "method": "tools/call",
+      "elapsed_ms": 9.64,
+      "timestamp": "2026-06-01T04:34:56.220160Z",
+      "is_error": false
+    },
+    {
+      "id": 5,
+      "method": "tools/call",
+      "elapsed_ms": 94.46,
+      "timestamp": "2026-06-01T04:34:56.314669Z",
+      "is_error": false
+    },
+    {
+      "id": 6,
+      "method": "tools/call",
+      "elapsed_ms": 24.23,
+      "timestamp": "2026-06-01T04:34:56.338974Z",
+      "is_error": false
+    },
+    {
+      "id": 7,
+      "method": "tools/call",
+      "elapsed_ms": 0.23,
+      "timestamp": "2026-06-01T04:34:56.339250Z",
+      "is_error": false
+    },
+    {
+      "id": 8,
+      "method": "tools/call",
+      "elapsed_ms": 0.32,
+      "timestamp": "2026-06-01T04:34:56.489706Z",
+      "is_error": false
+    },
+    {
+      "id": 9,
+      "method": "tools/call",
+      "elapsed_ms": 0.23,
+      "timestamp": "2026-06-01T04:34:56.490115Z",
+      "is_error": false
+    },
+    {
+      "id": 10,
+      "method": "tools/call",
+      "elapsed_ms": 13.78,
+      "timestamp": "2026-06-01T04:34:56.503939Z",
+      "is_error": false
+    },
+    {
+      "id": 11,
+      "method": "tools/call",
+      "elapsed_ms": 77.08,
+      "timestamp": "2026-06-01T04:34:56.581051Z",
+      "is_error": false
+    },
+    {
+      "id": 12,
+      "method": "tools/call",
+      "elapsed_ms": 26.89,
+      "timestamp": "2026-06-01T04:34:56.607991Z",
+      "is_error": false
+    },
+    {
+      "id": 13,
+      "method": "tools/call",
+      "elapsed_ms": 0.21,
+      "timestamp": "2026-06-01T04:34:56.608233Z",
+      "is_error": false
+    },
+    {
+      "id": 14,
+      "method": "tools/call",
+      "elapsed_ms": 0.29,
+      "timestamp": "2026-06-01T04:34:56.758659Z",
+      "is_error": false
+    },
+    {
+      "id": 15,
+      "method": "tools/call",
+      "elapsed_ms": 0.33,
+      "timestamp": "2026-06-01T04:34:56.909130Z",
+      "is_error": false
+    },
+    {
+      "id": 16,
+      "method": "tools/call",
+      "elapsed_ms": 15.85,
+      "timestamp": "2026-06-01T04:34:57.075125Z",
+      "is_error": false
+    },
+    {
+      "id": 17,
+      "method": "tools/call",
+      "elapsed_ms": 0.67,
+      "timestamp": "2026-06-01T04:34:57.075834Z",
+      "is_error": false
+    },
+    {
+      "id": 18,
+      "method": "tools/call",
+      "elapsed_ms": 0.18,
+      "timestamp": "2026-06-01T04:34:57.076060Z",
+      "is_error": false
+    },
+    {
+      "id": 19,
+      "method": "tools/call",
+      "elapsed_ms": 2.18,
+      "timestamp": "2026-06-01T04:34:57.078268Z",
+      "is_error": false
+    },
+    {
+      "id": 20,
+      "method": "tools/call",
+      "elapsed_ms": 0.18,
+      "timestamp": "2026-06-01T04:34:57.078468Z",
+      "is_error": false
+    },
+    {
+      "id": 21,
+      "method": "tools/call",
+      "elapsed_ms": 14.61,
+      "timestamp": "2026-06-01T04:34:57.093100Z",
+      "is_error": false
+    },
+    {
+      "id": 22,
+      "method": "tools/call",
+      "elapsed_ms": 0.19,
+      "timestamp": "2026-06-01T04:34:57.093361Z",
+      "is_error": false
+    },
+    {
+      "id": 23,
+      "method": "tools/call",
+      "elapsed_ms": 0.16,
+      "timestamp": "2026-06-01T04:34:57.093545Z",
+      "is_error": false
+    },
+    {
+      "id": 24,
+      "method": "tools/call",
+      "elapsed_ms": 0.18,
+      "timestamp": "2026-06-01T04:34:57.093736Z",
+      "is_error": false
+    },
+    {
+      "id": 25,
+      "method": "tools/call",
+      "elapsed_ms": 0.17,
+      "timestamp": "2026-06-01T04:34:57.094086Z",
+      "is_error": false
+    },
+    {
+      "id": 26,
+      "method": "tools/call",
+      "elapsed_ms": 11.95,
+      "timestamp": "2026-06-01T04:34:57.106056Z",
+      "is_error": false
+    },
+    {
+      "id": 27,
+      "method": "tools/call",
+      "elapsed_ms": 84.68,
+      "timestamp": "2026-06-01T04:34:57.190773Z",
+      "is_error": false
+    },
+    {
+      "id": 28,
+      "method": "tools/call",
+      "elapsed_ms": 0.24,
+      "timestamp": "2026-06-01T04:34:57.191077Z",
+      "is_error": false
+    },
+    {
+      "id": 29,
+      "method": "tools/call",
+      "elapsed_ms": 0.32,
+      "timestamp": "2026-06-01T04:34:57.341539Z",
+      "is_error": false
+    },
+    {
+      "id": 30,
+      "method": "tools/call",
+      "elapsed_ms": 20.39,
+      "timestamp": "2026-06-01T04:34:57.361963Z",
+      "is_error": false
+    },
+    {
+      "id": 31,
+      "method": "tools/call",
+      "elapsed_ms": 87.2,
+      "timestamp": "2026-06-01T04:34:57.449217Z",
+      "is_error": false
+    },
+    {
+      "id": 32,
+      "method": "tools/call",
+      "elapsed_ms": 0.21,
+      "timestamp": "2026-06-01T04:34:57.449507Z",
+      "is_error": false
+    },
+    {
+      "id": 33,
+      "method": "tools/call",
+      "elapsed_ms": 21.84,
+      "timestamp": "2026-06-01T04:34:57.471370Z",
+      "is_error": false
+    },
+    {
+      "id": 34,
+      "method": "tools/call",
+      "elapsed_ms": 87.08,
+      "timestamp": "2026-06-01T04:34:57.558496Z",
+      "is_error": false
+    },
+    {
+      "id": 35,
+      "method": "tools/call",
+      "elapsed_ms": 0.3,
+      "timestamp": "2026-06-01T04:34:57.558852Z",
+      "is_error": false
+    },
+    {
+      "id": 36,
+      "method": "tools/call",
+      "elapsed_ms": 21.72,
+      "timestamp": "2026-06-01T04:34:57.580598Z",
+      "is_error": false
+    },
+    {
+      "id": 37,
+      "method": "tools/call",
+      "elapsed_ms": 78.88,
+      "timestamp": "2026-06-01T04:34:57.659534Z",
+      "is_error": false
+    },
+    {
+      "id": 38,
+      "method": "tools/call",
+      "elapsed_ms": 0.22,
+      "timestamp": "2026-06-01T04:34:57.659801Z",
+      "is_error": false
+    },
+    {
+      "id": 39,
+      "method": "tools/call",
+      "elapsed_ms": 0.32,
+      "timestamp": "2026-06-01T04:34:57.810250Z",
+      "is_error": false
+    },
+    {
+      "id": 40,
+      "method": "tools/call",
+      "elapsed_ms": 20.0,
+      "timestamp": "2026-06-01T04:34:57.830292Z",
+      "is_error": false
+    },
+    {
+      "id": 41,
+      "method": "tools/call",
+      "elapsed_ms": 80.51,
+      "timestamp": "2026-06-01T04:34:57.910839Z",
+      "is_error": false
+    },
+    {
+      "id": 42,
+      "method": "tools/call",
+      "elapsed_ms": 0.22,
+      "timestamp": "2026-06-01T04:34:57.911114Z",
+      "is_error": false
+    },
+    {
+      "id": 43,
+      "method": "tools/call",
+      "elapsed_ms": 18.32,
+      "timestamp": "2026-06-01T04:34:57.929453Z",
+      "is_error": false
+    },
+    {
+      "id": 44,
+      "method": "tools/call",
+      "elapsed_ms": 74.22,
+      "timestamp": "2026-06-01T04:34:58.003713Z",
+      "is_error": false
+    },
+    {
+      "id": 45,
+      "method": "tools/call",
+      "elapsed_ms": 0.23,
+      "timestamp": "2026-06-01T04:34:58.003993Z",
+      "is_error": false
+    },
+    {
+      "id": 46,
+      "method": "tools/call",
+      "elapsed_ms": 22.46,
+      "timestamp": "2026-06-01T04:34:58.026487Z",
+      "is_error": false
+    },
+    {
+      "id": 47,
+      "method": "tools/call",
+      "elapsed_ms": 76.46,
+      "timestamp": "2026-06-01T04:34:58.102993Z",
+      "is_error": false
+    },
+    {
+      "id": 48,
+      "method": "tools/call",
+      "elapsed_ms": 0.22,
+      "timestamp": "2026-06-01T04:34:58.103283Z",
+      "is_error": false
+    },
+    {
+      "id": 49,
+      "method": "tools/call",
+      "elapsed_ms": 0.34,
+      "timestamp": "2026-06-01T04:34:58.253758Z",
+      "is_error": false
+    },
+    {
+      "id": 50,
+      "method": "tools/call",
+      "elapsed_ms": 21.55,
+      "timestamp": "2026-06-01T04:34:58.275341Z",
+      "is_error": false
+    },
+    {
+      "id": 51,
+      "method": "tools/call",
+      "elapsed_ms": 84.89,
+      "timestamp": "2026-06-01T04:34:58.360311Z",
+      "is_error": false
+    },
+    {
+      "id": 52,
+      "method": "tools/call",
+      "elapsed_ms": 0.22,
+      "timestamp": "2026-06-01T04:34:58.360593Z",
+      "is_error": false
+    },
+    {
+      "id": 53,
+      "method": "tools/call",
+      "elapsed_ms": 27.15,
+      "timestamp": "2026-06-01T04:34:58.387762Z",
+      "is_error": false
+    },
+    {
+      "id": 54,
+      "method": "tools/call",
+      "elapsed_ms": 74.06,
+      "timestamp": "2026-06-01T04:34:58.461880Z",
+      "is_error": false
+    },
+    {
+      "id": 55,
+      "method": "tools/call",
+      "elapsed_ms": 0.2,
+      "timestamp": "2026-06-01T04:34:58.462129Z",
+      "is_error": false
+    },
+    {
+      "id": 56,
+      "method": "tools/call",
+      "elapsed_ms": 35.03,
+      "timestamp": "2026-06-01T04:34:58.497183Z",
+      "is_error": false
+    },
+    {
+      "id": 57,
+      "method": "tools/call",
+      "elapsed_ms": 69.22,
+      "timestamp": "2026-06-01T04:34:58.566465Z",
+      "is_error": false
+    },
+    {
+      "id": 58,
+      "method": "tools/call",
+      "elapsed_ms": 0.2,
+      "timestamp": "2026-06-01T04:34:58.566713Z",
+      "is_error": false
+    },
+    {
+      "id": 59,
+      "method": "tools/call",
+      "elapsed_ms": 0.32,
+      "timestamp": "2026-06-01T04:34:58.717166Z",
+      "is_error": false
+    },
+    {
+      "id": 60,
+      "method": "tools/call",
+      "elapsed_ms": 27.37,
+      "timestamp": "2026-06-01T04:34:58.744569Z",
+      "is_error": false
+    },
+    {
+      "id": 61,
+      "method": "tools/call",
+      "elapsed_ms": 89.29,
+      "timestamp": "2026-06-01T04:34:58.833912Z",
+      "is_error": false
+    },
+    {
+      "id": 62,
+      "method": "tools/call",
+      "elapsed_ms": 0.27,
+      "timestamp": "2026-06-01T04:34:58.834250Z",
+      "is_error": false
+    },
+    {
+      "id": 63,
+      "method": "tools/call",
+      "elapsed_ms": 24.19,
+      "timestamp": "2026-06-01T04:34:58.858457Z",
+      "is_error": false
+    },
+    {
+      "id": 64,
+      "method": "tools/call",
+      "elapsed_ms": 69.18,
+      "timestamp": "2026-06-01T04:34:58.927675Z",
+      "is_error": false
+    },
+    {
+      "id": 65,
+      "method": "tools/call",
+      "elapsed_ms": 0.23,
+      "timestamp": "2026-06-01T04:34:58.927954Z",
+      "is_error": false
+    },
+    {
+      "id": 66,
+      "method": "tools/call",
+      "elapsed_ms": 24.02,
+      "timestamp": "2026-06-01T04:34:58.951993Z",
+      "is_error": false
+    },
+    {
+      "id": 67,
+      "method": "tools/call",
+      "elapsed_ms": 68.83,
+      "timestamp": "2026-06-01T04:34:59.020855Z",
+      "is_error": false
+    },
+    {
+      "id": 68,
+      "method": "tools/call",
+      "elapsed_ms": 0.24,
+      "timestamp": "2026-06-01T04:34:59.021135Z",
+      "is_error": false
+    },
+    {
+      "id": 69,
+      "method": "tools/call",
+      "elapsed_ms": 0.34,
+      "timestamp": "2026-06-01T04:34:59.171602Z",
+      "is_error": false
+    },
+    {
+      "id": 70,
+      "method": "tools/call",
+      "elapsed_ms": 23.7,
+      "timestamp": "2026-06-01T04:34:59.195339Z",
+      "is_error": false
+    },
+    {
+      "id": 71,
+      "method": "tools/call",
+      "elapsed_ms": 73.64,
+      "timestamp": "2026-06-01T04:34:59.269038Z",
+      "is_error": false
+    },
+    {
+      "id": 72,
+      "method": "tools/call",
+      "elapsed_ms": 0.21,
+      "timestamp": "2026-06-01T04:34:59.269288Z",
+      "is_error": false
+    },
+    {
+      "id": 73,
+      "method": "tools/call",
+      "elapsed_ms": 34.36,
+      "timestamp": "2026-06-01T04:34:59.303664Z",
+      "is_error": false
+    },
+    {
+      "id": 74,
+      "method": "tools/call",
+      "elapsed_ms": 75.83,
+      "timestamp": "2026-06-01T04:34:59.379544Z",
+      "is_error": false
+    },
+    {
+      "id": 75,
+      "method": "tools/call",
+      "elapsed_ms": 0.29,
+      "timestamp": "2026-06-01T04:34:59.379895Z",
+      "is_error": false
+    },
+    {
+      "id": 76,
+      "method": "tools/call",
+      "elapsed_ms": 34.13,
+      "timestamp": "2026-06-01T04:34:59.414045Z",
+      "is_error": false
+    },
+    {
+      "id": 77,
+      "method": "tools/call",
+      "elapsed_ms": 72.3,
+      "timestamp": "2026-06-01T04:34:59.486380Z",
+      "is_error": false
+    },
+    {
+      "id": 78,
+      "method": "tools/call",
+      "elapsed_ms": 0.26,
+      "timestamp": "2026-06-01T04:34:59.486699Z",
+      "is_error": false
+    },
+    {
+      "id": 79,
+      "method": "tools/call",
+      "elapsed_ms": 0.32,
+      "timestamp": "2026-06-01T04:34:59.637144Z",
+      "is_error": false
+    },
+    {
+      "id": 80,
+      "method": "tools/call",
+      "elapsed_ms": 32.85,
+      "timestamp": "2026-06-01T04:34:59.670031Z",
+      "is_error": false
+    },
+    {
+      "id": 81,
+      "method": "tools/call",
+      "elapsed_ms": 75.64,
+      "timestamp": "2026-06-01T04:34:59.745724Z",
+      "is_error": false
+    },
+    {
+      "id": 82,
+      "method": "tools/call",
+      "elapsed_ms": 0.22,
+      "timestamp": "2026-06-01T04:34:59.745987Z",
+      "is_error": false
+    },
+    {
+      "id": 83,
+      "method": "tools/call",
+      "elapsed_ms": 28.42,
+      "timestamp": "2026-06-01T04:34:59.774423Z",
+      "is_error": false
+    },
+    {
+      "id": 84,
+      "method": "tools/call",
+      "elapsed_ms": 78.67,
+      "timestamp": "2026-06-01T04:34:59.853133Z",
+      "is_error": false
+    },
+    {
+      "id": 85,
+      "method": "tools/call",
+      "elapsed_ms": 0.24,
+      "timestamp": "2026-06-01T04:34:59.853420Z",
+      "is_error": false
+    },
+    {
+      "id": 86,
+      "method": "tools/call",
+      "elapsed_ms": 37.59,
+      "timestamp": "2026-06-01T04:34:59.891040Z",
+      "is_error": false
+    },
+    {
+      "id": 87,
+      "method": "tools/call",
+      "elapsed_ms": 86.68,
+      "timestamp": "2026-06-01T04:34:59.977780Z",
+      "is_error": false
+    },
+    {
+      "id": 88,
+      "method": "tools/call",
+      "elapsed_ms": 0.34,
+      "timestamp": "2026-06-01T04:34:59.978187Z",
+      "is_error": false
+    },
+    {
+      "id": 89,
+      "method": "tools/call",
+      "elapsed_ms": 0.35,
+      "timestamp": "2026-06-01T04:35:00.128676Z",
+      "is_error": false
+    },
+    {
+      "id": 90,
+      "method": "tools/call",
+      "elapsed_ms": 30.11,
+      "timestamp": "2026-06-01T04:35:00.158828Z",
+      "is_error": false
+    },
+    {
+      "id": 91,
+      "method": "tools/call",
+      "elapsed_ms": 83.94,
+      "timestamp": "2026-06-01T04:35:00.242845Z",
+      "is_error": false
+    },
+    {
+      "id": 92,
+      "method": "tools/call",
+      "elapsed_ms": 0.24,
+      "timestamp": "2026-06-01T04:35:00.243133Z",
+      "is_error": false
+    },
+    {
+      "id": 93,
+      "method": "tools/call",
+      "elapsed_ms": 40.34,
+      "timestamp": "2026-06-01T04:35:00.283493Z",
+      "is_error": false
+    },
+    {
+      "id": 94,
+      "method": "tools/call",
+      "elapsed_ms": 75.13,
+      "timestamp": "2026-06-01T04:35:00.358688Z",
+      "is_error": false
+    },
+    {
+      "id": 95,
+      "method": "tools/call",
+      "elapsed_ms": 0.22,
+      "timestamp": "2026-06-01T04:35:00.358955Z",
+      "is_error": false
+    },
+    {
+      "id": 96,
+      "method": "tools/call",
+      "elapsed_ms": 37.8,
+      "timestamp": "2026-06-01T04:35:00.396781Z",
+      "is_error": false
+    },
+    {
+      "id": 97,
+      "method": "tools/call",
+      "elapsed_ms": 72.66,
+      "timestamp": "2026-06-01T04:35:00.469497Z",
+      "is_error": false
+    },
+    {
+      "id": 98,
+      "method": "tools/call",
+      "elapsed_ms": 0.21,
+      "timestamp": "2026-06-01T04:35:00.469752Z",
+      "is_error": false
+    },
+    {
+      "id": 99,
+      "method": "tools/call",
+      "elapsed_ms": 0.34,
+      "timestamp": "2026-06-01T04:35:00.620236Z",
+      "is_error": false
+    },
+    {
+      "id": 100,
+      "method": "tools/call",
+      "elapsed_ms": 40.25,
+      "timestamp": "2026-06-01T04:35:00.660539Z",
+      "is_error": false
+    },
+    {
+      "id": 101,
+      "method": "tools/call",
+      "elapsed_ms": 76.11,
+      "timestamp": "2026-06-01T04:35:00.736710Z",
+      "is_error": false
+    },
+    {
+      "id": 102,
+      "method": "tools/call",
+      "elapsed_ms": 0.24,
+      "timestamp": "2026-06-01T04:35:00.736986Z",
+      "is_error": false
+    },
+    {
+      "id": 103,
+      "method": "tools/call",
+      "elapsed_ms": 42.14,
+      "timestamp": "2026-06-01T04:35:00.779142Z",
+      "is_error": false
+    },
+    {
+      "id": 104,
+      "method": "tools/call",
+      "elapsed_ms": 81.67,
+      "timestamp": "2026-06-01T04:35:00.860857Z",
+      "is_error": false
+    },
+    {
+      "id": 105,
+      "method": "tools/call",
+      "elapsed_ms": 0.23,
+      "timestamp": "2026-06-01T04:35:00.861143Z",
+      "is_error": false
+    },
+    {
+      "id": 106,
+      "method": "tools/call",
+      "elapsed_ms": 37.0,
+      "timestamp": "2026-06-01T04:35:00.898166Z",
+      "is_error": false
+    },
+    {
+      "id": 107,
+      "method": "tools/call",
+      "elapsed_ms": 73.97,
+      "timestamp": "2026-06-01T04:35:00.972184Z",
+      "is_error": false
+    },
+    {
+      "id": 108,
+      "method": "tools/call",
+      "elapsed_ms": 0.22,
+      "timestamp": "2026-06-01T04:35:00.972470Z",
+      "is_error": false
+    },
+    {
+      "id": 109,
+      "method": "tools/call",
+      "elapsed_ms": 39.44,
+      "timestamp": "2026-06-01T04:35:01.162609Z",
+      "is_error": false
+    },
+    {
+      "id": 110,
+      "method": "tools/call",
+      "elapsed_ms": 76.68,
+      "timestamp": "2026-06-01T04:35:01.239353Z",
+      "is_error": false
+    },
+    {
+      "id": 111,
+      "method": "tools/call",
+      "elapsed_ms": 0.25,
+      "timestamp": "2026-06-01T04:35:01.239674Z",
+      "is_error": false
+    },
+    {
+      "id": 112,
+      "method": "tools/call",
+      "elapsed_ms": 0.3,
+      "timestamp": "2026-06-01T04:35:01.240008Z",
+      "is_error": false
+    },
+    {
+      "id": 113,
+      "method": "tools/call",
+      "elapsed_ms": 50.56,
+      "timestamp": "2026-06-01T04:35:01.290597Z",
+      "is_error": false
+    },
+    {
+      "id": 114,
+      "method": "tools/call",
+      "elapsed_ms": 72.39,
+      "timestamp": "2026-06-01T04:35:01.363031Z",
+      "is_error": false
+    },
+    {
+      "id": 115,
+      "method": "tools/call",
+      "elapsed_ms": 0.26,
+      "timestamp": "2026-06-01T04:35:01.363347Z",
+      "is_error": false
+    },
+    {
+      "id": 116,
+      "method": "tools/call",
+      "elapsed_ms": 0.18,
+      "timestamp": "2026-06-01T04:35:01.363564Z",
+      "is_error": false
+    },
+    {
+      "id": 117,
+      "method": "tools/call",
+      "elapsed_ms": 41.6,
+      "timestamp": "2026-06-01T04:35:01.405263Z",
+      "is_error": false
+    },
+    {
+      "id": 118,
+      "method": "tools/call",
+      "elapsed_ms": 99.35,
+      "timestamp": "2026-06-01T04:35:01.504669Z",
+      "is_error": false
+    },
+    {
+      "id": 119,
+      "method": "tools/call",
+      "elapsed_ms": 0.32,
+      "timestamp": "2026-06-01T04:35:01.505061Z",
+      "is_error": false
+    },
+    {
+      "id": 120,
+      "method": "tools/call",
+      "elapsed_ms": 0.33,
+      "timestamp": "2026-06-01T04:35:01.655524Z",
+      "is_error": false
+    },
+    {
+      "id": 121,
+      "method": "tools/call",
+      "elapsed_ms": 0.31,
+      "timestamp": "2026-06-01T04:35:01.806108Z",
+      "is_error": false
+    },
+    {
+      "id": 122,
+      "method": "tools/call",
+      "elapsed_ms": 0.26,
+      "timestamp": "2026-06-01T04:35:01.806376Z",
+      "is_error": false
+    },
+    {
+      "id": 123,
+      "method": "tools/call",
+      "elapsed_ms": 0.18,
+      "timestamp": "2026-06-01T04:35:01.806563Z",
+      "is_error": false
+    },
+    {
+      "id": 124,
+      "method": "tools/call",
+      "elapsed_ms": 54.25,
+      "timestamp": "2026-06-01T04:35:01.860826Z",
+      "is_error": false
+    },
+    {
+      "id": 125,
+      "method": "tools/call",
+      "elapsed_ms": 0.29,
+      "timestamp": "2026-06-01T04:35:01.861216Z",
+      "is_error": false
+    },
+    {
+      "id": 126,
+      "method": "tools/call",
+      "elapsed_ms": 0.17,
+      "timestamp": "2026-06-01T04:35:01.861406Z",
+      "is_error": false
+    },
+    {
+      "id": 127,
+      "method": "tools/call",
+      "elapsed_ms": 0.21,
+      "timestamp": "2026-06-01T04:35:01.861622Z",
+      "is_error": false
+    },
+    {
+      "id": 128,
+      "method": "tools/call",
+      "elapsed_ms": 0.2,
+      "timestamp": "2026-06-01T04:35:01.861932Z",
+      "is_error": false
+    },
+    {
+      "id": 129,
+      "method": "tools/call",
+      "elapsed_ms": 0.17,
+      "timestamp": "2026-06-01T04:35:01.862109Z",
+      "is_error": false
+    },
+    {
+      "id": 130,
+      "method": "tools/call",
+      "elapsed_ms": 0.16,
+      "timestamp": "2026-06-01T04:35:01.862275Z",
+      "is_error": false
+    },
+    {
+      "id": 131,
+      "method": "tools/call",
+      "elapsed_ms": 0.15,
+      "timestamp": "2026-06-01T04:35:01.862437Z",
+      "is_error": false
+    },
+    {
+      "id": 132,
+      "method": "tools/call",
+      "elapsed_ms": 0.17,
+      "timestamp": "2026-06-01T04:35:01.862612Z",
+      "is_error": false
+    },
+    {
+      "id": 133,
+      "method": "tools/call",
+      "elapsed_ms": 84.1,
+      "timestamp": "2026-06-01T04:35:01.946728Z",
+      "is_error": false
+    },
+    {
+      "id": 134,
+      "method": "tools/call",
+      "elapsed_ms": 0.28,
+      "timestamp": "2026-06-01T04:35:01.947079Z",
+      "is_error": false
+    },
+    {
+      "id": 135,
+      "method": "tools/call",
+      "elapsed_ms": 89.94,
+      "timestamp": "2026-06-01T04:35:02.037084Z",
+      "is_error": false
+    },
+    {
+      "id": 136,
+      "method": "tools/call",
+      "elapsed_ms": 0.24,
+      "timestamp": "2026-06-01T04:35:02.037381Z",
+      "is_error": false
+    }
+  ]
+}

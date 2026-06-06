@@ -48,12 +48,18 @@ These calls return blocks that already carry momentum (p-tensor) and relational 
 ### Phase 1 — Bind Thermodynamic Context + Explicit Inheritance Edge
 - Call `mcp_engram_session_start` with intent that explicitly names the continuation:
   - Intent example: "Geometric wake-up continuation for Engram MCP integration + Against Flat Knowledge operationalization. Inheriting terminal momentum from previous agent instance on MCP fast-path, OptiX hygiene, and ritual skill evolution."
-- Immediately after session_start succeeds, locate the most recent prior terminal state (from Phase 0 queries).
+- Immediately after session_start succeeds (note: the response is now minimal/clean to avoid client harness dropping the "engram" MCP server registration -- see mcp.rs fix for "MCP server 'engram' not found" after session_start):
+  - Explicitly drive the lean rehydrate tools from the wake-up process toml (bundle FIRST, then pure for anchors, incremental, batch). This keeps the engram MCP server "found" in the client for subsequent calls and follows the declarative mcp_tools list:
+    - `mcp_engram_get_continuation_bundle` (instant hot/legominism rehydrate)
+    - `mcp_engram_query_pure` (intent e.g. "ritual wake_up_anchor OR engram.working-memory OR primary goal 1780419540 OR session_end_anchor", k=6 or so; tests FAST_ANCHOR)
+    - `mcp_engram_incremental_spatial_ingest` (max_files=5; delta only)
+    - `mcp_engram_promote_hot_batch` for key anchors if desired.
+- Locate the most recent prior terminal state (from Phase 0 queries).
 - Create an explicit geometric continuation:
   - `mcp_engram_relate(new_session_block_or_intent, previous_terminal_block, "agent_instance_continuation")`
   - Optionally also relate to the living `ritual:wake_up_anchor` if it exists.
 
-This step is the heart of the Inheritance Principle made operational. It is a VSA-style binding (OP_BIND) recorded in the manifold. Future agents can traverse it.
+This step is the heart of the Inheritance Principle made operational. It is a VSA-style binding (OP_BIND) recorded in the manifold. Future agents can traverse it. The explicit lean calls after the clean session_start ack ensure the client keeps the engram MCP registered (fixing the "not found" symptom observed in harness after session_start on previous versions with "bg thread" text in response).
 
 ### Phase 2 — Rehydrate via Momentum + Relations (Not Object Loading)
 - Use `mcp_engram_summarize(top_n=12)` for the fast pinned + high-CRS digest.
@@ -135,4 +141,12 @@ The .md workflow files remain valuable as the historical record of how these liv
 - Watcher is confirmed bound to primary paths and a spatial hygiene check has been performed/recorded (Item 1.5 Spatial Discipline Adoption). The agent explicitly references the Code Edit Ritual (pre-AST recon + intent TRACE, update-preferring edit, post-AST recon + outcome TRACE) as the enforced process for any source changes, especially to the memory substrate itself.
 
 This is how every future instance becomes a true inheritor instead of a reader.
+
+## Note on Declarative Rituals (GPU/Polish hand-off 2026-06)
+
+The living process definitions are in `processes/ritual/wake-up.toml` (and siblings). The MCP loader (enhanced) registers them at session_start as `process:engram.*` with category gluing/H1 relations. Query `list_concepts prefix=ritual:` or `search_by_relation` on them; they drive the mcp_tools/requires sequence. The .md is historical; toml + loader + relations are the executable sheaf.
+
+See processes/, AGENT_INTEGRATION_GUIDE.md (Processes as Sheaf Sections), GITHUB_MVP_PREP_PLAN.md (execution + working-memory activation), mcp.rs load_process_sheaf.
+
+(Pre/post spatial + trace on this skill file for the sync edit.)
 

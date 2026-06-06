@@ -1,0 +1,28 @@
+#!/bin/bash
+# engram-grok — Grok/Cursor MCP launcher (stdio)
+#
+# Agent profile baked in — no env soup in MCP client config.
+# Install: cp scripts/engram-grok ~/.local/bin/engram-grok && chmod +x ~/.local/bin/engram-grok
+
+set -euo pipefail
+
+STORE="${ENGRAM_STORE:-/home/a/.engram/stalks/}"
+
+export ENGRAM_PROFILE="${ENGRAM_PROFILE:-agent}"
+export ENGRAM_STORE="$STORE"
+export LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda-13.1/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+export CUDA_PATH="${CUDA_PATH:-/usr/local/cuda}"
+export PATH="/usr/local/cuda/bin:/usr/local/cuda-13.1/bin:${PATH:-}"
+
+if [ -n "${ENGRAM_BINARY:-}" ] && [ -x "${ENGRAM_BINARY}" ]; then
+    REAL_ENGRAM="${ENGRAM_BINARY}"
+elif [ -x "/home/a/Documents/Engram/target/debug/engram" ]; then
+    REAL_ENGRAM="/home/a/Documents/Engram/target/debug/engram"
+else
+    echo "ERROR: No usable engram binary." >&2
+    echo "  Set ENGRAM_BINARY or run: cargo build -p engram-server" >&2
+    exit 1
+fi
+
+exec "$REAL_ENGRAM" --store "$STORE" "$@"

@@ -2,7 +2,16 @@
   "mcpServers": {
     "engram": {
       "command": "engram",
-      "args": ["mcp", "--store", "~/.engram/manifold"],
+      "args": ["mcp"],
+      "env": {
+        "ENGRAM_STORE": "~/.engram/stalks/",
+        "ENGRAM_MEMORY_MODE": "lean",
+        "ENGRAM_DEFER_BVH": "1",
+        "ENGRAM_DEFER_WATCH_INGEST": "1",
+        "ENGRAM_DISABLE_SHEAF": "1",
+        "ENGRAM_OPTIX_ENABLED": "0",
+        "ENGRAM_KI_DISABLE": "1"
+      },
       "disabled": false
     }
   }

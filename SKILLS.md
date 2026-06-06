@@ -4,12 +4,24 @@
 
 This is the canonical entry point for the published ritual protocols.
 
-Load the files in `docs/skills/` (or symlink/copy them into your context):
+## Start Here — 8-Tool Agent Memory Contract
+
+**Read this first:** [docs/AGENT_MEMORY_CONTRACT.md](docs/AGENT_MEMORY_CONTRACT.md)
+
+The minimal agent path on large stores (181k+ blocks):
+
+| Wake | Work | Handoff |
+|------|------|---------|
+| `session_start` (1 call, inline bundle) | `context_for_edit` → `recall` → `quick_trace` → `remember` | `session_end` (handoff packet) |
+
+Plus `get_backend_readiness` and `set_memory_mode` for lean ↔ deep. **Lean by default** — do not call `watch_workspace` or `rebuild_bvh` unless needed.
+
+Load the ritual skills in `docs/skills/` for full protocol detail (all aligned to the contract):
 
 - [docs/skills/README.md](docs/skills/README.md) — Overview, when-to-use, quickstart loop for external agents.
-- [docs/skills/engram-wake-up.md](docs/skills/engram-wake-up.md) — Geometric continuation ritual (session_start, living anchors via momentum/relations, Phase 1.5 lawfulness, rehydrate, spatial hygiene, bind continuation).
-- [docs/skills/engram-working-memory.md](docs/skills/engram-working-memory.md) — Runtime discipline (geometric first: momentum/relation/spatial, recall before derive, update-preferred, traces/scars/tiles, Code Edit Ritual with AABB, hot promotion, escalation for meta-work).
-- [docs/skills/engram-session-end.md](docs/skills/engram-session-end.md) — Terminal handoff (crystallize traces/goals, COMPRESS, anchors, produce continuation target for next wake).
+- [docs/skills/engram-wake-up.md](docs/skills/engram-wake-up.md) — 1-call wake (`session_start` inline bundle, lean vs deep).
+- [docs/skills/engram-working-memory.md](docs/skills/engram-working-memory.md) — Runtime discipline (`context_for_edit`, anchor-first recall, `quick_trace`, update-preferred).
+- [docs/skills/engram-session-end.md](docs/skills/engram-session-end.md) — Structured handoff packet (`session_end` JSON, COMPRESS, anchors).
 - [docs/skills/engram-thought-tiles.md](docs/skills/engram-thought-tiles.md) — Structured offload (mandatory for meta, promote_hot for re-hydration).
 
 ## Declarative Process Sheaf
@@ -36,16 +48,16 @@ See `docs/examples/full_ritual_cycle.md` (or the python equiv) for a complete ru
 
 ## Usage for Your Agent
 
-1. Connect to engram MCP (see README + MCP_TOOLS_REFERENCE.md).
-2. At session start: call `mcp_engram_session_start` + load/follow `docs/skills/engram-wake-up.md`.
-3. For work: follow `engram-working-memory.md` (use `context_for_file` + `recall_in_file` for edits, `record_reasoning_trace`, `update` for refinements, mint tiles for meta, `scar` on friction).
-4. At end: follow `engram-session-end.md`.
+1. Connect to engram MCP (see README + [AGENT_MEMORY_CONTRACT.md](docs/AGENT_MEMORY_CONTRACT.md) + MCP_TOOLS_REFERENCE.md).
+2. At session start: **one call** `mcp_engram_session_start` (inline continuation bundle) + follow `docs/skills/engram-wake-up.md`.
+3. For work: follow `engram-working-memory.md` (`context_for_edit` for edits, `recall(scope=anchors)`, `quick_trace`, `remember`/`update`, tiles for deep meta).
+4. At end: `mcp_engram_session_end` (structured handoff packet) per `engram-session-end.md`.
 
 This gives you the same geometric continuation, self-model, and lawfulness we use internally.
 
 **Dogfooding**: The best way to use Enram is to use these rituals *on your own development/meta-work*. The manifold will compound your agent's capability.
 
-See also `docs/GEOMETRIC_MEMORY.md`, `docs/RITUALS.md`, `docs/MCP_TOOLS_REFERENCE.md`, `docs/GITHUB_MVP_PREP_PLAN.md` (execution history + sub-agent governance lessons).
+See also `docs/AGENT_MEMORY_CONTRACT.md` (8-tool contract), `docs/GEOMETRIC_MEMORY.md`, `docs/RITUALS.md`, `docs/MCP_TOOLS_REFERENCE.md`, `design/agent_memory_mvp_plan.md`, `docs/GITHUB_MVP_PREP_PLAN.md` (execution history + sub-agent governance lessons).
 
 ---
 

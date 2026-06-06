@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "engram": {
+      "command": "/home/a/Documents/Engram/scripts/engram-grok",
+      "args": ["mcp"],
+      "env": {
+        "ENGRAM_STORE": "/home/a/.engram/stalks/",
+        "ENGRAM_PROFILE": "agent"
+      }
+    }
+  }
+}

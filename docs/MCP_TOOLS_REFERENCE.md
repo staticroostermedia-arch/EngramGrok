@@ -1,36 +1,126 @@
-# MCP Tools Reference (55+ Tools)
+# MCP Tools Reference
 
-Engram exposes a rich set of tools over MCP for geometric memory operations.
+Engram exposes **62 MCP tools**. Most agents should use **8** — see [`AGENT_MEMORY_CONTRACT.md`](AGENT_MEMORY_CONTRACT.md).
 
-## Core Memory
-- remember, recall (with zedos_filter, time_decay), forget, list_concepts, read_concept, batch_remember.
+Tools are grouped by tier:
 
-## Management
-- update (preferred for evolution, Lyapunov drift), pin, stats, recall_recent, summarize, forget_old, export/import.
+| Tier | Count | Use when |
+|------|-------|----------|
+| **Essential** | 8 | Every Grok Build / agent session (lean default) |
+| **Power** | ~30 | Deep mode, meta-work, goals, tiles, verification |
+| **Lean: avoid** | ~12 | Harmful or redundant on 100k+ stores in lean mode |
+| **Specialist** | rest | Geosphere, scout, import/export, protocols |
 
-## Workspace & Spatial (Item 1.5)
-- watch_workspace (mandatory first turn), context_for_file (pre-edit recon), recall_in_file (AABB spatial), force_spatial_ingest, spatial_status.
+---
 
-## Session & Rituals
-- session_start (mandatory, intent, binds continuation, loads process sheaf), session_end (mandatory, summary with COMPRESS, prepare_compression for handoff/hot promote).
-- scar, remember_solution.
-- record_reasoning_trace (A/D/R, goal/spatial/ritual_context, prev).
+## Tier 1 — Essential (8 tools)
 
-## Graph / Sheaf
-- relate (OP_BIND), search_by_relation, visualize (Mermaid).
+| Tool | Purpose |
+|------|---------|
+| `mcp_engram_session_start` | **Wake.** Inline JSON: `continuation`, `readiness`, optional `spatial`. Args: `intent`, `include_spatial?`, `spatial_max_files?` |
+| `mcp_engram_context_for_edit` | **Pre-edit.** Spatial AST + related traces for one file. Args: `path`, `line_start?`, `line_end?`, `auto_ingest?` |
+| `mcp_engram_recall` | **Read.** Args: `query`, `k?`, `scope?` (`anchors`\|`hot`\|`all`) |
+| `mcp_engram_quick_trace` | **Fork.** Low-friction `trace:*`. Args: `decision`, `why`, + optional chain fields |
+| `mcp_engram_remember` | **Write new.** Args: `concept`, `text`. Recall first; if match >0.85 use `update` |
+| `mcp_engram_session_end` | **Handoff.** Structured JSON + `helper:session_handoff_latest`. Args: `summary` |
+| `mcp_engram_get_backend_readiness` | **Status.** `memory_mode`, `recall_mode`, `bvh_ready`, block count |
+| `mcp_engram_set_memory_mode` | **Mode.** `lean` (default) or `deep` (full recall, auto-BVH on large stores) |
 
-## Physics / Lawfulness / Autonomy
-- genesis (status/reseed), verify_manifold_integrity, verify_block_lawfulness, verify_behavior.
-- query_with_momentum (80% q + 20% p), set_namespace, list_namespaces.
-- set_geosphere_frame, get_geosphere_frame, clear_geosphere_frame.
-- goal_create, goal_decompose, goal_status, goal_list, goal_update_status, goal_search, goal_set_primary, goal_get_children.
+### Lean session loop
 
-## Thought Tiles & Viz
-- thought_tile_create (research_offload, formal_spec, state_machine, etc., auto goal link, compresses_path), thought_tile_write_result, thought_tile_create_visualization.
+```
+session_start → [work: context_for_edit + recall(scope=anchors) + quick_trace + remember] → session_end
+```
 
-## Process Sheaf (declarative)
-- Dynamic load at session_start from processes/*.toml (ritual/wake-up, nrem-consolidation, harness/spatial-recon, operator/momentum-query, process/session-end, monitor/manifold-health + subvisor for H¹ sub-agent governance).
+---
 
-See also: integrations/ for configs, tools/test-harness, engram-wake-up/SKILL.md (Phase 1.5 metrics), GITHUB_MVP_PREP_PLAN.md, processes/ tomls (category gluing/H¹), mcp.rs (load_process_sheaf).
+## Tier 2 — Power (use deliberately)
 
-For external agents: prefix concepts, use session_start/end, follow rituals for lawful continuity.
+### Memory writes & evolution
+- `update` — **preferred** over forget+remember (Lyapunov drift)
+- `batch_remember`, `pin`, `forget`, `forget_old`
+- `remember_solution` — crystallize working fixes to praxis
+- `record_reasoning_trace` — full A/D/R trace (use `quick_trace` for daily work)
+- `scar` — repulsion for dead-ends / doom loops
+
+### Goals
+- `goal_create`, `goal_set_primary`, `goal_list`, `goal_status`, `goal_update_status`
+- `goal_decompose`, `goal_get_children`, `goal_search`
+
+### Graph / sheaf
+- `relate`, `relate_batch`, `search_by_relation`, `visualize`
+
+### Thought tiles (meta-work arcs)
+- `thought_tile_create`, `thought_tile_write_result`, `thought_tile_create_visualization`
+- `promote_hot`, `promote_hot_batch`
+
+### Verification & health
+- `verify_manifold_integrity`, `verify_block_lawfulness`, `verify_behavior`
+- `genesis`, `spatial_status`, `stats`, `summarize`, `recall_recent`
+
+### Deep recall & discovery
+- `query_pure` — geo K-NN on hot set
+- `query_with_momentum` — q+p blend (80/20)
+- `read_concept` — full untruncated block body
+- `get_continuation_bundle` — TUI compression boundary only (redundant at wake)
+
+### Spatial (legacy split — prefer `context_for_edit`)
+- `context_for_file`, `recall_in_file`
+- `incremental_spatial_ingest`, `force_spatial_ingest`
+
+### Session / handoff extras
+- `rebuild_bvh` — on-demand full index (deep mode; RAM/time cost)
+
+### Other power
+- `list_concepts`, `list_namespaces`, `set_namespace`
+- `export`, `import`, `scout`, `invoke_protocol`, `track_user`
+
+---
+
+## Tier 3 — Lean: avoid (unless explicit need)
+
+| Tool | Why |
+|------|-----|
+| `watch_workspace` | Full-repo watcher; use `context_for_edit` + `incremental_spatial_ingest` instead. Deferred by `ENGRAM_DEFER_WATCH_INGEST=1` |
+| `rebuild_bvh` | 10–40GB RAM on 100k+ blocks unless intentional deep mode |
+| `list` / `list_concepts` | O(n) store scan |
+| `summarize` at wake | Duplicates inline `session_start` bundle |
+| `get_continuation_bundle` at wake | Redundant with inline bundle |
+| `query_with_momentum` at wake | Use `recall(scope=anchors)` first |
+| `force_spatial_ingest` (full tree) | Use `include_spatial` on session_start or single-file ingest |
+
+---
+
+## Tier 4 — Specialist
+
+### Geosphere (frame/lens)
+- `set_geosphere_frame`, `get_geosphere_frame`, `clear_geosphere_frame`
+
+---
+
+## Environment variables (MCP defaults)
+
+| Variable | Default (lean) | Effect |
+|----------|----------------|--------|
+| `ENGRAM_MEMORY_MODE` | `lean` | Anchor-first recall; no auto-BVH |
+| `ENGRAM_DEFER_BVH` | `1` | Skip background BVH build |
+| `ENGRAM_DEFER_WATCH_INGEST` | `1` | No recursive watch/ingest on bind |
+| `ENGRAM_DISABLE_SHEAF` | `1` | Single backend on `--store` |
+| `ENGRAM_OPTIX_ENABLED` | `0` | Skip OptiX PTX path in MCP |
+| `ENGRAM_KI_DISABLE` | `1` | Skip ki bake loop on large stores |
+
+---
+
+## Process sheaf (automatic)
+
+`session_start` loads `processes/*.toml` (wake-up, session-end, subvisor, etc.). Agents do not call these directly.
+
+---
+
+## Related
+
+- [`AGENT_MEMORY_CONTRACT.md`](AGENT_MEMORY_CONTRACT.md) — **start here**
+- [`GROK_BUILD_MEMORY.md`](GROK_BUILD_MEMORY.md) — Grok Build integration pitch
+- [`RITUALS.md`](RITUALS.md) — full ritual philosophy
+- [`GEOMETRIC_MEMORY.md`](GEOMETRIC_MEMORY.md) — substrate theory
+- `crates/engram-server/src/mcp.rs` — tool implementations

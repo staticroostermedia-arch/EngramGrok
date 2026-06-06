@@ -46,6 +46,89 @@ fn stalk_raw_concept(concept: &str) -> &str {
     concept.split_once("::").map_or(concept, |(_, r)| r)
 }
 
+const SESSION_HANDOFF_LATEST: &str = "helper:session_handoff_latest";
+
+fn handoff_is_bullet_line(line: &str) -> bool {
+    if line.starts_with("- ")
+        || line.starts_with("* ")
+        || line.starts_with("• ")
+        || line.starts_with("+ ")
+    {
+        return true;
+    }
+    let mut chars = line.chars();
+    let mut saw_digit = false;
+    while let Some(c) = chars.next() {
+        if c.is_ascii_digit() {
+            saw_digit = true;
+        } else if (c == '.' || c == ')') && saw_digit {
+            return chars.next().map(|n| n == ' ').unwrap_or(false);
+        } else {
+            break;
+        }
+    }
+    false
+}
+
+fn handoff_parse_decisions(summary: &str) -> Vec<String> {
+    summary
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && handoff_is_bullet_line(line) && !line.contains('?'))
+        .map(|line| line.to_string())
+        .collect()
+}
+
+fn handoff_parse_open_questions(summary: &str) -> Vec<String> {
+    summary
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && line.contains('?'))
+        .map(|line| line.to_string())
+        .collect()
+}
+
+fn handoff_extract_files_touched(summary: &str) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+
+    let mut consider = |candidate: &str| {
+        let cleaned = candidate
+            .trim_matches(|c: char| {
+                c == ','
+                    || c == ';'
+                    || c == '`'
+                    || c == '('
+                    || c == ')'
+                    || c == '['
+                    || c == ']'
+                    || c == '"'
+                    || c == '\''
+            });
+        if cleaned.is_empty() {
+            return;
+        }
+        let is_path = cleaned.contains("/home/")
+            || cleaned.starts_with("crates/")
+            || cleaned.contains("crates/");
+        if is_path && seen.insert(cleaned.to_string()) {
+            out.push(cleaned.to_string());
+        }
+    };
+
+    for token in summary.split_whitespace() {
+        consider(token);
+    }
+    for (idx, segment) in summary.split('`').enumerate() {
+        if idx % 2 == 1 {
+            consider(segment);
+        }
+    }
+    out
+}
+
 // ── Sheaf Config ──────────────────────────────────────────────────────────────
 
 #[derive(serde::Deserialize, Debug)]
@@ -572,6 +655,49 @@ impl Backend {
             _ => false,
         }
     }
+
+    fn bvh_is_ready(&self) -> bool {
+        match self {
+            #[cfg(engram_backend_cuda)]
+            Backend::Gpu(b) => b.bvh_is_ready(),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.bvh_is_ready(),
+            _ => false,
+        }
+    }
+
+    fn rebuild_bvh_async(&self) -> bool {
+        match self {
+            #[cfg(engram_backend_cuda)]
+            Backend::Gpu(b) => b.rebuild_bvh_async(),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(b) => b.rebuild_bvh_async(),
+            _ => false,
+        }
+    }
+
+    fn backend_kind(&self) -> &'static str {
+        match self {
+            #[cfg(engram_backend_cuda)]
+            Backend::Gpu(_) => "cuda",
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(_) => "metal",
+            #[cfg(all(engram_backend_wgpu, not(engram_backend_cuda), not(engram_backend_metal)))]
+            Backend::Wgpu(_) => "wgpu",
+            Backend::Sheaf(_) => "sheaf",
+            Backend::Single(_) => "cpu",
+        }
+    }
+
+    fn gpu_accel_available(&self) -> bool {
+        match self {
+            #[cfg(engram_backend_cuda)]
+            Backend::Gpu(b) => b.is_gpu_available(),
+            #[cfg(engram_backend_metal)]
+            Backend::Metal(_) => true,
+            _ => false,
+        }
+    }
 }
 
 
@@ -632,6 +758,9 @@ pub struct StoreHandle {
     /// TTL cache for `build_continuation_bundle` (large-stalk wake-up latency).
     continuation_bundle_cached_at: u64,
     continuation_bundle_cache: Option<serde_json::Value>,
+
+    /// Guard: auto-spawn at most one on-demand BVH build when memory_mode=deep.
+    deep_bvh_spawn_attempted: std::sync::atomic::AtomicBool,
 }
 
 /// Goal block text: provlog first (encode path), payload fallback.
@@ -708,6 +837,7 @@ impl StoreHandle {
         let relation_index = RelationIndex::load(&engram_root);
 
         let disable_sheaf = std::env::var("ENGRAM_DISABLE_SHEAF").is_ok();
+        let sheaf_lean = std::env::var("ENGRAM_SHEAF_LEAN").as_deref() == Ok("1");
         let backend = if sheaf_config_path.exists() && !disable_sheaf {
             match std::fs::read_to_string(&sheaf_config_path)
                 .ok()
@@ -720,16 +850,32 @@ impl StoreHandle {
 
                     #[cfg(engram_backend_cuda)]
                     let sheaf = {
-                        tracing::info!("engram-gpu: Sheaf × CudaBackend — {} stalks with BVH K-NN", config.stalks.len());
-                        let boxed_stalks: Vec<(String, Box<dyn engram_core::backend::VsaBackend + Send + Sync>)> = stalks
-                            .into_iter()
-                            .map(|(name, path)| {
-                                std::fs::create_dir_all(&path).ok();
-                                let b: Box<dyn engram_core::backend::VsaBackend + Send + Sync> =
-                                    Box::new(CudaBackend::new(&path));
-                                (name, b)
-                            })
-                            .collect();
+                        let active = config.active_stalk.clone();
+                        tracing::info!(
+                            "engram-gpu: Sheaf × CudaBackend — {} stalks (lean={})",
+                            config.stalks.len(),
+                            sheaf_lean
+                        );
+                        let boxed_stalks: Vec<(String, Box<dyn engram_core::backend::VsaBackend + Send + Sync>)> =
+                            stalks
+                                .into_iter()
+                                .map(|(name, path)| {
+                                    std::fs::create_dir_all(&path).ok();
+                                    let is_active = active.as_ref() == Some(&name)
+                                        || path == PathBuf::from(&expanded);
+                                    let b: Box<dyn engram_core::backend::VsaBackend + Send + Sync> =
+                                        if sheaf_lean && !is_active {
+                                            tracing::info!(
+                                                "engram-gpu: sheaf lean — stalk '{}' uses CpuBackend (defer GPU init)",
+                                                name
+                                            );
+                                            Box::new(CpuBackend::new(&path))
+                                        } else {
+                                            Box::new(CudaBackend::new(&path))
+                                        };
+                                    (name, b)
+                                })
+                                .collect();
                         SheafBackend::new_boxed(boxed_stalks)
                     };
 
@@ -808,6 +954,7 @@ impl StoreHandle {
             hot_geo_context: std::sync::RwLock::new(std::collections::HashMap::new()),
             continuation_bundle_cached_at: 0,
             continuation_bundle_cache: None,
+            deep_bvh_spawn_attempted: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -840,6 +987,7 @@ impl StoreHandle {
             hot_geo_context: std::sync::RwLock::new(std::collections::HashMap::new()),
             continuation_bundle_cached_at: 0,
             continuation_bundle_cache: None,
+            deep_bvh_spawn_attempted: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -853,6 +1001,106 @@ impl StoreHandle {
     /// the background thread completes (see main.rs).
     pub fn is_fully_initialized(&self) -> bool {
         self.fully_initialized.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn bvh_is_ready(&self) -> bool {
+        self.backend.bvh_is_ready()
+    }
+
+    /// Spawn a background BVH build. Use when ENGRAM_DEFER_BVH=1 and full recall is needed.
+    pub fn rebuild_bvh_async(&self) -> bool {
+        self.backend.rebuild_bvh_async()
+    }
+
+    pub fn current_profile_name() -> &'static str {
+        crate::profile::current_profile_name()
+    }
+
+    /// Current memory mode: `lean` (default) or `deep` (full BVH recall on large stores).
+    pub fn memory_mode() -> &'static str {
+        match std::env::var("ENGRAM_MEMORY_MODE").as_deref() {
+            Ok("deep") => "deep",
+            _ => "lean",
+        }
+    }
+
+    /// Set process-wide memory mode (`lean` | `deep`).
+    pub fn set_memory_mode(mode: &str) -> Result<()> {
+        match mode {
+            "lean" | "deep" => {
+                std::env::set_var("ENGRAM_MEMORY_MODE", mode);
+                tracing::info!("[MEMORY] ENGRAM_MEMORY_MODE={mode}");
+                Ok(())
+            }
+            _ => anyhow::bail!("ENGRAM_MEMORY_MODE must be 'lean' or 'deep', got: {mode}"),
+        }
+    }
+
+    /// In deep mode on large stores, kick off a single background BVH build if not ready.
+    pub fn maybe_auto_rebuild_bvh_for_deep_mode(&self) -> bool {
+        if Self::memory_mode() != "deep" {
+            return false;
+        }
+        if self.bvh_is_ready() {
+            return false;
+        }
+        if self.leg_block_count() <= Self::LARGE_MANIFOLD_THRESHOLD {
+            return false;
+        }
+        if self
+            .deep_bvh_spawn_attempted
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            return false;
+        }
+        if self.rebuild_bvh_async() {
+            tracing::info!(
+                "[MEMORY] deep mode: auto-spawned BVH build for large store (~{} blocks)",
+                self.leg_block_count()
+            );
+            true
+        } else {
+            self.deep_bvh_spawn_attempted
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            false
+        }
+    }
+
+    /// How recall/query will behave on this store right now.
+    pub fn recall_mode(&self) -> &'static str {
+        let large = self.leg_block_count() > Self::LARGE_MANIFOLD_THRESHOLD;
+        if large {
+            if self.bvh_is_ready() {
+                "full_bvh_gpu"
+            } else {
+                "sampled_bounded"
+            }
+        } else if self.bvh_is_ready() {
+            "full_bvh"
+        } else {
+            "cpu_linear"
+        }
+    }
+
+    pub fn backend_readiness(&self) -> serde_json::Value {
+        let bvh_auto_spawned = self.maybe_auto_rebuild_bvh_for_deep_mode();
+        serde_json::json!({
+            "fully_initialized": self.is_fully_initialized(),
+            "backend_kind": self.backend.backend_kind(),
+            "gpu_accel_available": self.backend.gpu_accel_available(),
+            "bvh_ready": self.bvh_is_ready(),
+            "recall_mode": self.recall_mode(),
+            "leg_block_count": self.leg_block_count(),
+            "profile": Self::current_profile_name(),
+            "memory_mode": Self::memory_mode(),
+            "defer_bvh": std::env::var("ENGRAM_DEFER_BVH").as_deref() == Ok("1"),
+            "defer_watch_ingest": std::env::var("ENGRAM_DEFER_WATCH_INGEST").as_deref() == Ok("1"),
+            "bvh_auto_spawned": bvh_auto_spawned,
+            "cuda_lean": std::env::var("ENGRAM_CUDA_LEAN").as_deref() != Ok("0"),
+            "sheaf_lean": std::env::var("ENGRAM_SHEAF_LEAN").as_deref() == Ok("1"),
+            "ki_lean": std::env::var("ENGRAM_KI_LEAN").as_deref() == Ok("1"),
+            "ki_disabled": std::env::var("ENGRAM_KI_DISABLE").as_deref() == Ok("1"),
+        })
     }
 
     /// Called by the background initialization thread once everything is ready.
@@ -1067,39 +1315,63 @@ impl StoreHandle {
     }
 
     pub fn recall(&mut self, query: &str, k: usize) -> Vec<Memory> {
-        // MIN_SCORE_THRESHOLD: Dirichlet composite score floor.
-        // With 23,000+ pinned blocks at CRS=1.0 the scorer's CRS term lifts all
-        // blocks to ~0.65 minimum, causing noise blocks to top the ranking.
-        // Any result below 0.67 is semantically irrelevant — drop it so callers
-        // get an empty result rather than plausible-looking noise.
+        self.recall_scoped(query, k, None).0
+    }
+
+    /// Anchor-first tiered recall (Agent Memory MVP A3).
+    /// `scope`: `anchors` | `hot` | `all` | `None` (lean → anchors, deep → all).
+    /// Returns `(memories, effective_scope)`.
+    pub fn recall_scoped(
+        &mut self,
+        query: &str,
+        k: usize,
+        scope: Option<&str>,
+    ) -> (Vec<Memory>, &'static str) {
         const MIN_SCORE_THRESHOLD: f32 = 0.67;
 
-        // Phase 2.1 Geo Ubiquity: apply current SymplecticState frame/lens to the
-        // encoded query vector (using existing ops::apply_current_frame which delegates
-        // to apply_frame + normalize). This makes StoreHandle::recall geo-aware,
-        // matching the vector query path and bvh GPU paths. No stored blocks mutated;
-        // unit hypersphere invariant held to 1e-5+ (enforced in ops layer).
+        let effective_scope = Self::resolve_recall_scope(scope);
         let encoded = self.encode(query);
         let effective_q = if let Ok(geo) = self.geosphere.read() {
             geo.apply_current_frame(&encoded.q)
         } else {
-            engram_core::ops::normalize(&encoded.q)  // identity safe path
+            engram_core::ops::normalize(&encoded.q)
         };
-        let mut results = self.backend.query(&effective_q, k);
 
-        // ── Phase 88-Engram Bridge: Ego-Modulated Recall ──────────────────────
-        //
-        // Post-process results with a small symmetrical ego recognition nudge:
-        //   ego_norm  = (cos(block.q, ego_q) + 1.0) / 2.0   ∈ [0, 1]
-        //   score_adj = score + (ego_norm - 0.5) × 0.04      (±0.02 max shift)
-        //
-        // This preserves the Dirichlet base ranking but floats Ego-resonant
-        // blocks slightly above Ego-orthogonal blocks at equal base scores.
-        // Zero-cost when ego_q is None (no block fetches, no computation).
+        let mut results = match effective_scope {
+            "anchors" => {
+                self.recall_sampled_tiered(&effective_q, k * 2, "anchors")
+            }
+            "hot" => {
+                let candidates = self.sample_concepts_for_overview(4000);
+                self.score_recall_candidates(&candidates, &effective_q, k * 2, true)
+            }
+            _ => {
+                let _ = self.maybe_auto_rebuild_bvh_for_deep_mode();
+                let use_sampled =
+                    self.leg_block_count() > Self::LARGE_MANIFOLD_THRESHOLD && !self.bvh_is_ready();
+                let mut raw = if use_sampled {
+                    self.recall_sampled_tiered(&effective_q, k * 2, "all")
+                } else {
+                    self.backend.query(&effective_q, k * 2)
+                };
+                Self::apply_anchor_boost(&mut raw);
+                raw.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                raw.truncate(k * 2);
+                raw
+            }
+        };
+
         if let Some(ego_q) = &self.ego_q {
             let ego_q_clone: Box<[engram_core::Complex32; 8192]> = ego_q.clone();
             for result in &mut results {
-                let raw = result.concept.split_once("::").map_or(result.concept.as_str(), |(_, r)| r);
+                let raw = result
+                    .concept
+                    .split_once("::")
+                    .map_or(result.concept.as_str(), |(_, r)| r);
                 if let Some(q) = self.backend.fetch(raw) {
                     let ego_cos = engram_core::ops::cosine_similarity(&q, &ego_q_clone);
                     let ego_norm = (ego_cos + 1.0) / 2.0;
@@ -1107,39 +1379,317 @@ impl StoreHandle {
                     result.explain = format!("{} [ego={:.3}]", result.explain, ego_norm);
                 }
             }
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-            results.truncate(k);
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
+
+        results = Self::dedupe_memories(results);
+        results.truncate(k);
 
         let filtered: Vec<Memory> = results
             .into_iter()
             .filter(|m| m.score >= MIN_SCORE_THRESHOLD)
             .collect();
-        for m in &filtered { self.access_index.touch(&m.concept); }
+        for m in &filtered {
+            self.access_index.touch(&m.concept);
+        }
 
-        // ── Phase 4 Epoch IX: Transductive Oracle Fallthrough ─────────────────
-        //
-        // When the Engram manifold returns nothing above the score floor, delegate
-        // When the Engram manifold returns nothing above the score floor, optionally delegate
-        // the query to an external transductive oracle (set ENGRAM_ORACLE_URL to enable).
-        // This allows integration with a larger corpus oracle running alongside Engram.
-        //
-        // Safety:
-        //   - reqwest::blocking is used (non-async) so we don't need to spawn a
-        //     separate tokio task from inside the store mutex critical section.
-        //   - A short timeout (3s) prevents manifold misses from stalling callers.
-        //   - If the oracle is unavailable (server down, timeout, env var unset) we
-        //     fall back silently to an empty result — no panic, no error propagation.
-        //   - The synthetic Memory result is tagged with concept="oracle_fallthrough"
-        //     and score=0.29 (just below MIN_SCORE_THRESHOLD) so callers can
-        //     distinguish oracle results from local hits.
         if filtered.is_empty() {
             if let Some(oracle_memory) = oracle_fallthrough(query) {
-                return vec![oracle_memory];
+                return (vec![oracle_memory], effective_scope);
             }
         }
 
-        filtered
+        (filtered, effective_scope)
+    }
+
+    fn resolve_recall_scope(scope: Option<&str>) -> &'static str {
+        match scope.map(|s| s.trim().to_lowercase()).as_deref() {
+            Some("anchors") => "anchors",
+            Some("hot") => "hot",
+            Some("all") => "all",
+            None => {
+                if Self::memory_mode() == "deep" {
+                    "all"
+                } else {
+                    "anchors"
+                }
+            }
+            Some(_) => "anchors",
+        }
+    }
+
+    fn is_anchor_concept(concept: &str) -> bool {
+        let raw = stalk_raw_concept(concept);
+        raw == "primary_goal"
+            || raw.starts_with("session_end_")
+            || raw.starts_with("session_start_")
+            || raw.starts_with("compression_handoff_")
+            || raw.starts_with("goal:")
+            || raw.starts_with("trace:")
+            || raw.starts_with("scar:")
+            || raw.starts_with("ritual:")
+            || raw.starts_with("helper:")
+            || raw.starts_with("tile:")
+            || raw.starts_with("process:")
+            || raw.starts_with("design:")
+            || raw.starts_with("metric:")
+            || raw.starts_with("praxis:")
+    }
+
+    fn apply_anchor_boost(results: &mut [Memory]) {
+        for m in results.iter_mut() {
+            if Self::is_anchor_concept(&m.concept) {
+                m.score += 0.05;
+                m.explain = format!("{} [anchor_boost=+0.05]", m.explain);
+            }
+        }
+    }
+
+    fn dedupe_memories(mut scored: Vec<Memory>) -> Vec<Memory> {
+        use std::collections::HashSet;
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut seen = HashSet::new();
+        scored.retain(|m| seen.insert(m.concept.clone()));
+        scored
+    }
+
+    /// Score a bounded candidate set — never calls `backend.list()`.
+    fn score_recall_candidates(
+        &self,
+        candidates: &[String],
+        effective_q: &[engram_core::Complex32; 8192],
+        k: usize,
+        anchor_boost: bool,
+    ) -> Vec<Memory> {
+        let ego = self.ego_q.as_deref();
+        let mut scored: Vec<Memory> = candidates
+            .iter()
+            .filter_map(|name| {
+                let raw = name.split_once("::").map_or(name.as_str(), |(_, r)| r);
+                let block = self
+                    .fetch_block_high_priority(name)
+                    .or_else(|| self.backend.fetch_block(raw))?;
+                Some(engram_core::backend::score_memory(
+                    name.clone(),
+                    effective_q,
+                    &block,
+                    ego,
+                ))
+            })
+            .collect();
+        if anchor_boost {
+            Self::apply_anchor_boost(&mut scored);
+        }
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        scored.truncate(k);
+        scored
+    }
+
+    /// Bounded recall for large manifolds when BVH build is deferred.
+    /// Scores hot/recent/anchor candidates only — avoids O(N) scan over 100k+ blocks.
+    fn recall_sampled(&self, effective_q: &[engram_core::Complex32; 8192], k: usize) -> Vec<Memory> {
+        self.recall_sampled_tiered(effective_q, k, "anchors")
+    }
+
+    /// Tiered lean recall — anchors first, then episodic/recent fill (no full O(N) scan).
+    pub fn recall_sampled_tiered(
+        &self,
+        effective_q: &[engram_core::Complex32; 8192],
+        k: usize,
+        scope: &str,
+    ) -> Vec<Memory> {
+        use std::collections::HashSet;
+
+        let max_pool = std::env::var("ENGRAM_LEAN_RECALL_POOL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4000)
+            .clamp(500, 8000);
+
+        let anchor_cap = if scope == "anchors" {
+            std::env::var("ENGRAM_LEAN_ANCHOR_POOL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(800)
+                .clamp(100, 2000)
+        } else {
+            max_pool / 2
+        };
+
+        let mut seen = HashSet::new();
+        let mut candidates = Vec::with_capacity(anchor_cap.min(max_pool));
+
+        if scope == "anchors" || scope == "all" {
+            for c in self.sample_anchor_candidates(anchor_cap) {
+                if seen.insert(c.clone()) {
+                    candidates.push(c);
+                }
+                if candidates.len() >= anchor_cap {
+                    break;
+                }
+            }
+        }
+
+        // Pure anchor scope: never backfill with broad overview (was scoring 2k+ blocks).
+        if scope != "anchors" && candidates.len() < max_pool {
+            for c in self.sample_concepts_for_overview(max_pool) {
+                if seen.insert(c.clone()) {
+                    candidates.push(c);
+                }
+                if candidates.len() >= max_pool {
+                    break;
+                }
+            }
+        }
+
+        if scope == "all" && candidates.len() < max_pool {
+            for (c, _) in self.access_index.recent(max_pool) {
+                if (c.starts_with("session_")
+                    || c.starts_with("trace:")
+                    || c.contains("episodic"))
+                    && seen.insert(c.clone())
+                {
+                    candidates.push(c);
+                }
+                if candidates.len() >= max_pool {
+                    break;
+                }
+            }
+        }
+
+        if scope == "all" && candidates.len() < max_pool / 2 {
+            let need = (max_pool - candidates.len()).min(500);
+            for c in self.sample_recent_leg_stems(need) {
+                if seen.insert(c.clone()) {
+                    candidates.push(c);
+                }
+            }
+        }
+
+        self.score_recall_candidates(&candidates, effective_q, k, scope != "all")
+    }
+
+    /// Sample recent .leg stems by mtime without loading all concepts into RAM.
+    fn sample_recent_leg_stems(&self, max: usize) -> Vec<String> {
+        use std::time::SystemTime;
+
+        let mut entries: Vec<(SystemTime, String)> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&self.path) {
+            for e in rd.flatten() {
+                let path = e.path();
+                if path.extension().and_then(|x| x.to_str()) != Some("leg") {
+                    continue;
+                }
+                let Ok(meta) = e.metadata() else { continue };
+                let Ok(mtime) = meta.modified() else { continue };
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                entries.push((mtime, stem.to_string()));
+            }
+        }
+        entries.sort_by(|a, b| b.0.cmp(&a.0));
+        entries.into_iter().take(max).map(|(_, s)| s).collect()
+    }
+
+    /// Anchor-biased candidate pool: hot_set + access recency + primary_goal relations.
+    /// Never calls `backend.list()` — safe on 100k+ stores.
+    pub fn sample_anchor_candidates(&self, max: usize) -> Vec<String> {
+        use std::collections::HashSet;
+
+        let max = max.clamp(50, 2500);
+        let mut seen = HashSet::new();
+        let mut out = Vec::with_capacity(max.min(512));
+
+        if let Ok(set) = self.hot_set.read() {
+            let mut hot: Vec<String> = set
+                .iter()
+                .filter(|c| Self::is_anchor_concept(c))
+                .cloned()
+                .collect();
+            hot.sort();
+            for c in hot {
+                if seen.insert(c.clone()) {
+                    out.push(c);
+                }
+                if out.len() >= max {
+                    return out;
+                }
+            }
+        }
+
+        for (c, _) in self.access_index.recent(max) {
+            if Self::is_anchor_concept(&c) && seen.insert(c.clone()) {
+                out.push(c);
+            }
+            if out.len() >= max {
+                return out;
+            }
+        }
+
+        if seen.insert("primary_goal".to_string()) {
+            out.push("primary_goal".to_string());
+        }
+
+        if let Some(block) = self.fetch_block_high_priority("primary_goal") {
+            let text = engram_core::storage::read_provlog(&block);
+            if let Some(line) = text.lines().find(|l| l.starts_with("**goal:**")) {
+                let goal_name = line.replace("**goal:** ", "").trim().to_string();
+                for (_label, other) in self.search_relations(&goal_name, None, "both") {
+                    if Self::is_anchor_concept(&other) && seen.insert(other.clone()) {
+                        out.push(other);
+                    }
+                    if out.len() >= max {
+                        return out;
+                    }
+                }
+                for (_label, other) in self.search_relations(&goal_name, Some("serves"), "to") {
+                    if Self::is_anchor_concept(&other) && seen.insert(other.clone()) {
+                        out.push(other);
+                    }
+                    if out.len() >= max {
+                        return out;
+                    }
+                }
+            }
+            for (_label, other) in self.search_relations("primary_goal", None, "both") {
+                if Self::is_anchor_concept(&other) && seen.insert(other.clone()) {
+                    out.push(other);
+                }
+                if out.len() >= max {
+                    return out;
+                }
+            }
+        }
+
+        for prefix in [
+            "goal:", "trace:", "scar:", "ritual:", "helper:", "tile:",
+        ] {
+            for e in &self.relation_index.entries {
+                for name in [&e.from, &e.to] {
+                    if name.starts_with(prefix) && seen.insert(name.clone()) {
+                        out.push(name.clone());
+                    }
+                    if out.len() >= max {
+                        return out;
+                    }
+                }
+            }
+        }
+
+        out
     }
 
     /// Delete a concept from the manifold.
@@ -1166,6 +1716,95 @@ impl StoreHandle {
     }
     pub fn list(&self) -> Vec<String> { self.backend.list() }
 
+    /// Promote continuity anchors to hot path before wake bundle / anchor recall.
+    pub fn warm_wake_anchors(&mut self) {
+        const WAKE_ANCHORS: &[&str] = &[
+            "primary_goal",
+            SESSION_HANDOFF_LATEST,
+            "helper:session_hydration_cache",
+            "ritual:engram.working-memory",
+            "ritual:wake_up_anchor",
+            "process:engram.ritual.wake-up",
+        ];
+        for concept in WAKE_ANCHORS {
+            let _ = self.promote_tile_to_high_priority(concept);
+        }
+    }
+
+    /// Return the current hot_set (promoted high-priority concepts for fast paths).
+    /// Used by query_pure for lean wake anchor discovery to avoid full-stalk scan.
+    /// Small set (dozens) thanks to loader preload + bundle promote.
+    pub fn hot_concepts(&self) -> Vec<String> {
+        if let Ok(set) = self.hot_set.read() {
+            set.iter().cloned().collect()
+        } else {
+            vec![]
+        }
+    }
+
+    /// Fast `.leg` count without allocating all concept names (critical for 100k+ stores).
+    pub fn leg_block_count(&self) -> usize {
+        std::fs::read_dir(&self.path)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.path()
+                            .extension()
+                            .and_then(|x| x.to_str())
+                            == Some("leg")
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Above this size, MCP overview tools sample instead of full-manifold scans.
+    pub const LARGE_MANIFOLD_THRESHOLD: usize = 10_000;
+
+    /// Bounded candidate set for stats/summarize on large manifolds.
+    pub fn sample_concepts_for_overview(&self, max: usize) -> Vec<String> {
+        use std::collections::HashSet;
+
+        let max = max.clamp(50, 2000);
+        let mut seen = HashSet::new();
+        let mut out = Vec::with_capacity(max.min(512));
+
+        for c in self.hot_concepts() {
+            if seen.insert(c.clone()) {
+                out.push(c);
+            }
+            if out.len() >= max {
+                return out;
+            }
+        }
+
+        for (c, _) in self.access_index.recent(max) {
+            if seen.insert(c.clone()) {
+                out.push(c);
+            }
+            if out.len() >= max {
+                return out;
+            }
+        }
+
+        for prefix in [
+            "goal:", "ritual:", "process:", "helper:", "praxis:", "trace:", "design:",
+        ] {
+            for e in &self.relation_index.entries {
+                for name in [&e.from, &e.to] {
+                    if name.starts_with(prefix) && seen.insert(name.clone()) {
+                        out.push(name.clone());
+                        if out.len() >= max {
+                            return out;
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+
     /// Bounded concept listing. With `prefix`, gathers from hot_set, access recency,
     /// and relation index before a full backend scan. Without prefix, returns at most
     /// `limit` concepts and sets `truncated` when the manifold is larger.
@@ -1178,7 +1817,7 @@ impl StoreHandle {
 
         let limit = limit.clamp(1, 500);
         let prefix = prefix.map(str::trim).filter(|s| !s.is_empty());
-        let total = self.backend.list().len();
+        let total = self.leg_block_count();
 
         let matches = |c: &str| -> bool {
             prefix.map(|p| c.starts_with(p)).unwrap_or(true)
@@ -1221,20 +1860,103 @@ impl StoreHandle {
                 }
             }
 
-            for c in self.backend.list() {
-                if matches(&c) && seen.insert(c.clone()) {
-                    out.push(c);
-                    if out.len() >= limit {
-                        return (out, false, total);
+            if total <= Self::LARGE_MANIFOLD_THRESHOLD {
+                for c in self.backend.list() {
+                    if matches(&c) && seen.insert(c.clone()) {
+                        out.push(c);
+                        if out.len() >= limit {
+                            return (out, false, total);
+                        }
                     }
                 }
             }
-            (out, false, total)
+            (out, total > Self::LARGE_MANIFOLD_THRESHOLD, total)
         } else {
             let truncated = total > limit;
-            let out: Vec<String> = self.backend.list().into_iter().take(limit).collect();
+            let out: Vec<String> = if total <= Self::LARGE_MANIFOLD_THRESHOLD {
+                self.backend.list().into_iter().take(limit).collect()
+            } else {
+                self.sample_concepts_for_overview(limit)
+            };
             (out, truncated, total)
         }
+    }
+
+    /// Structured session-end handoff packet for machine-readable next-wake rehydration.
+    pub fn build_handoff_packet(
+        &mut self,
+        summary: &str,
+        session_end_key: &str,
+    ) -> serde_json::Value {
+        let summary_trunc: String = summary.chars().take(2000).collect();
+
+        let mut primary_goal: Option<String> = None;
+        if let Some(block) = self.fetch_block_high_priority("primary_goal") {
+            let text = engram_core::storage::read_provlog(&block);
+            if let Some(line) = text.lines().find(|l| l.starts_with("**goal:**")) {
+                primary_goal = Some(line.replace("**goal:** ", "").trim().to_string());
+            }
+        }
+
+        let mut recent_traces: Vec<serde_json::Value> = Vec::new();
+        let mut trace_chain_head: Option<String> = None;
+        for (concept, ts) in self.access_index.recent(200) {
+            if concept.starts_with("trace:") {
+                if trace_chain_head.is_none() {
+                    trace_chain_head = Some(concept.clone());
+                }
+                recent_traces.push(serde_json::json!({
+                    "concept": concept,
+                    "accessed_at": ts,
+                }));
+                if recent_traces.len() >= 5 {
+                    break;
+                }
+            }
+        }
+
+        serde_json::json!({
+            "session_end_key": session_end_key,
+            "summary": summary_trunc,
+            "primary_goal": primary_goal,
+            "decisions": handoff_parse_decisions(summary),
+            "open_questions": handoff_parse_open_questions(summary),
+            "files_touched": handoff_extract_files_touched(summary),
+            "recent_traces": recent_traces,
+            "trace_chain_head": trace_chain_head,
+            "profile": Self::current_profile_name(),
+            "memory_mode": Self::memory_mode(),
+            "readiness": self.backend_readiness(),
+            "handoff_concept": SESSION_HANDOFF_LATEST,
+        })
+    }
+
+    /// Mint or update the stable structured handoff block for the next session.
+    pub fn persist_session_handoff_latest(
+        &mut self,
+        summary: &str,
+        session_end_key: &str,
+    ) -> serde_json::Value {
+        const HANDOFF_ANCHOR: &str = "handoff:codeland_integration_2026_plan";
+        let packet = self.build_handoff_packet(summary, session_end_key);
+        let body = format!(
+            "SESSION HANDOFF PACKET v1 (structured JSON for next-wake read_concept)\n\n{}\n",
+            serde_json::to_string_pretty(&packet).unwrap_or_else(|_| "{}".to_string())
+        );
+
+        if self.fetch_block(SESSION_HANDOFF_LATEST).is_some() {
+            let _ = self.update(SESSION_HANDOFF_LATEST, &body);
+        } else {
+            let mut block = self.encode(&body);
+            block.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+            block.crs_score = 0.94;
+            let _ = self.store(SESSION_HANDOFF_LATEST, block);
+        }
+        let _ = self.promote_tile_to_high_priority(SESSION_HANDOFF_LATEST);
+        let _ = self.relate(SESSION_HANDOFF_LATEST, session_end_key, "compresses_path");
+        let _ = self.relate(SESSION_HANDOFF_LATEST, HANDOFF_ANCHOR, "serves");
+        self.invalidate_continuation_bundle_cache();
+        packet
     }
 
     /// Active continuity artifacts for agent wake-up: primary goal, last session_end,
@@ -1256,6 +1978,7 @@ impl StoreHandle {
         const HANDOFF_SEEDS: &[&str] = &[
             "handoff:codeland_integration_2026_plan",
             "helper:session_hydration_cache",
+            SESSION_HANDOFF_LATEST,
         ];
         const MAX_ARTIFACTS: usize = 14;
 
@@ -1340,6 +2063,27 @@ impl StoreHandle {
             );
         }
 
+        let session_handoff_present =
+            self.fetch_block_high_priority(SESSION_HANDOFF_LATEST).is_some();
+        if session_handoff_present {
+            push(
+                self,
+                &mut entries,
+                &mut seen,
+                SESSION_HANDOFF_LATEST,
+                "session_handoff_latest",
+            );
+        }
+
+        let mut latest_compression_handoff: Option<String> = None;
+        for (concept, _) in self.access_index.recent(50) {
+            if concept.starts_with("compression_handoff_") {
+                latest_compression_handoff = Some(concept.clone());
+                push(self, &mut entries, &mut seen, &concept, "compression_handoff_latest");
+                break;
+            }
+        }
+
         for seed in HANDOFF_SEEDS {
             for (_label, other) in self.search_relations(seed, Some("compresses_path"), "to") {
                 if other.starts_with("tile:")
@@ -1392,7 +2136,14 @@ impl StoreHandle {
             push(self, &mut entries, &mut seen, &c, "hot_set");
         }
 
-        for mem in self.recall("active thought tile roadmap handoff lawfulness substrate", 8) {
+        for mem in self
+            .recall_scoped(
+                "active thought tile roadmap handoff lawfulness substrate",
+                8,
+                Some("anchors"),
+            )
+            .0
+        {
             if mem.concept.starts_with("tile:") || mem.concept.starts_with("helper:") {
                 push(self, &mut entries, &mut seen, &mem.concept, "momentum_recall");
             }
@@ -1403,6 +2154,17 @@ impl StoreHandle {
                 .partial_cmp(&a.crs)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        if let Some(pos) = entries.iter().position(|e| e.concept == SESSION_HANDOFF_LATEST) {
+            let entry = entries.remove(pos);
+            entries.insert(0, entry);
+        } else if let Some(pos) = entries
+            .iter()
+            .position(|e| e.concept.starts_with("compression_handoff_"))
+        {
+            let entry = entries.remove(pos);
+            entries.insert(0, entry);
+        }
         entries.truncate(MAX_ARTIFACTS);
 
         let active_tiles: Vec<serde_json::Value> = entries
@@ -1418,12 +2180,27 @@ impl StoreHandle {
             })
             .collect();
 
+        let structured_handoff = if session_handoff_present {
+            Some(serde_json::json!({
+                "concept": SESSION_HANDOFF_LATEST,
+                "preferred": true,
+            }))
+        } else {
+            latest_compression_handoff.map(|concept| {
+                serde_json::json!({
+                    "concept": concept,
+                    "preferred": true,
+                })
+            })
+        };
+
         let bundle = serde_json::json!({
             "primary_goal": primary_goal_name,
             "last_session_end": last_session_end,
             "hydration_cache_present": hydration_cache_present,
+            "structured_handoff": structured_handoff,
             "active_artifacts": active_tiles,
-            "recall_hint": "Use mcp_engram_recall or mcp_engram_read_concept on each concept for full tile payload.",
+            "recall_hint": "Read structured_handoff first via mcp_engram_read_concept, then recall each concept in active_artifacts.",
             "cached_at": now,
         });
         self.continuation_bundle_cached_at = now;
@@ -1709,7 +2486,13 @@ impl StoreHandle {
                 *query_vec  // fallback (should never happen)
             }
         };
-        let results = self.backend.query(&effective, k);
+        let use_sampled =
+            self.leg_block_count() > Self::LARGE_MANIFOLD_THRESHOLD && !self.bvh_is_ready();
+        let results = if use_sampled {
+            self.recall_sampled(&effective, k)
+        } else {
+            self.backend.query(&effective, k)
+        };
         for m in &results { self.access_index.touch(&m.concept); }
         results
     }
@@ -2376,6 +3159,220 @@ impl StoreHandle {
         results
     }
 
+    fn memory_summary_json(m: &Memory) -> serde_json::Value {
+        let preview: String = m.provlog.chars().take(240).collect();
+        serde_json::json!({
+            "concept": m.concept,
+            "score": m.score,
+            "crs": m.crs,
+            "preview": if m.provlog.len() > 240 {
+                format!("{preview}…")
+            } else {
+                preview
+            },
+            "explain": m.explain,
+        })
+    }
+
+    /// Bounded stem-prefixed spatial candidates — hot + sample (+ prefix filter on small stores).
+    /// Never calls `list()` on manifolds above [`LARGE_MANIFOLD_THRESHOLD`].
+    fn spatial_stem_candidates(&self, stem: &str) -> Vec<String> {
+        use std::collections::HashSet;
+
+        let stem_lower = stem.to_lowercase();
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+
+        let mut push = |c: String| {
+            if c.to_lowercase().starts_with(&stem_lower) && seen.insert(c.clone()) {
+                out.push(c);
+            }
+        };
+
+        for c in self.hot_concepts() {
+            push(c);
+        }
+        for c in self.sample_concepts_for_overview(500) {
+            push(c);
+        }
+
+        let large = self.leg_block_count() > Self::LARGE_MANIFOLD_THRESHOLD;
+        if !large && !stem_lower.is_empty() {
+            let (filtered, _, _) = self.list_concepts_filtered(Some(&stem_lower), 80);
+            for c in filtered {
+                push(c);
+            }
+        }
+
+        out
+    }
+
+    fn collect_spatial_items(
+        &self,
+        candidates: &[String],
+        start_line: f32,
+        end_line: f32,
+        k: usize,
+    ) -> Vec<serde_json::Value> {
+        let mut hits: Vec<(String, f32, f32, f32, String)> = candidates
+            .iter()
+            .filter_map(|concept| {
+                let raw = stalk_raw_concept(concept);
+                let block = self
+                    .fetch_block_high_priority(raw)
+                    .or_else(|| self.fetch_block(raw))?;
+                let row_min = block.aabb_min[0];
+                let row_max = block.aabb_max[0];
+                if row_max <= 0.0 {
+                    return None;
+                }
+                if row_max < start_line || row_min > end_line {
+                    return None;
+                }
+                let prov = engram_core::storage::read_provlog(&block);
+                let snippet: String = prov.chars().take(120).collect();
+                Some((concept.clone(), row_min, row_max, block.crs_score, snippet))
+            })
+            .collect();
+
+        hits.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        hits.truncate(k);
+
+        hits.into_iter()
+            .map(|(concept, row_min, row_max, crs, snippet)| {
+                serde_json::json!({
+                    "concept": concept,
+                    "line_start": row_min as i32,
+                    "line_end": row_max as i32,
+                    "crs": crs,
+                    "snippet": snippet,
+                })
+            })
+            .collect()
+    }
+
+    /// Unified pre-edit context: spatial AST items + anchor traces, bounded on large stores.
+    pub fn context_for_edit(
+        &mut self,
+        file_path: &str,
+        line_start: Option<u32>,
+        line_end: Option<u32>,
+        auto_ingest: bool,
+    ) -> serde_json::Value {
+        let path = std::path::Path::new(file_path);
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let start_line = line_start.map(|l| l as f32).unwrap_or(0.0);
+        let end_line = line_end.map(|l| l as f32).unwrap_or(999999.0);
+
+        let mut ingest_performed = false;
+        let mut candidates = if stem.is_empty() {
+            Vec::new()
+        } else {
+            self.spatial_stem_candidates(&stem)
+        };
+
+        let mut spatial_items =
+            self.collect_spatial_items(&candidates, start_line, end_line, 20);
+
+        if spatial_items.is_empty() && auto_ingest && path.is_file() {
+            if let Ok(ingested) = self.force_ingest_ast_file(file_path) {
+                ingest_performed = true;
+                use std::collections::HashSet;
+                let mut seen: HashSet<String> = candidates.iter().cloned().collect();
+                for c in ingested {
+                    if seen.insert(c.clone()) {
+                        candidates.push(c);
+                    }
+                }
+                for c in self.hot_concepts() {
+                    if c.to_lowercase().starts_with(&stem) && seen.insert(c.clone()) {
+                        candidates.push(c);
+                    }
+                }
+                spatial_items =
+                    self.collect_spatial_items(&candidates, start_line, end_line, 20);
+            }
+        }
+
+        let recall_query = if stem.is_empty() {
+            file_path.to_string()
+        } else {
+            let fname = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if fname.is_empty() || fname == stem {
+                stem.clone()
+            } else {
+                format!("{stem} {fname}")
+            }
+        };
+
+        let anchor_hits: Vec<serde_json::Value> = if recall_query.is_empty() {
+            Vec::new()
+        } else {
+            self.recall_scoped(&recall_query, 8, Some("anchors"))
+                .0
+                .iter()
+                .map(Self::memory_summary_json)
+                .collect()
+        };
+
+        let related_goals: Vec<serde_json::Value> = anchor_hits
+            .iter()
+            .filter(|v| {
+                v.get("concept")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.starts_with("goal:") || c == "primary_goal")
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        let related_traces: Vec<serde_json::Value> = anchor_hits
+            .iter()
+            .filter(|v| {
+                v.get("concept")
+                    .and_then(|c| c.as_str())
+                    .map(|c| {
+                        c.starts_with("trace:")
+                            || c.starts_with("ritual:")
+                            || c.starts_with("helper:")
+                            || c.starts_with("design:")
+                    })
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        let mut result = serde_json::json!({
+            "file_path": file_path,
+            "stem": stem,
+            "recall_query": recall_query,
+            "spatial_items": spatial_items,
+            "related_goals": related_goals,
+            "related_traces": related_traces,
+            "related_anchors": anchor_hits,
+            "ingest_performed": ingest_performed,
+            "profile": Self::current_profile_name(),
+            "memory_mode": Self::memory_mode(),
+        });
+
+        if line_start.is_some() || line_end.is_some() {
+            result["line_range"] = serde_json::json!({
+                "start": line_start,
+                "end": line_end,
+            });
+        }
+
+        result
+    }
+
     /// Create a pinned ZEDOS_EPISODIC session summary block.
     /// The merkle_sub_root stores a fingerprint of all concepts touched this session.
     pub fn export_context(&mut self, summary: &str) -> Result<String> {
@@ -2880,7 +3877,13 @@ impl StoreHandle {
         // of 100GB system while verify was called). We now stride-probe CRS on a bounded subset,
         // then load full payloads only for the final sample (typically 30-100 blocks).
 
-        let concepts = self.backend.list();
+        let total_blocks = self.leg_block_count();
+        let large = total_blocks > Self::LARGE_MANIFOLD_THRESHOLD;
+        let concepts: Vec<String> = if large {
+            self.sample_concepts_for_overview(2500)
+        } else {
+            self.backend.list()
+        };
         let target_sample = options.sample_size.unwrap_or(50).max(1);
 
         // Phase 1: CRS gate on a bounded probe set (not the full 150k+ list)
@@ -2889,6 +3892,8 @@ impl StoreHandle {
             let probe_cap = (target_sample * 50).clamp(200, MAX_CRS_PROBE);
             let probe: Vec<String> = if concepts.len() <= probe_cap {
                 concepts
+            } else if large {
+                concepts.into_iter().take(probe_cap).collect()
             } else {
                 let step = concepts.len() / probe_cap;
                 (0..probe_cap)

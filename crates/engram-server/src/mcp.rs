@@ -56,6 +56,7 @@ use crate::store::SharedStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
+use toml;
 use tracing::{debug, error, info, warn};
 
 // ── JSON-RPC 2.0 types ────────────────────────────────────────────────────────
@@ -88,21 +89,53 @@ struct Response {
 static MOMENTUM_LRU: std::sync::LazyLock<std::sync::Mutex<std::collections::VecDeque<(String, String)>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::VecDeque::with_capacity(24)));
 
+/// First non-empty string among `keys` — supports common agent alias parameter names.
+fn args_str<'a>(args: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    for key in keys {
+        if let Some(s) = args.get(*key).and_then(|v| v.as_str()) {
+            let t = s.trim();
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+    }
+    None
+}
+
 fn load_process_sheaf(store: &SharedStore) -> Result<(), String> {
-    // Dynamic prototype (full execution): walk processes/ dir, read *.toml, extract [process] name and [category] via simple string parse.
-    // Registers as first-class process: blocks with gluing data. Supports subvisor, H1, continuity.
-    // Uses only std::fs (no extra deps for prototype). Errors logged but continue.
-    // NOTE: Portable for public GitHub clones — no hardcoded user paths. Default looks for ./processes relative to cwd
-    // (run server from repo root, or set ENGRAM_PROCESSES_DIR env). See docs/GITHUB_MVP_PREP_PLAN.md and processes/.
-    let mut lock = store.lock().unwrap();
+    // Enhanced loader (category-theoretic sheaf): walk processes/ dir (portable via ENGRAM_PROCESSES_DIR or ./processes),
+    // parse *.toml using the toml crate (already a dep; no new deps), extract full [process], [category] (object/morphism/sheaf_role/h1_handler),
+    // [mcp_tools].list, [requires], [produces], [invariants], phase_seed, etc.
+    // Registers first-class "process:engram.*" blocks (ZEDOS_OPERATIONAL, CRS 0.85+).
+    // Creates live RELATION blocks for the sheaf structure: requires, produces, uses_mcp_tool, serves goal/ritual anchors.
+    // This makes the declarative processes/*.toml (per EngramGrok Process Definition & Category-Theoretic Naming Hand-Off)
+    // executable and queryable via search_by_relation / visualize / momentum as first-class sheaf sections.
+    // Supports subvisor H¹, gluing, continuity. Spatial AABB on the toml defs themselves is handled by daemon/force + engram-ast (see extract_toml_structure).
+    // Called at mcp_engram_session_start for dynamic registration at wake-up boundary.
+    // NOTE: Fully portable for public clones (no /home/a paths). See processes/, docs/GITHUB_MVP_PREP_PLAN.md, AGENT_INTEGRATION_GUIDE.md.
+    let t_load = std::time::Instant::now();
+    eprintln!("TIMING[load_process_sheaf]: start (T1 diagnostic for wake hang repro)");
     let base = std::env::var("ENGRAM_PROCESSES_DIR")
         .unwrap_or_else(|_| {
             std::env::current_dir()
                 .map(|p| p.join("processes").to_string_lossy().into_owned())
                 .unwrap_or_else(|_| "processes".to_string())
         });
-    let mut registered = 0usize;
     let subdirs = ["ritual", "harness", "operator", "monitor", "process"];
+    // Hoist all FS + parse off the lock (mirrors incremental_spatial_ingest hygiene fix).
+    // Collect data first; only short lock for encodes/stores/relates/fetches/promotes.
+    // This prevents long fs (read_dir + read_to_string for ~7-10 tomls) from holding Mutex during bg rehydrate, which was queuing/serializing query_pure (user or internal bg call) for minutes.
+    #[derive(Clone)]
+    struct ProcData {
+        key: String,
+        desc: String,
+        requires: Vec<String>,
+        produces: Vec<String>,
+        mcp_tools: Vec<String>,
+        phase_seed: String,
+    }
+    let mut procs: Vec<ProcData> = vec![];
+    let mut registered = 0usize;
     for sub in &subdirs {
         let dir = format!("{}/{}", base, sub);
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -110,36 +143,205 @@ fn load_process_sheaf(store: &SharedStore) -> Result<(), String> {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("toml") {
                     if let Ok(content) = std::fs::read_to_string(&path) {
-                        // Simple parse for our format: find name = "..." 
-                        let raw_name = content.lines().find(|l| l.contains("name = \"agent:engram.")).and_then(|l| {
-                            l.split('"').nth(1).map(|s| s.to_string())
-                        }).unwrap_or_else(|| format!("agent:engram.{}.unknown", sub));
+                        let value: toml::Value = match toml::from_str(&content) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                warn!("Failed to parse toml {}: {}", path.display(), e);
+                                continue;
+                            }
+                        };
+                        let proc = value.get("process").and_then(|v| v.as_table());
+                        let raw_name = proc.and_then(|t| t.get("name")).and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| format!("agent:engram.{}.unknown", sub));
                         let key = if raw_name.starts_with("agent:engram.") {
                             raw_name.replace("agent:engram.", "process:engram.")
                         } else {
                             format!("process:{}", raw_name)
                         };
-                        let obj = content.lines().find(|l| l.contains("object = \"")).and_then(|l| l.split('"').nth(1)).unwrap_or("unknown");
-                        let morph = content.lines().find(|l| l.contains("morphism = \"")).and_then(|l| l.split('"').nth(1)).unwrap_or("unknown");
-                        let role = content.lines().find(|l| l.contains("sheaf_role = \"")).and_then(|l| l.split('"').nth(1)).unwrap_or("");
-                        let desc = format!("{} / {} / {}", obj, morph, role);
-                        let mut b = lock.encode(&format!("Process Sheaf: {} - {}", key, desc));
-                        b.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
-                        b.crs_score = 0.85;
-                        if lock.store(&key, b).is_ok() {
-                            registered += 1;
-                            // Gluing: relate to primary if possible
-                            if let Some(_) = lock.fetch_block_high_priority("goal:engram_mvp_v1") {
-                                let _ = lock.relate(&key, "goal:engram_mvp_v1", "serves");
-                            }
-                        }
+                        let cat = value.get("category").and_then(|v| v.as_table());
+                        let obj = cat.and_then(|t| t.get("object")).and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let morph = cat.and_then(|t| t.get("morphism")).and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let role = cat.and_then(|t| t.get("sheaf_role")).and_then(|v| v.as_str()).unwrap_or("");
+                        let h1 = cat.and_then(|t| t.get("h1_handler")).and_then(|v| v.as_str()).unwrap_or("");
+                        let mcp_tools: Vec<String> = value.get("mcp_tools").and_then(|v| v.get("list")).and_then(|v| v.as_array())
+                            .map(|a| a.iter().filter_map(|vv| vv.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                        let requires: Vec<String> = value.get("requires").and_then(|v| v.get("list")).and_then(|v| v.as_array())
+                            .map(|a| a.iter().filter_map(|vv| vv.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                        let produces: Vec<String> = value.get("produces").and_then(|v| v.get("list")).and_then(|v| v.as_array())
+                            .map(|a| a.iter().filter_map(|vv| vv.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                        let phase_seed = proc.and_then(|t| t.get("phase_seed")).and_then(|v| v.as_str()).unwrap_or("");
+                        let invariants: Vec<String> = value.get("invariants").and_then(|v| v.get("list")).and_then(|v| v.as_array())
+                            .map(|a| a.iter().filter_map(|vv| vv.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                        let desc = format!("{} / {} / {} / h1={} | phase_seed={} | tools={:?} | requires={:?} | produces={:?} | invariants={:?}",
+                            obj, morph, role, h1, phase_seed, mcp_tools, requires, produces, invariants);
+                        procs.push(ProcData { key, desc, requires, produces, mcp_tools, phase_seed: phase_seed.to_string() });
                     }
                 }
             }
         }
     }
-    info!("Process Architecture Sheaf loader: dynamically registered {} processes from processes/ tomls (walked dir, parsed category; portable via ENGRAM_PROCESSES_DIR or cwd). Subvisor draft active for agent governance. See processes/ and design/.", registered);
+    eprintln!("TIMING[load_process_sheaf]: toml parse+fs done (off-lock), collected={}, elapsed_so_far={:.2}s", procs.len(), t_load.elapsed().as_secs_f32());
+    // Now per-proc short lock for the geometric ops (shrinks the critical section from one big hold for all ~7 procs to per-proc; allows user query_pure/list_concepts to interleave during bg rehydrate load. Per subagent review of the Mutex as the 45min killer in bg + user calls. The register/relates/fetches per p are now short, total time similar but no starvation).
+    for p in &procs {
+        let mut lock = store.lock().unwrap();
+        let mut b = lock.encode(&format!("Process Sheaf: {} - {}", p.key, p.desc));
+        b.zedos_tag = engram_core::types::ZEDOS_OPERATIONAL;
+        b.crs_score = 0.87;
+        if lock.store(&p.key, b).is_ok() {
+            registered += 1;
+            for r in &p.requires {
+                let _ = lock.relate(&p.key, r, "requires");
+            }
+            for pr in &p.produces {
+                let _ = lock.relate(&p.key, pr, "produces");
+            }
+            for t in &p.mcp_tools {
+                let _ = lock.relate(&p.key, t, "uses_mcp_tool");
+            }
+            if !p.phase_seed.is_empty() {
+                let _ = lock.relate(&p.key, &format!("phase_seed:{}", p.phase_seed), "has_phase_seed");
+            }
+            if lock.fetch_block_high_priority("goal:1780419540_prepare-and-polish-current-engram-mvp-for-public").is_some() {
+                let _ = lock.relate(&p.key, "goal:1780419540_prepare-and-polish-current-engram-mvp-for-public", "serves");
+            }
+            let _ = lock.relate(&p.key, "ritual:wake_up_anchor", "declared_in");
+            let _ = lock.relate(&p.key, "ritual:engram.working-memory", "enforced_by");
+        }
+    }
+    eprintln!("TIMING[load_process_sheaf]: register+relates done (per-proc short locks), registered={}, elapsed_so_far={:.2}s", registered, t_load.elapsed().as_secs_f32());
+    // Pre-load promotes (short separate scope).
+    {
+        let t_pre = std::time::Instant::now();
+        let mut hlock = store.lock().unwrap();
+        for sub in &subdirs {
+            let pkey = format!("process:engram.{}.wake-up", sub);
+            let _ = hlock.promote_tile_to_high_priority(&pkey);
+        }
+        let _ = hlock.promote_tile_to_high_priority("process:engram.ritual.wake-up");
+        let _ = hlock.promote_tile_to_high_priority("process:engram.ritual.nrem-consolidation");
+        let _ = hlock.promote_tile_to_high_priority("process:engram.monitor.subvisor");
+        let _ = hlock.promote_tile_to_high_priority("ritual:wake_up_anchor");
+        let _ = hlock.promote_tile_to_high_priority("ritual:engram.working-memory");
+        let _ = hlock.promote_tile_to_high_priority("ritual:session_end_anchor");
+        let _ = hlock.promote_tile_to_high_priority("mcp_engram_get_continuation_bundle");
+        let _ = hlock.promote_tile_to_high_priority("mcp_engram_query_pure");
+        eprintln!("TIMING[load_process_sheaf]: preload promotes done, elapsed_pre={:.2}s", t_pre.elapsed().as_secs_f32());
+    }
+    info!("Process Architecture Sheaf loader: dynamically registered {} processes from processes/ tomls (proper toml parse of category + lists; live RELATION gluing for sheaf; portable via ENGRAM_PROCESSES_DIR or cwd). Subvisor H1 + continuity supported. Pre-loaded core processes + wake anchors to hot cache. See processes/ and the EngramGrok Process Definition doc.", registered);
+    eprintln!("TIMING[load_process_sheaf]: COMPLETE total={:.2}s", t_load.elapsed().as_secs_f32());
     Ok(())
+}
+
+/// Delta-only spatial ingest shared by `mcp_engram_incremental_spatial_ingest` and inline `session_start`.
+fn run_incremental_spatial_ingest(
+    store: &SharedStore,
+    max_files: usize,
+    force_all: bool,
+    explicit_paths: Vec<String>,
+) -> serde_json::Value {
+    let t_inc = std::time::Instant::now();
+    eprintln!("TIMING[incremental_spatial]: start (T1 diagnostic for hang repro)");
+    let last_end_ts: u64 = {
+        let lock = store.lock().unwrap();
+        let mut ts: u64 = 0;
+        for (c, t) in lock.access_index.recent(100) {
+            if c.starts_with("session_end_") {
+                ts = t;
+                break;
+            }
+        }
+        ts
+    };
+    let mut paths_to_check: Vec<String> = explicit_paths.clone();
+    if paths_to_check.is_empty() && !force_all && last_end_ts > 0 {
+        let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let candidates = [
+            "crates/engram-server/src",
+            "crates/engram-gpu/src",
+            "crates/engram-core/src",
+            "processes",
+            ".grok/skills",
+            "docs",
+        ];
+        for sub in &candidates {
+            let dir = base.join(sub);
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_file() {
+                        if let Ok(meta) = p.metadata() {
+                            if let Ok(mtime) = meta.modified() {
+                                let mts = mtime
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs();
+                                if mts > last_end_ts {
+                                    paths_to_check.push(p.to_string_lossy().into_owned());
+                                    if paths_to_check.len() >= max_files {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if paths_to_check.len() >= max_files {
+                break;
+            }
+        }
+    }
+    eprintln!(
+        "TIMING[incremental_spatial]: delta walk done, paths_to_check={} last_end_ts={} max={} elapsed={:.2}s (first_paths={:?}) (walk off-lock)",
+        paths_to_check.len(),
+        last_end_ts,
+        max_files,
+        t_inc.elapsed().as_secs_f32(),
+        paths_to_check.iter().take(3).collect::<Vec<_>>()
+    );
+    if force_all || last_end_ts == 0 || paths_to_check.is_empty() {
+        paths_to_check = if !explicit_paths.is_empty() {
+            explicit_paths.clone()
+        } else {
+            vec![
+                "crates/engram-server/src/mcp.rs".into(),
+                "processes/ritual/wake-up.toml".into(),
+            ]
+        };
+    }
+    let mut ingested_total = 0usize;
+    let mut details = vec![];
+    for p in &paths_to_check {
+        let t_f = std::time::Instant::now();
+        let items_res = {
+            let mut lock = store.lock().unwrap();
+            lock.force_ingest_ast_file(p)
+        };
+        if let Ok(items) = items_res {
+            ingested_total += items.len();
+            details.push(format!("{}: {} items", p, items.len()));
+            eprintln!(
+                "TIMING[incremental_spatial]: force_ingest {} -> {} items in {:.2}s",
+                p,
+                items.len(),
+                t_f.elapsed().as_secs_f32()
+            );
+        }
+    }
+    eprintln!(
+        "TIMING[incremental_spatial]: COMPLETE files={} ingested_total={} total={:.2}s",
+        paths_to_check.len(),
+        ingested_total,
+        t_inc.elapsed().as_secs_f32()
+    );
+    serde_json::json!({
+        "files_checked": paths_to_check.len(),
+        "ingested_total": ingested_total,
+        "paths": paths_to_check,
+        "details": details,
+        "elapsed_s": t_inc.elapsed().as_secs_f32(),
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -236,6 +438,10 @@ fn tool_list() -> Value {
                         "time_decay": {
                             "type": "number",
                             "description": "TRIGGER: Use this ONLY when the user asks a time-relative question like 'What did we work on last week?' or 'Find the old version of this file'. It applies a backwards unitary operator offset to traverse semantic age. Positive number = days in the past (e.g. 7.0 for a week ago)."
+                        },
+                        "scope": {
+                            "type": "string",
+                            "description": "Recall tier: 'anchors' (goal/trace/scar/ritual/helper/tile + primary_goal — default in lean mode), 'hot' (hot+recent sample), 'all' (full manifold/BVH). Omit to follow ENGRAM_MEMORY_MODE (lean→anchors, deep→all)."
                         }
                     },
                     "required": ["query"]
@@ -323,7 +529,15 @@ fn tool_list() -> Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "intent": { "type": "string", "description": "Agent's primary intent or goal for this session" }
+                        "intent": { "type": "string", "description": "Agent's primary intent or goal for this session" },
+                        "include_spatial": {
+                            "type": "boolean",
+                            "description": "If true, run incremental spatial ingest inline in the wake packet (default false)"
+                        },
+                        "spatial_max_files": {
+                            "type": "integer",
+                            "description": "Max files for inline incremental spatial ingest when include_spatial=true (default 5)"
+                        }
                     },
                     "required": ["intent"]
                 }
@@ -351,10 +565,88 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_get_continuation_bundle",
-                "description": "Return the live continuation bundle (primary goal, active tiles/helpers, handoff lineage) without starting a session. Use at TUI 63-65% before context compression to know exactly what to recall after the boundary.",
+                "description": "Return the live continuation bundle (primary goal, active tiles/helpers, handoff lineage) without starting a session. Use at TUI 63-65% before context compression to know exactly what to recall after the boundary. Wake-up optimization: now the VERY FIRST step in lean ritual for instant hot/legominism rehydration from last terminal + promoted artifacts.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {}
+                }
+            },
+            {
+                "name": "mcp_engram_query_pure",
+                "description": "Pure geometric K-NN discovery (no keyword/file-path hybrid fallback, no p-blend). Turns natural language intent -> phase vector (q) -> cosine K-NN over high-priority/hot blocks (or BVH). Used for fast anchor discovery in optimized wake-up (replaces broad list_concepts + search_by_relation for ritual: / trace: / goal: etc). Intent only; returns ranked concepts + scores + CRS. Fast path for hot ritual rehydrate.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "intent": {
+                            "type": "string",
+                            "description": "Natural language intent text to encode as pure phase vector for geometric search"
+                        },
+                        "k": {
+                            "type": "integer",
+                            "description": "Max results (default 6, max 20)"
+                        }
+                    },
+                    "required": ["intent"]
+                }
+            },
+            {
+                "name": "mcp_engram_incremental_spatial_ingest",
+                "description": "Item 1.5 optimization: incremental force ingest of only files changed since last session_end (uses fs mtime + stored AABB ingest timestamps + watcher delta events). Defaults to 5-10 files on cold wake (vs previous full 81-item force). Falls back to force if no last_end or explicit paths. Respects engramignore. Updates item1.5 state. Called from lean wake-up contract.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "max_files": {
+                            "type": "integer",
+                            "description": "Max files to consider for delta (default 10)"
+                        },
+                        "paths": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional explicit paths to check/ingest (bypass auto delta)"
+                        },
+                        "force_all": {
+                            "type": "boolean",
+                            "description": "If true, behave like full force_spatial_ingest (for bootstrap)"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "mcp_engram_promote_hot_batch",
+                "description": "Batch promote multiple concepts to hot path (LegView + backend hot cache + hot_set). Reduces round-trips vs repeated single promote_hot. Used in optimized wake-up after rehydrate to batch hot anchors/tiles/traces. Each is promoted individually but in one call.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "concepts": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "List of concept names to promote to high-priority hot path"
+                        }
+                    },
+                    "required": ["concepts"]
+                }
+            },
+            {
+                "name": "mcp_engram_relate_batch",
+                "description": "Batch create multiple directional relations (VSA OP_BIND edges as ZEDOS_RELATION). Reduces round-trips for gluing many at once (e.g. process requires, handoff lineage). Used in loader and lean wake batching.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "relations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "concept_a": { "type": "string" },
+                                    "concept_b": { "type": "string" },
+                                    "label": { "type": "string" }
+                                },
+                                "required": ["concept_a", "concept_b", "label"]
+                            },
+                            "description": "List of {concept_a, concept_b, label} to relate a->b with label"
+                        }
+                    },
+                    "required": ["relations"]
                 }
             },
             {
@@ -800,6 +1092,33 @@ fn tool_list() -> Value {
                 }
             },
             {
+                "name": "mcp_engram_context_for_edit",
+                "description": "Unified pre-edit context (Agent Memory MVP A4). Returns structured JSON with spatial AST items for the target file (bounded on large stores — no full list scan), related anchor traces (goals/traces/rituals), and whether a single-file ingest was performed. Prefer this over separate context_for_file + recall_in_file calls.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Absolute or relative file path to edit"
+                        },
+                        "line_start": {
+                            "type": "integer",
+                            "description": "Optional start line for spatial AABB filter (1-based)"
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "description": "Optional end line for spatial AABB filter (1-based)"
+                        },
+                        "auto_ingest": {
+                            "type": "boolean",
+                            "description": "If true (default), force-ingest this single file when no spatial items exist",
+                            "default": true
+                        }
+                    },
+                    "required": ["path"]
+                }
+            },
+            {
                 "name": "mcp_engram_remember_solution",
                 "description": "Store a crystallized error→solution pair as a ZEDOS_PRAXIS block, auto-pinned to CRS=1.0. Solutions never decay.",
                 "inputSchema": {
@@ -881,7 +1200,30 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_get_backend_readiness",
-                "description": "Item 1.5: Returns whether the full heavy backend (real store + OptiX/BVH + ki_hijacker etc.) has completed initialization. Useful after restarts to know when the system has moved past the fast MCP placeholder phase and heavy work is done. Returns a simple JSON object with `fully_initialized` boolean.",
+                "description": "Returns backend readiness: fully_initialized, bvh_ready, recall_mode (sampled_bounded | full_bvh_gpu | cpu_linear), backend_kind, gpu_accel_available, leg_block_count, profile (agent|deep|ui|dev|unknown), memory_mode (lean|deep), defer flags. Use after wake to see whether recall is bounded or full GPU/BVH.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            },
+            {
+                "name": "mcp_engram_set_memory_mode",
+                "description": "Switch agent memory mode: lean (default, bounded recall on large stores) or deep (auto-spawns full BVH build for quality recall). Takes effect immediately for this process.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["lean", "deep"],
+                            "description": "lean = fast/low RAM; deep = full GPU/BVH recall on large manifolds"
+                        }
+                    },
+                    "required": ["mode"]
+                }
+            },
+            {
+                "name": "mcp_engram_rebuild_bvh",
+                "description": "On-demand BVH build for large manifolds when ENGRAM_DEFER_BVH=1. Spawns a background thread; poll get_backend_readiness until bvh_ready=true, then recall uses full_bvh_gpu. Expect several minutes + RAM spike on 100k+ blocks — run only when you need quality recall.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {}
@@ -982,7 +1324,7 @@ fn tool_list() -> Value {
             },
             {
                 "name": "mcp_engram_search_by_relation",
-                "description": "Traverse the knowledge graph. Find all concepts related to a seed concept, filtered by optional label and direction.",
+                "description": "Traverse the knowledge graph. Find concepts related to a seed, filtered by optional label and direction. IMPORTANT FOR SCOPING (avoids data overload on high-relation nodes like primary goals with 100+ 'serves' from history): use label (e.g. 'serves'), direction, and k (limit) to keep results small. Start narrow; drill down with visualize(depth) or context/recall on results if larger context needed. See wake-up skill for process.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -999,6 +1341,11 @@ fn tool_list() -> Value {
                             "description": "'from' (A→?), 'to' (?→A), or 'both' (default: 'from')",
                             "enum": ["from", "to", "both"],
                             "default": "from"
+                        },
+                        "k": {
+                            "type": "integer",
+                            "description": "Max results to return (default 50, max 200). Use to scope and prevent huge outputs on central concepts.",
+                            "default": 50
                         }
                     },
                     "required": ["concept"]
@@ -1316,8 +1663,9 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
             // "fully initialized" flag on this particular handle is still false.
             // This lets session_start and other wake-up tools work reliably
             // without waiting for a full hot-swap implementation.
-            let concept_count = lock.list().len();
-            let manifold_looks_ready = concept_count > 1000;
+            // 2026-06 fix: use hot_concepts().len() (small, from preload) instead of full list().len() to avoid slow scan in guard for lean tools.
+            let concept_count = lock.hot_concepts().len();
+            let manifold_looks_ready = concept_count > 10;
 
             if !manifold_looks_ready {
                 let allowed_during_warmup = matches!(
@@ -1330,12 +1678,19 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                         | "mcp_engram_list_namespaces"
                         | "mcp_engram_session_start"
                         | "mcp_engram_get_backend_readiness"
+                        | "mcp_engram_set_memory_mode"
+                        | "mcp_engram_rebuild_bvh"
                         | "mcp_engram_get_continuation_bundle"
+                        | "mcp_engram_query_pure"
+                        | "mcp_engram_incremental_spatial_ingest"
+                        | "mcp_engram_promote_hot_batch"
+                        | "mcp_engram_relate_batch"
                         | "mcp_engram_goal_create"
                         | "mcp_engram_goal_set_primary"
                         | "mcp_engram_goal_list"
                         | "mcp_engram_goal_status"
                         | "mcp_engram_read_concept"
+                        | "mcp_engram_context_for_edit"
                         | "mcp_engram_session_end"
                 );
 
@@ -1359,12 +1714,22 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
         // Hot path upgrade: system state is core infrastructure visibility.
         return if let Some(block) = lock.fetch_block_high_priority("__system_state__") {
             let crs = block.crs_score;
-            let pinned_count = lock.list().iter().filter(|n| {
-                let raw = n.split_once("::").map_or(n.as_str(), |(_, r)| r);
-                // Tier 2 broaden: use high_priority even for pinned count (falls back safely; pinned concepts are promotable candidates)
-                lock.fetch_block_high_priority(raw).map_or(false, |b| b.crs_score >= 1.0)
-            }).count();
-            let total = lock.list().len();
+            let total = lock.leg_block_count();
+            let pinned_count = if total > crate::store::StoreHandle::LARGE_MANIFOLD_THRESHOLD {
+                lock.sample_concepts_for_overview(200)
+                    .iter()
+                    .filter(|n| {
+                        let raw = n.split_once("::").map_or(n.as_str(), |(_, r)| r);
+                        lock.fetch_block_high_priority(raw)
+                            .map_or(false, |b| b.crs_score >= 1.0)
+                    })
+                    .count()
+            } else {
+                lock.list().iter().filter(|n| {
+                    let raw = n.split_once("::").map_or(n.as_str(), |(_, r)| r);
+                    lock.fetch_block_high_priority(raw).map_or(false, |b| b.crs_score >= 1.0)
+                }).count()
+            };
             let namespace = lock.active_stalk_name();
             let provlog = engram_core::storage::read_provlog(&block);
             json!({ "content": [{ "type": "text", "text": format!(
@@ -1461,6 +1826,10 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
             let k = args["k"].as_u64().unwrap_or(5).min(20) as usize;
             let zedos_filter = args["zedos_filter"].as_str().map(|s| s.trim().to_lowercase());
             let time_decay = args["time_decay"].as_f64().map(|d| d as f32);
+            let scope = args["scope"]
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
 
             // Phase 5: resolve optional ZEDOS tag filter
             let tag_filter: Option<u8> = zedos_filter.as_deref().and_then(|f| match f {
@@ -1480,15 +1849,19 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                 });
             }
 
-            let mut results = {
+            let (mut results, effective_scope, recall_mode) = {
                 let mut s = store.lock().unwrap();
+                let recall_mode = s.recall_mode().to_string();
                 if let Some(age_days) = time_decay {
                     // Temporal phase path: encode, rotate query vector, search by vector
                     let mut block = s.encode(&query);
                     engram_core::ops::apply_temporal_phase(&mut block.q, age_days);
-                    s.query(&block.q, k * 3)
+                    let results = s.query(&block.q, k * 3);
+                    (results, "all".to_string(), recall_mode)
                 } else {
-                    s.recall(&query, k * 3) // over-fetch before filter
+                    let (results, effective_scope) =
+                        s.recall_scoped(&query, k * 3, scope.as_deref());
+                    (results, effective_scope.to_string(), recall_mode)
                 }
             };
 
@@ -1498,15 +1871,26 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
             }
             results.truncate(k);
 
+            let memory_mode = crate::store::StoreHandle::memory_mode();
+            let meta = format!(
+                "[recall_mode: {} | scope: {} | memory_mode: {}]",
+                recall_mode, effective_scope, memory_mode
+            );
+
             if results.is_empty() {
+                let lean_hint = if memory_mode == "lean" {
+                    "\n\nHint: lean mode defaults to scope=anchors. Try scope=all or mcp_engram_set_memory_mode(mode=\"deep\") for full-manifold search."
+                } else {
+                    ""
+                };
                 return json!({
-                    "content": [{ "type": "text", "text": "No memories found." }]
+                    "content": [{ "type": "text", "text": format!("No memories found. {}\n{}", meta, lean_hint.trim()) }]
                 });
             }
 
             let time_note = time_decay.map(|d| format!(" [temporal window: ~{:.0}d ago]", d))
                 .unwrap_or_default();
-            let mut output = format!("Found {} memories{}:\n\n", results.len(), time_note);
+            let mut output = format!("{}\nFound {} memories{}:\n\n", meta, results.len(), time_note);
             for (i, mem) in results.iter().enumerate() {
                 let tag_name = match mem.zedos_tag {
                     0xD  => "DECLARATIVE",
@@ -1626,11 +2010,195 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                 "content": [{
                     "type": "text",
                     "text": format!(
-                        "CONTINUATION BUNDLE (live)\n\n{}\n\nNext: recall each `concept` in active_artifacts before broad momentum.",
+                        "CONTINUATION BUNDLE (live)\n\n{}\n\nNext: recall each `concept` in active_artifacts before broad momentum. (Lean wake-up primary path: hot/legominism + last terminal for fast post-compression rehydrate.)",
                         text
                     )
                 }]
             })
+        }
+
+        "mcp_engram_query_pure" => {
+            // Pure geometric: intent -> encode q (with geo frame) -> cosine K-NN on q only (no p-momentum blend, no keyword/file fallback).
+            // For optimized wake-up anchor discovery (ritual:, trace:, goal: etc). Uses high_priority fetch + probe for large manifolds.
+            // Complements query_with_momentum (which does 80/20); this is strict phase geometry for hot paths.
+            // 2026-06 fix: use hot_concepts() only (small set from preload/promote) instead of full list() to avoid prohibitive scan on large stalk.
+            // 2026-06 follow-up (lock hygiene for lean): short scope for encode + hot_concepts clone (release lock before probe loop);
+            // per-item *short* lock only for fetch_block_high_priority. Cosine math and collect happen off-lock entirely.
+            // Prevents client query_pure from holding store Mutex for full hot.len() duration while bg rehydrate/inc/promote or other procs run.
+            let t_q = std::time::Instant::now();
+            eprintln!("TIMING[query_pure]: start (T1 diagnostic)");
+            let intent = args.get("intent").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(6).min(20) as usize;
+            if intent.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: intent is required." }], "isError": true });
+            }
+            // Compute effective_q (encode + geo) once, before the fast/normal split.
+            // Fast path for ritual anchors will use it without hot clone.
+            let (effective_q, all_concepts) = {
+                let t_enc = std::time::Instant::now();
+                let mut lock = store.lock().unwrap();
+                let query_block = lock.encode(&intent);
+                let effective_q = if let Some(geo) = lock.current_geosphere_state() {
+                    geo.apply_current_frame(&query_block.q)
+                } else {
+                    engram_core::ops::normalize(&query_block.q)
+                };
+                let all_concepts = lock.hot_concepts();
+                let enc_time = t_enc.elapsed().as_secs_f32();
+                if enc_time > 0.1 {
+                    eprintln!("TIMING[query_pure]: encode+hot took {:.3}s len_all={}", enc_time, all_concepts.len());
+                }
+                (effective_q, all_concepts)
+            };
+            eprintln!("TIMING[query_pure]: encode+hot_cloned len_all={} (lock released for probe; using hot_set only)", all_concepts.len());
+            // 2026-06 fast direct path for lean wake ritual anchor discovery (the primary use per wake-up.toml and "fast anchor discovery" in tool desc).
+            // Bypasses hot_set clone + sampling + large probe entirely for ritual/process:engram.ritual intents.
+            // Direct fetch of the small fixed set of known anchors (registered by load + pre-promoted).
+            // Always O(1) small ( ~8-10 fetches), no dependence on hot_set size/growth, no long bg pure, sub-second even on populated/large stalk.
+            // The normal hot probe (capped 64) remains for general pure queries.
+            if intent.contains("ritual") || intent.contains("process:engram.ritual") || intent.contains("wake-up") || intent.contains("anchor") || intent.contains("working-memory") {
+                eprintln!("TIMING[query_pure]: FAST_ANCHOR entered for intent containing ritual anchor keywords");
+                let t_fast = std::time::Instant::now();
+                let anchor_names: Vec<&str> = vec![
+                    "process:engram.ritual.wake-up",
+                    "ritual:wake_up_anchor",
+                    "ritual:engram.working-memory",
+                    "ritual:session_end_anchor",
+                    "process:engram.ritual.nrem-consolidation",
+                    "process:engram.monitor.subvisor",
+                    "goal:1780419540_prepare-and-polish-current-engram-mvp-for-public",
+                    "mcp_engram_get_continuation_bundle",
+                    "mcp_engram_query_pure",
+                ];
+                let mut scored: Vec<(String, f32, f32)> = vec![];
+                for c in &anchor_names {
+                    eprintln!("TIMING[query_pure]: FAST_ANCHOR fetching {}", c);
+                    let t_f = std::time::Instant::now();
+                    let block = {
+                        let lock = store.lock().unwrap();
+                        lock.fetch_block_high_priority(c)
+                    };
+                    let ftime = t_f.elapsed().as_secs_f32();
+                    eprintln!("TIMING[query_pure]: FAST_ANCHOR fetched {} in {:.3}s", c, ftime);
+                    if let Some(block) = block {
+                        let q_score = engram_core::ops::cosine_similarity(&effective_q, &block.q);
+                        scored.push((c.to_string(), q_score, block.crs_score));
+                    }
+                }
+                scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                scored.truncate(k);
+                let mut out = format!("Pure geometric results for '{}':\n\n", intent);
+                for (concept, score, crs) in &scored {
+                    out.push_str(&format!("  · {} (q_cosine:{:.4}, crs:{:.2})\n", concept, score, crs));
+                }
+                if scored.is_empty() { out.push_str("No matches (pure q K-NN)."); }
+                eprintln!("TIMING[query_pure]: FAST_ANCHOR path used (direct {} anchors, no hot probe) total={:.2}s", anchor_names.len(), t_fast.elapsed().as_secs_f32());
+                eprintln!("TIMING[query_pure]: COMPLETE scored={} total={:.2}s", scored.len(), t_q.elapsed().as_secs_f32());
+                return json!({ "content": [{ "type": "text", "text": out }] });
+            }
+            // normal hot probe path for other pure queries
+            const MAX_HOT_PURE_PROBE: usize = 64;
+            let probe_cap = (k * 4).clamp(16, MAX_HOT_PURE_PROBE);
+            let probe: Vec<String> = if all_concepts.len() <= probe_cap {
+                all_concepts
+            } else {
+                let step = all_concepts.len() / probe_cap;
+                (0..probe_cap).filter_map(|i| all_concepts.get(i * step).cloned()).collect()
+            };
+            eprintln!("TIMING[query_pure]: probe built size={} cap={} (aggressive hot cap for fast anchor pure)", probe.len(), probe_cap);
+            let mut scored: Vec<(String, f32, f32)> = vec![];
+            for (i, concept) in probe.iter().enumerate() {
+                let t_f = std::time::Instant::now();
+                let block = {
+                    let lock = store.lock().unwrap();
+                    lock.fetch_block_high_priority(concept)
+                };
+                let fetch_ms = t_f.elapsed().as_secs_f32() * 1000.0;
+                if i < 5 || fetch_ms > 50.0 {
+                    eprintln!("TIMING[query_pure]: fetch[{}] {} {:.1}ms", i, concept, fetch_ms);
+                }
+                if let Some(block) = block {
+                    let q_score = engram_core::ops::cosine_similarity(&effective_q, &block.q);
+                    scored.push((concept.clone(), q_score, block.crs_score));
+                }
+            }
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            scored.truncate(k);
+            let mut out = format!("Pure geometric results for '{}':\n\n", intent);
+            for (concept, score, crs) in &scored {
+                out.push_str(&format!("  · {} (q_cosine:{:.4}, crs:{:.2})\n", concept, score, crs));
+            }
+            if scored.is_empty() { out.push_str("No matches (pure q K-NN)."); }
+            eprintln!("TIMING[query_pure]: COMPLETE scored={} total={:.2}s", scored.len(), t_q.elapsed().as_secs_f32());
+            json!({ "content": [{ "type": "text", "text": out }] })
+        }
+
+        "mcp_engram_incremental_spatial_ingest" => {
+            let max_files = args.get("max_files").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+            let force_all = args.get("force_all").and_then(|v| v.as_bool()).unwrap_or(false);
+            let explicit_paths: Vec<String> = args
+                .get("paths")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|vv| vv.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let spatial = run_incremental_spatial_ingest(store, max_files, force_all, explicit_paths);
+            let files_checked = spatial["files_checked"].as_u64().unwrap_or(0);
+            let ingested_total = spatial["ingested_total"].as_u64().unwrap_or(0);
+            let details = spatial["details"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!(
+                        "Incremental spatial ingest: {} files checked, {} AST items. (lean wake delta path; see item1.5 state for details; {} ingested)",
+                        files_checked,
+                        ingested_total,
+                        details
+                    )
+                }]
+            })
+        }
+
+        "mcp_engram_promote_hot_batch" => {
+            let concepts: Vec<String> = args.get("concepts").and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|vv| vv.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+            if concepts.is_empty() {
+                return json!({ "content": [{ "type": "text", "text": "Error: concepts array required." }], "isError": true });
+            }
+            let lock = store.lock().unwrap();
+            let mut promoted = 0;
+            for c in &concepts {
+                if lock.promote_tile_to_high_priority(c).is_some() || lock.is_hot(c) {
+                    promoted += 1;
+                }
+            }
+            json!({ "content": [{ "type": "text", "text": format!("✓ Batch promoted {} / {} concepts to hot path.", promoted, concepts.len()) }] })
+        }
+
+        "mcp_engram_relate_batch" => {
+            let rels = args.get("relations").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let mut lock = store.lock().unwrap();
+            let mut created = 0usize;
+            for r in rels {
+                let a = r.get("concept_a").and_then(|x| x.as_str()).unwrap_or("");
+                let b = r.get("concept_b").and_then(|x| x.as_str()).unwrap_or("");
+                let l = r.get("label").and_then(|x| x.as_str()).unwrap_or("");
+                if !a.is_empty() && !b.is_empty() && !l.is_empty() {
+                    if lock.relate(a, b, l).is_ok() { created += 1; }
+                }
+            }
+            json!({ "content": [{ "type": "text", "text": format!("✓ Batch relate: {} relations created.", created) }] })
         }
 
         "mcp_engram_promote_hot" => {
@@ -1670,8 +2238,14 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                 let p = path.clone();
                 tokio::spawn(async move { d.set_watch_workspace(&p).await; });
             }
+            let defer_ingest = std::env::var("ENGRAM_DEFER_WATCH_INGEST").as_deref() == Ok("1");
+            let ingest_note = if defer_ingest {
+                " (OS watcher deferred — path recorded only; use incremental_spatial_ingest for deltas)"
+            } else {
+                " (recursive OS watch + passive initial AST ingest running)"
+            };
             json!({
-                "content": [{ "type": "text", "text": format!("✓ Agentic Daemon now recursively watching: {}", path) }]
+                "content": [{ "type": "text", "text": format!("✓ Agentic Daemon now recursively watching: {}{}", path, ingest_note) }]
             })
         }
 
@@ -1751,232 +2325,83 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
             if intent.is_empty() {
                 return json!({ "content": [{ "type": "text", "text": "Error: intent required." }], "isError": true });
             }
+            let include_spatial = args
+                .get("include_spatial")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let spatial_max_files = args
+                .get("spatial_max_files")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5) as usize;
 
-            // Call loader before locking the store (fn will lock internally for registration).
-            // This ensures process sheaf (tomls) is loaded at session start boundary.
+            let t_start = std::time::Instant::now();
+
+            // Light sync work (fast): boundary block + cache + ki mark.
+            let session_key = {
+                let mut lock = store.lock().unwrap();
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let key = format!("session_start_{}", timestamp);
+                let mut session_block = lock.encode(&format!("SESSION_START intent: {}", intent));
+                session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
+                session_block.crs_score = 1.0;
+                let _ = lock.store(&key, session_block);
+                lock.invalidate_continuation_bundle_cache();
+                lock.mark_ki_rebake_needed();
+                key
+            };
+
+            // Registration now (light): tomls -> process:* blocks + relations.
             let _ = load_process_sheaf(store);
 
-            let mut lock = store.lock().unwrap();
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-            let key = format!("session_start_{}", timestamp);
+            let (continuation, readiness) = {
+                let mut lock = store.lock().unwrap();
+                lock.warm_wake_anchors();
+                let continuation = lock.build_continuation_bundle();
+                let readiness = lock.backend_readiness();
+                (continuation, readiness)
+            };
 
-            // ── Store session start episodic block ───────────────────────────
-            let mut session_block = lock.encode(&format!("SESSION_START intent: {}", intent));
-            session_block.zedos_tag = engram_core::types::ZEDOS_EPISODIC;
-            session_block.crs_score = 1.0;
-            let _ = lock.store(&key, session_block);
-            lock.invalidate_continuation_bundle_cache();
-            lock.mark_ki_rebake_needed();
-
-            // ── Manifold stats (fast index-only, no full block scan) ─────────
-            let total_memories = lock.list().len();
-
-            // ── Section 1: Named genesis blocks (O(1) direct lookup each) ────
-            // FHRR encoding is BLAKE3 lexical, NOT neural semantic. Genesis blocks
-            // MUST be loaded by exact concept name — do NOT use recall() here.
-            const GENESIS_CONCEPTS: &[&str] = &[
-                "mission_stewardship",
-                "project_identity",
-                "why_memory_system_exists__agent_perspective",
-                "three_part_work_plan_2026_04",
-                "nvsa_vs_antigravity_memory_gap",
-            ];
-            let mut genesis_section = String::new();
-            let mut genesis_loaded = 0usize;
-            for &name in GENESIS_CONCEPTS {
-                // Hot path: genesis blocks are foundational continuity artifacts.
-                // Prefer high_priority (LegView + to_leg3_pointer zero-copy + Cuda cache) for post-compression re-hydration speed.
-                if let Some(block) = lock.fetch_block_high_priority(name) {
-                    let text = engram_core::storage::read_provlog(&block);
-                    if !text.trim().is_empty() {
-                        genesis_section.push_str(&format!(
-                            "### `{}`\n{}\n\n", name, text.trim()
-                        ));
-                        lock.access_index.touch(name);
-                        genesis_loaded += 1;
-                    }
-                }
-            }
-            if genesis_section.is_empty() {
-                genesis_section.push_str(
-                    "_No genesis blocks found. Run `mcp_engram_genesis reseed` or store \
-                     `mission_stewardship` and `project_identity` blocks._\n"
-                );
-            }
-
-            // ── Section 2: Recent session history (from access index) ─────────
-            let recent_all = lock.access_index.recent(40);
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs()).unwrap_or(0);
-            let mut session_section = String::new();
-            let mut session_count = 0usize;
-            for (concept, ts) in &recent_all {
-                let is_boundary = concept.starts_with("session_end_")
-                    || concept.starts_with("session_start_");
-                if is_boundary && session_count < 4 {
-                    // Hot path: session_start + session_end are continuation anchors.
-                    if let Some(block) = lock.fetch_block_high_priority(concept) {
-                        let text = engram_core::storage::read_provlog(&block);
-                        let age_secs = now_secs.saturating_sub(*ts);
-                        let age = if age_secs < 3600 {
-                            format!("{}m ago", age_secs / 60)
-                        } else if age_secs < 86400 {
-                            format!("{}h ago", age_secs / 3600)
-                        } else {
-                            format!("{}d ago", age_secs / 86400)
-                        };
-                        // Trim to ~800 chars per session note to stay within context budget
-                        let preview: String = text.chars().take(800).collect();
-                        let preview = if text.len() > 800 {
-                            format!("{}…", preview)
-                        } else {
-                            preview
-                        };
-                        session_section.push_str(&format!(
-                            "### `{}` ({})\n{}\n\n", concept, age, preview.trim()
-                        ));
-                        session_count += 1;
-                    }
-                }
-            }
-            if session_section.is_empty() {
-                session_section.push_str(
-                    "_No previous session records found. This may be the first session.\
-                     Call `mcp_engram_session_end` with a summary at the end of this session._\n"
-                );
-            }
-
-            // ── Continuation bundle (active tiles, goal, handoff lineage) ─────
-            let bundle = lock.build_continuation_bundle();
-            let mut continuation_section = String::new();
-            if let Some(pg) = bundle.get("primary_goal").and_then(|v| v.as_str()) {
-                continuation_section.push_str(&format!("**Primary goal:** `{}`\n\n", pg));
+            let spatial = if include_spatial {
+                Some(run_incremental_spatial_ingest(
+                    store,
+                    spatial_max_files,
+                    false,
+                    vec![],
+                ))
             } else {
-                continuation_section.push_str("_No primary goal resolved from `primary_goal` marker._\n\n");
+                None
+            };
+
+            // Light non-blocking promotes (hot anchors for rehydrate; no internal handle_tool_call).
+            let store_for_bg = store.clone();
+            std::thread::spawn(move || {
+                let mut hlock = store_for_bg.lock().unwrap();
+                let _ = hlock.promote_tile_to_high_priority("ritual:wake_up_anchor");
+                let _ = hlock.promote_tile_to_high_priority("ritual:engram.working-memory");
+                let _ = hlock.promote_tile_to_high_priority("process:engram.ritual.wake-up");
+            });
+
+            let elapsed = t_start.elapsed().as_secs_f32();
+            let mut wake_packet = serde_json::json!({
+                "status": "started",
+                "elapsed_s": elapsed,
+                "session_key": session_key,
+                "readiness": readiness,
+                "continuation": continuation,
+            });
+            if let Some(spatial_val) = spatial {
+                wake_packet["spatial"] = spatial_val;
             }
-            if bundle
-                .get("hydration_cache_present")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
-                continuation_section
-                    .push_str("**Hydration cache:** present (`helper:session_hydration_cache`)\n\n");
-            }
-            if let Some(artifacts) = bundle.get("active_artifacts").and_then(|v| v.as_array()) {
-                if artifacts.is_empty() {
-                    continuation_section.push_str(
-                        "_No active tile/helper artifacts surfaced. Mint tiles at decision boundaries; use `mcp_engram_promote_hot` before compression._\n"
-                    );
-                } else {
-                    continuation_section.push_str("**Active artifacts** (recall each for full payload):\n\n");
-                    for a in artifacts {
-                        let concept = a.get("concept").and_then(|v| v.as_str()).unwrap_or("?");
-                        let crs = a.get("crs").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let hot = a.get("hot").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let source = a.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                        let preview = a.get("preview").and_then(|v| v.as_str()).unwrap_or("");
-                        continuation_section.push_str(&format!(
-                            "- `{}` CRS={:.2} hot={} _{}_\n  {}\n\n",
-                            concept, crs, hot, source, preview.lines().next().unwrap_or("")
-                        ));
-                    }
-                }
-            }
-
-            // ── Assemble full hydration payload ───────────────────────────────
-            let response = format!(
-                "✓ Session started | Manifold: {total} memories | Intent: \"{intent}\"\n\
-                 > Hydration payload loaded in <500ms (direct NVMe page cache reads).\n\
-                 > BVH O(log N) path activates ~18s after server start; fallback is Rayon CPU scan.\n\n\
-                 ---\n\n\
-                 ## ⚡ OPERATIONAL IDENTITY ({loaded}/{total_genesis} genesis blocks)\n\n\
-                 {genesis}\
-                 ---\n\n\
-                 ## 🕐 RECENT SESSION HISTORY ({session_count} records)\n\n\
-                 {sessions}\
-                 ---\n\n\
-                 ## 🧩 CONTINUATION BUNDLE (tiles + goal + handoff lineage)\n\n\
-                 {continuation}",
-                total         = total_memories,
-                intent        = intent,
-                loaded        = genesis_loaded,
-                total_genesis = GENESIS_CONCEPTS.len(),
-                genesis       = genesis_section,
-                session_count = session_count,
-                sessions      = session_section,
-                continuation  = continuation_section,
-            );
-
-            info!(
-                "session_start: {} memories, {}/{} genesis blocks loaded, {} session records",
-                total_memories, genesis_loaded, GENESIS_CONCEPTS.len(), session_count
-            );
-
-            // ── Phase 3 P0: Automatic rich trace capture at session boundary (session_start) ──
-            // Mirrors the end-boundary logic: emits ZEDOS_TRAINING trace with full geo snapshot at resume,
-            // harmonic, energetics. Immediately marks ki_rebake so TUI sees "resuming_from" in Ritual + Reasoning Trajectory.
-            // Chains forward to future end trace via relations. Phase 2 tight: geo from current_geosphere_state (SymplecticState),
-            // hot via mark_ki + promote in ki bake, serves for primary, lawfulness preserved.
-            {
-                let boundary_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                let geo_context_json = if let Some(geo) = lock.current_geosphere_state() {
-                    let al_norm: f32 = geo.active_location.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
-                    let first8: Vec<String> = geo.active_location[0..8].iter().map(|c| format!("({:.5},{:.5})", c.re, c.im)).collect();
-                    let lens_info = if let Some(ref l) = geo.current_lens {
-                        let lnorm: f32 = l.iter().map(|c| c.re*c.re + c.im*c.im).sum::<f32>().sqrt();
-                        format!("{{\"norm\":{:.6}}}", lnorm)
-                    } else { "{\"present\":false,\"norm\":1.0,\"origin\":\"native\"}".to_string() };
-                    format!(
-                        "{{\"active_location\":{{\"norm\":{:.6},\"first8\":[{}],\"note\":\"full_8192D_SymplecticState_at_session_start_resume\"}},\"current_lens\":{},\"frame_step\":{},\"frame_origin\":\"{}\"}}",
-                        al_norm, first8.join(","), lens_info, geo.frame_step, geo.frame_origin.as_deref().unwrap_or("native")
-                    )
-                } else {
-                    "{\"active_location\":null,\"current_lens\":null,\"frame_step\":0,\"frame_origin\":\"native\"}".to_string()
-                };
-
-                let training_resume = format!(
-                    "\n\n## ZEDOS_TRAINING 8+1 (AUTO session_start boundary, Phase 3 P0)\n\n\
-                     - utc_tau: {} + τ=0.003\n\
-                     - geosphere_context: {} (resume geo for TUI inheritance)\n\
-                     - crs: 0.85\n\
-                     - harmonic_432hz: 432Hz symplectic; auto trace for Ritual+Reasoning Trajectory\n",
-                    boundary_ts, geo_context_json
-                );
-
-                let mut resume_payload = format!(
-                    "REASONING TRACE SEGMENT (AUTO-EMITTED AT SESSION BOUNDARY)\n\n**decision_point:** Session started with intent: {} (auto Phase 3 P0 rich capture)\n\n**justification:** Ritual open per engram-working-memory; full Phase 2 geo/harmonic/TRAINING emitted automatically so ki_hijacker surfaces resuming trajectory for Grok Build TUI felt continuity without manual call.\n\n**intent:** {}\n",
-                    intent.chars().take(200).collect::<String>(), intent
-                );
-                resume_payload.push_str(&training_resume);
-
-                let mut b = lock.encode(&resume_payload);
-                b.zedos_tag = engram_core::types::ZEDOS_TRAINING;
-                b.crs_score = 0.85;
-                crate::store::assign_reflexive_contract(&mut b);
-                b.energetics.ts = boundary_ts;
-                b.energetics.tau = 0.003;
-                b.energetics.h_in = 0.92;
-                b.energetics.h_out = 0.87;
-                b.energetics.crs = b.crs_score;
-
-                let short = intent.chars().take(32).collect::<String>().to_lowercase().chars().map(|c| if c.is_alphanumeric()||c=='-' {c} else {'-'}).collect::<String>();
-                let resume_trace_key = format!("trace:{}_session_start_resuming_auto", boundary_ts);
-                if lock.store(&resume_trace_key, b).is_ok() {
-                    if let Some(pg) = lock.fetch_block_high_priority("primary_goal") {
-                        let ptext = String::from_utf8_lossy(&pg.payload);
-                        if let Some(line) = ptext.lines().find(|l| l.starts_with("**goal:**")) {
-                            let g = line.replace("**goal:** ", "").trim().to_string();
-                            let _ = lock.relate(&resume_trace_key, &g, "serves");
-                        }
-                    }
-                    lock.mark_ki_rebake_needed();
-                    // Note: response is already built; append would require mut but for P0 the ki sidecar + next bake will surface it.
-                }
-            }
-
-            json!({ "content": [{ "type": "text", "text": response }] })
+            let text = serde_json::to_string(&wake_packet).unwrap_or_else(|_| "{}".to_string());
+            return json!({
+                "content": [{
+                    "type": "text",
+                    "text": text
+                }]
+            });
         }
         "mcp_engram_session_end" => {
             let summary = args["summary"].as_str().unwrap_or("").trim().to_string();
@@ -2199,10 +2624,12 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                         "✓ Session committed. Epistemic state recorded (Avg CRS: {:.2}, Affirm: {:.1}, Deny: {:.1})",
                         avg_crs, alpha_a, alpha_d
                     );
+                    let mut compression_manifest: Option<serde_json::Value> = None;
                     if prepare_compression {
                         let snippet: String = summary.chars().take(500).collect();
                         let manifest =
                             lock.refresh_compression_handoff(&key, &snippet);
+                        compression_manifest = Some(manifest.clone());
                         let handoff_key = manifest
                             .get("handoff_key")
                             .and_then(|v| v.as_str())
@@ -2317,7 +2744,30 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                         }
                     }
 
-                    json!({ "content": [{ "type": "text", "text": response }] })
+                    let handoff_packet = lock.persist_session_handoff_latest(&summary, &key);
+                    let handoff_concept = handoff_packet
+                        .get("handoff_concept")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("helper:session_handoff_latest");
+                    let next_wake_hint = format!(
+                        "mcp_engram_session_start(intent=<continuation>) → mcp_engram_read_concept('{handoff_concept}') → mcp_engram_get_continuation_bundle → recall trace_chain_head from handoff if set"
+                    );
+                    response.push_str(&format!(
+                        "\n  → Structured handoff stored: `{}` (read_concept on next wake)",
+                        handoff_concept
+                    ));
+
+                    let response_json = serde_json::json!({
+                        "status": "committed",
+                        "session_end_key": key,
+                        "message": response,
+                        "handoff": handoff_packet,
+                        "next_wake_hint": next_wake_hint,
+                        "compression_manifest": compression_manifest,
+                    });
+                    let response_text = serde_json::to_string_pretty(&response_json)
+                        .unwrap_or_else(|_| response);
+                    json!({ "content": [{ "type": "text", "text": response_text }] })
                 }
                 Err(e) => json!({ "content": [{ "type": "text", "text": format!("Error: {}", e) }], "isError": true })
             }
@@ -2900,9 +3350,11 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
             json!({ "content": [{ "type": "text", "text": output }] })
         }
         "mcp_engram_goal_set_primary" => {
-            let goal = args["goal"].as_str().unwrap_or("").trim().to_string();
+            let goal = args_str(&args, &["goal", "goal_id", "goal_concept"])
+                .unwrap_or("")
+                .to_string();
             if goal.is_empty() {
-                return json!({ "content": [{ "type": "text", "text": "Error: goal is required." }], "isError": true });
+                return json!({ "content": [{ "type": "text", "text": "Error: goal is required (param: `goal`, alias: `goal_id`)." }], "isError": true });
             }
 
             let mut lock = store.lock().unwrap();
@@ -3210,12 +3662,25 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
         }
 
         "mcp_engram_relate" => {
-            let concept_a = args["concept_a"].as_str().unwrap_or("").trim().to_string();
-            let concept_b = args["concept_b"].as_str().unwrap_or("").trim().to_string();
-            let label     = args["label"].as_str().unwrap_or("").trim().to_string();
+            let concept_a = args_str(&args, &["concept_a", "from", "source"])
+                .unwrap_or("")
+                .to_string();
+            let concept_b = args_str(&args, &["concept_b", "to", "target"])
+                .unwrap_or("")
+                .to_string();
+            let label = args_str(&args, &["label", "relation", "rel"])
+                .unwrap_or("")
+                .to_string();
 
             if concept_a.is_empty() || concept_b.is_empty() || label.is_empty() {
-                return json!({ "content": [{ "type": "text", "text": "Error: missing required strings" }], "isError": true });
+                return json!({
+                    "content": [{ "type": "text", "text":
+                        "Error: relate requires concept_a, concept_b, label \
+                         (aliases: from/to/relation). Example: \
+                         {\"concept_a\":\"goal:x\",\"concept_b\":\"trace:y\",\"label\":\"advances\"}"
+                    }],
+                    "isError": true
+                });
             }
 
             // Strip sheaf prefix if present, since relate() uses fetch_block internally
@@ -3226,6 +3691,33 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                 Ok(msg) => json!({ "content": [{ "type": "text", "text": msg }] }),
                 Err(e)  => json!({ "content": [{ "type": "text", "text": format!("Error adding relation: {e}") }], "isError": true }),
             }
+        }
+
+        "mcp_engram_context_for_edit" => {
+            let path = args["path"].as_str().unwrap_or("").trim();
+            if path.is_empty() {
+                return json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::json!({"error": "path is required"}).to_string()
+                    }],
+                    "isError": true
+                });
+            }
+            let line_start = args["line_start"].as_u64().map(|v| v as u32);
+            let line_end = args["line_end"].as_u64().map(|v| v as u32);
+            let auto_ingest = args.get("auto_ingest").and_then(|v| v.as_bool()).unwrap_or(true);
+
+            let payload = store
+                .lock()
+                .unwrap()
+                .context_for_edit(path, line_start, line_end, auto_ingest);
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": payload.to_string()
+                }]
+            })
         }
 
         "mcp_engram_context_for_file" => {
@@ -3291,16 +3783,24 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
         }
 
         "mcp_engram_stats" => {
-            let mut lock = store.lock().unwrap();
-            let concepts = lock.list();
-            let total = concepts.len();
+            let lock = store.lock().unwrap();
+            let total = lock.leg_block_count();
+            let path = lock.store_path().to_string();
+            let active_ns = lock.active_stalk_name();
+            let large = total > crate::store::StoreHandle::LARGE_MANIFOLD_THRESHOLD;
+
+            let concepts: Vec<String> = if large {
+                lock.sample_concepts_for_overview(400)
+            } else {
+                lock.list()
+            };
+
             let mut pinned = 0usize;
             let mut crs_sum = 0.0f32;
             let mut crs_min = f32::MAX;
             let mut crs_max = 0.0f32;
+            let mut sampled = 0usize;
             for name in &concepts {
-                // Autonomous Tier 2 improvement (Maximum Engram Speed plan): Prefer high_priority path
-                // during stats collection for better cache behavior on repeated queries.
                 let key = name.split_once("::").map_or(name.as_str(), |(_, r)| r);
                 if let Some(block) = lock.fetch_block_high_priority(key) {
                     let crs = block.crs_score;
@@ -3308,20 +3808,35 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                     crs_sum += crs;
                     if crs < crs_min { crs_min = crs; }
                     if crs > crs_max { crs_max = crs; }
+                    sampled += 1;
                 }
             }
-            let avg_crs = if total > 0 { crs_sum / total as f32 } else { 0.0 };
-            let path = lock.store_path().to_string();
-            let active_ns = lock.active_stalk_name();
+            let avg_crs = if sampled > 0 { crs_sum / sampled as f32 } else { 0.0 };
             drop(lock);
 
-            let disk_kb = std::fs::read_dir(&path)
-                .map(|entries| entries
-                    .filter_map(|e| e.ok())
-                    .filter_map(|e| e.metadata().ok())
-                    .map(|m| m.len())
-                    .sum::<u64>())
-                .unwrap_or(0) as f64 / 1024.0;
+            // HolographicBlock is 256KB-aligned; avoid summing 180k metadata entries.
+            let disk_kb = if large {
+                (total as f64) * 256.0
+            } else {
+                std::fs::read_dir(&path)
+                    .map(|entries| {
+                        entries
+                            .filter_map(|e| e.ok())
+                            .filter_map(|e| e.metadata().ok())
+                            .map(|m| m.len())
+                            .sum::<u64>()
+                    })
+                    .unwrap_or(0) as f64
+                    / 1024.0
+            };
+
+            let sample_note = if large {
+                format!(
+                    "\nCRS sample       : {sampled} recent/hot/anchor blocks (manifold has {total} total — full scan skipped for speed)"
+                )
+            } else {
+                String::new()
+            };
 
             let report = format!(
                 "📊 Engram Manifold Stats\n\
@@ -3332,9 +3847,10 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                  Min CRS        : {:.3}\n\
                  Max CRS        : {crs_max:.3}\n\
                  Active NS      : {active_ns}\n\
-                 Disk Usage     : {disk_kb:.1} KB\n\
-                 Store Path     : {path}",
-                if total > 0 { crs_min } else { 0.0 }
+                 Disk Usage     : {disk_kb:.1} KB ({})\n\
+                 Store Path     : {path}{sample_note}",
+                if sampled > 0 { crs_min } else { 0.0 },
+                if large { "~256KB/block estimate" } else { "exact" }
             );
             json!({ "content": [{ "type": "text", "text": report }] })
         }
@@ -3414,26 +3930,109 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
         }
 
         "mcp_engram_get_backend_readiness" => {
-            // Item 1.5 small tool — returns whether the heavy background initialization has finished.
-            let mut lock = store.lock().unwrap();
-            let ready = lock.is_fully_initialized();
+            let lock = store.lock().unwrap();
+            let status = lock.backend_readiness();
             json!({
                 "content": [{
                     "type": "text",
-                    "text": serde_json::json!({ "fully_initialized": ready }).to_string()
+                    "text": status.to_string()
                 }]
             })
         }
 
+        "mcp_engram_set_memory_mode" => {
+            let mode = args["mode"].as_str().unwrap_or("").trim();
+            if mode != "lean" && mode != "deep" {
+                return json!({
+                    "content": [{
+                        "type": "text",
+                        "text": "Error: mode must be 'lean' or 'deep'."
+                    }],
+                    "isError": true
+                });
+            }
+            if let Err(e) = crate::store::StoreHandle::set_memory_mode(mode) {
+                return json!({
+                    "content": [{
+                        "type": "text",
+                        "text": format!("Error setting memory mode: {e}")
+                    }],
+                    "isError": true
+                });
+            }
+            let lock = store.lock().unwrap();
+            let bvh_auto_spawned = lock.maybe_auto_rebuild_bvh_for_deep_mode();
+            let mut payload = serde_json::json!({
+                "status": "ok",
+                "memory_mode": mode,
+                "recall_mode": lock.recall_mode(),
+                "bvh_ready": lock.bvh_is_ready(),
+                "leg_block_count": lock.leg_block_count(),
+                "bvh_auto_spawned": bvh_auto_spawned,
+            });
+            if mode == "deep" {
+                payload["warning"] = serde_json::json!(
+                    "Deep mode may use significant RAM and take several minutes to build BVH on 100k+ blocks. Poll mcp_engram_get_backend_readiness until bvh_ready=true."
+                );
+            }
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": payload.to_string()
+                }]
+            })
+        }
+
+        "mcp_engram_rebuild_bvh" => {
+            let lock = store.lock().unwrap();
+            if lock.bvh_is_ready() {
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::json!({
+                            "status": "already_ready",
+                            "bvh_ready": true,
+                            "recall_mode": lock.recall_mode()
+                        }).to_string()
+                    }]
+                })
+            } else if lock.rebuild_bvh_async() {
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::json!({
+                            "status": "building",
+                            "message": "BVH build started in background. Poll mcp_engram_get_backend_readiness until bvh_ready=true.",
+                            "recall_mode": lock.recall_mode(),
+                            "leg_block_count": lock.leg_block_count()
+                        }).to_string()
+                    }]
+                })
+            } else {
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": "Error: failed to spawn BVH build thread (CPU-only backend or thread limit)."
+                    }],
+                    "isError": true
+                })
+            }
+        }
+
         "mcp_engram_summarize" => {
             let top_n = args["top_n"].as_u64().unwrap_or(10).min(50) as usize;
-            let mut lock = store.lock().unwrap();
-            let concepts = lock.list();
+            let lock = store.lock().unwrap();
+            let total = lock.leg_block_count();
+            let large = total > crate::store::StoreHandle::LARGE_MANIFOLD_THRESHOLD;
+            let concepts: Vec<String> = if large {
+                lock.sample_concepts_for_overview(600)
+            } else {
+                lock.list()
+            };
             let mut pinned: Vec<(String, f32, String)> = Vec::new();
             let mut ranked: Vec<(String, f32, String)> = Vec::new();
 
             for name in &concepts {
-                // Autonomous Tier 2: prefer high_priority for summarize (benefits promoted hot artifacts)
                 if let Some(block) = lock.fetch_block_high_priority(name.split_once("::").map_or(name.as_str(), |(_, r)| r)) {
                     let crs = block.crs_score;
                     let raw = String::from_utf8_lossy(&block.payload);
@@ -3453,6 +4052,11 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
             ranked.truncate(top_n);
 
             let mut out = String::from("\u{1f4cb} Engram Project Summary\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n");
+            if large {
+                out.push_str(&format!(
+                    "(Large manifold: {total} blocks — showing hot/recent/anchor sample, not full scan)\n"
+                ));
+            }
             if !pinned.is_empty() {
                 out.push_str(&format!("\n\u{1f4cc} PINNED ({}):\n", pinned.len()));
                 for (i, (name, crs, preview)) in pinned.iter().enumerate() {
@@ -3473,7 +4077,7 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                 let lock2 = store.lock().unwrap();
                 // Hot path upgrade (Tier 2 broader adoption): system state in summary/health paths.
                 if let Some(sys) = lock2.fetch_block_high_priority("__system_state__") {
-                    let total = lock2.list().len();
+                    let total = lock2.leg_block_count();
                     let ns = lock2.active_stalk_name();
                     out.push_str(&format!(
                         "\n\n⬡ system_state_vector  CRS={:.3} | {} memories | NS={} (updated every 60s by ki_hijacker)",
@@ -3596,21 +4200,28 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
             let concept   = args["concept"].as_str().unwrap_or("").trim().to_string();
             let label     = args["label"].as_str().map(|s| s.trim().to_string());
             let direction = args["direction"].as_str().unwrap_or("from").trim().to_string();
+            let k         = args["k"].as_u64().unwrap_or(50).min(200) as usize;
 
             if concept.is_empty() {
                 return json!({ "content": [{ "type": "text", "text": "Error: concept is required." }], "isError": true });
             }
 
-            let results = store.lock().unwrap()
+            let mut results = store.lock().unwrap()
                 .search_relations(&concept, label.as_deref(), &direction);
+
+            // Scope to prevent data overload/huge chains on high-relation nodes (e.g. primary goal with 100+ 'serves' from prep history).
+            // Drill down process (per wake-up skill): use label/direction/k for narrow scope first; if need larger context use visualize(depth) or context/recall on specific results.
+            if results.len() > k {
+                results.truncate(k);
+            }
 
             if results.is_empty() {
                 let label_str = label.as_deref().unwrap_or("any");
-                return json!({ "content": [{ "type": "text", "text": format!("No '{}' relations found for '{}' (direction: {}).", label_str, concept, direction) }] });
+                return json!({ "content": [{ "type": "text", "text": format!("No '{}' relations found for '{}' (direction: {}, k={}).", label_str, concept, direction, k) }] });
             }
 
             let arrow = match direction.as_str() { "to" => "→", _ => "→" };
-            let mut out = format!("🕸️  Relations for '{}' (direction: {}):\n\n", concept, direction);
+            let mut out = format!("🕸️  Relations for '{}' (direction: {}, k={}):\n\n", concept, direction, k);
             for (lbl, other) in &results {
                 match direction.as_str() {
                     "to" => out.push_str(&format!("  {} --[{}]--> {}\n", other, lbl, concept)),
@@ -3618,7 +4229,7 @@ pub fn handle_tool_call(name: &str, args: &Value, store: &SharedStore) -> Value 
                 }
             }
             let _ = arrow;
-            info!("search_by_relation '{}' {} {} -> {} results", concept, direction, label.as_deref().unwrap_or("*"), results.len());
+            info!("search_by_relation '{}' {} {} (k={}) -> {} results (scoped)", concept, direction, label.as_deref().unwrap_or("*"), k, results.len());
             json!({ "content": [{ "type": "text", "text": out.trim() }] })
         }
 

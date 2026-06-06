@@ -2,6 +2,12 @@
 
 Claude (and similar): follow AGENTS.md exactly. This is a supplement for common Claude workflows + MCP usage.
 
+## Start Here — 8-Tool Lean Contract
+
+**Read first:** [docs/AGENT_MEMORY_CONTRACT.md](docs/AGENT_MEMORY_CONTRACT.md)
+
+Lean default: `session_start` → `context_for_edit` → `recall(scope=anchors)` → `quick_trace`/`remember` → `session_end`. Do **not** call `watch_workspace` or `rebuild_bvh` at wake. Use safe MCP env — see `integrations/grok-build/mcp.json`. Grok Build pitch: [docs/GROK_BUILD_MEMORY.md](docs/GROK_BUILD_MEMORY.md).
+
 ## MCP Tool Usage (Critical)
 - **Always**: Call `search_tool` (query e.g. "engram record_reasoning_trace" or tool name) **first** to retrieve live input_schema.
 - Then `use_tool` with exact `tool_name` (qualified e.g. "engram__mcp_engram_record_reasoning_trace") and `tool_input` matching schema precisely.
@@ -11,7 +17,7 @@ Claude (and similar): follow AGENTS.md exactly. This is a supplement for common 
 ## Ritual Enforcement in Claude Sessions
 **Dogfooding + Discipline Recognition + Automatic Escalation (2026-06 evolution):** Using the system's own tools (mcp_engram_* + rituals) to track your work on Engram (traces, relations to goals, scars on friction, **update** for evolutionary refinement of design:/progress: blocks, **thought tiles** for structured arcs). For GitHub-prep style meta-work: recall `helper:meta_work_escalation_v1` + `helper:current_meta_arc` at start; ki/wake/session/subvisor will auto-detect and prompt/suggest tile + update. Tiles now expected for continuation/re-hydration. Reconcile via helper:reconcile_step_v1 (synthesis step + trace field). See plan in GITHUB_MVP_PREP_PLAN.md and full updates to wake/session/working-mem/thought-tiles.
 
-- On every new chat/TUI restart involving Engram: treat as wake-up. Use engram-wake-up skill or equivalent MCP sequence (query anchors, session_start with intent, surface goal stack, spatial hygiene).
+- On every new chat/TUI restart involving Engram: **one call** `mcp_engram_session_start(intent)` (inline continuation bundle). Use engram-wake-up skill; do not run the old 5-tool wake unless deep mode.
 - Working-memory default: momentum/relational/spatial entry before broad reads or derives.
 - For any edit (even this md or prompts): pre context_for_file + trace (A/D/R), post delta trace.
 - End every block: session_end with structured summary (decisions, files changed, traces, open questions). prepare_compression for handoff.

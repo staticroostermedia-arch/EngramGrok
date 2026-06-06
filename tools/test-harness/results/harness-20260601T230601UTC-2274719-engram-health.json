@@ -1,0 +1,128 @@
+{
+  "ok": true,
+  "summary": {
+    "binary": "/home/a/Documents/Engram/target/debug/engram",
+    "store": "/tmp/engram-harness-harness-20260601T230601UTC-2274719-engram_-store",
+    "still_alive": true,
+    "transport_failures": 0,
+    "total_tool_calls": 8,
+    "errors": [],
+    "timings_sample": [
+      {
+        "id": 1,
+        "method": "initialize",
+        "elapsed_ms": 0.26,
+        "timestamp": "2026-06-01T23:06:02.258794Z",
+        "is_error": false
+      },
+      {
+        "id": 2,
+        "method": "tools/list",
+        "elapsed_ms": 9.91,
+        "timestamp": "2026-06-01T23:06:02.568864Z",
+        "is_error": false
+      },
+      {
+        "id": 3,
+        "method": "tools/call",
+        "elapsed_ms": 0.68,
+        "timestamp": "2026-06-01T23:06:02.569610Z",
+        "is_error": false
+      },
+      {
+        "id": 4,
+        "method": "tools/call",
+        "elapsed_ms": 0.18,
+        "timestamp": "2026-06-01T23:06:02.569810Z",
+        "is_error": false
+      },
+      {
+        "id": 5,
+        "method": "tools/call",
+        "elapsed_ms": 70.8,
+        "timestamp": "2026-06-01T23:06:02.640657Z",
+        "is_error": false
+      },
+      {
+        "id": 6,
+        "method": "tools/call",
+        "elapsed_ms": 5.78,
+        "timestamp": "2026-06-01T23:06:02.646527Z",
+        "is_error": false
+      },
+      {
+        "id": 7,
+        "method": "tools/call",
+        "elapsed_ms": 0.21,
+        "timestamp": "2026-06-01T23:06:02.646780Z",
+        "is_error": false
+      },
+      {
+        "id": 8,
+        "method": "tools/call",
+        "elapsed_ms": 0.3,
+        "timestamp": "2026-06-01T23:06:02.797232Z",
+        "is_error": false
+      }
+    ],
+    "stderr_log": "/tmp/engram-harness-2274741.stderr.log"
+  },
+  "timings": [
+    {
+      "id": 1,
+      "method": "initialize",
+      "elapsed_ms": 0.26,
+      "timestamp": "2026-06-01T23:06:02.258794Z",
+      "is_error": false
+    },
+    {
+      "id": 2,
+      "method": "tools/list",
+      "elapsed_ms": 9.91,
+      "timestamp": "2026-06-01T23:06:02.568864Z",
+      "is_error": false
+    },
+    {
+      "id": 3,
+      "method": "tools/call",
+      "elapsed_ms": 0.68,
+      "timestamp": "2026-06-01T23:06:02.569610Z",
+      "is_error": false
+    },
+    {
+      "id": 4,
+      "method": "tools/call",
+      "elapsed_ms": 0.18,
+      "timestamp": "2026-06-01T23:06:02.569810Z",
+      "is_error": false
+    },
+    {
+      "id": 5,
+      "method": "tools/call",
+      "elapsed_ms": 70.8,
+      "timestamp": "2026-06-01T23:06:02.640657Z",
+      "is_error": false
+    },
+    {
+      "id": 6,
+      "method": "tools/call",
+      "elapsed_ms": 5.78,
+      "timestamp": "2026-06-01T23:06:02.646527Z",
+      "is_error": false
+    },
+    {
+      "id": 7,
+      "method": "tools/call",
+      "elapsed_ms": 0.21,
+      "timestamp": "2026-06-01T23:06:02.646780Z",
+      "is_error": false
+    },
+    {
+      "id": 8,
+      "method": "tools/call",
+      "elapsed_ms": 0.3,
+      "timestamp": "2026-06-01T23:06:02.797232Z",
+      "is_error": false
+    }
+  ]
+}

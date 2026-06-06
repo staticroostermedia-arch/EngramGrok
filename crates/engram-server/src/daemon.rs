@@ -201,17 +201,22 @@ pub fn spawn(store: SharedStore) -> Arc<DaemonControl> {
             tokio::select! {
                 new_watch = watch_rx.recv_async() => {
                     if let Ok(p) = new_watch {
-                        if let Err(e) = debouncer.watch(&p, RecursiveMode::Recursive) {
+                        // ENGRAM_DEFER_WATCH_INGEST=1 (MCP default): record path only — no recursive
+                        // OS watch and no force_ingest. Recursive debouncer.watch on large repos
+                        // floods modify/create events → per-file AST store → 10–40GB RSS + MCP death.
+                        // Lean wake uses incremental_spatial_ingest; enable full watch by unsetting env.
+                        let defer_ingest = std::env::var("ENGRAM_DEFER_WATCH_INGEST")
+                            .as_deref() == Ok("1");
+                        if defer_ingest {
+                            info!(
+                                "Watch path recorded (ENGRAM_DEFER_WATCH_INGEST=1): {} — \
+                                 OS watcher NOT bound; use incremental_spatial_ingest / force_spatial_ingest",
+                                p.display()
+                            );
+                        } else if let Err(e) = debouncer.watch(&p, RecursiveMode::Recursive) {
                             error!("Daemon failed to bind OS watcher to {}: {}", p.display(), e);
                         } else {
                             info!("Daemon dynamically bound OS watcher to: {}", p.display());
-                            // Passive initial full ingest of existing workspace tree.
-                            // This is the fix for the "nonsense" manual open+save bootstrap requirement.
-                            // On watch bind, we walk and force_ingest using the same robust
-                            // AST extraction + AABB + shadow + relational gluing as live events.
-                            // Future changes still come via debounced fs events (modify/create).
-                            // No user editor saves needed; fully passive.
-                            // Respects engramignore, target/, .git/ etc. inside force_ingest_path.
                             let ingest_res = {
                                 let mut lock = store.lock().unwrap();
                                 lock.force_ingest_path(&p.to_string_lossy(), true)

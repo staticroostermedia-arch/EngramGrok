@@ -1,0 +1,2 @@
+/home/a/.engram-ac3509a9/bin/engram|/tmp/engram-harness-harness-20260601T043410UTC-1224221-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260601T043410UTC-1224221-engram-transport-lifetime,full-wakeup.json|2
+target/debug/engram|/tmp/engram-harness-harness-20260601T043410UTC-1224221-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260601T043410UTC-1224221-engram-transport-lifetime,full-wakeup.json|2

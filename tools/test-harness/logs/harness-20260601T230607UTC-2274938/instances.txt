@@ -1,0 +1,1 @@
+/home/a/Documents/Engram/target/debug/engram|/tmp/engram-harness-harness-20260601T230607UTC-2274938-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260601T230607UTC-2274938-engram-transport-lifetime.json|0

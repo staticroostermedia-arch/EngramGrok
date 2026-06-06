@@ -1,101 +1,85 @@
 # examples/hello-engram-agent.py
-# Tiny self-contained "hello world" for agents using Enram.
-# Demonstrates loading the public skills/ and one full ritual loop end-to-end.
+# Lean 8-tool contract demo for external agents.
 #
-# Run (after engram MCP is available via the client):
+# Run (after engram MCP is available):
 #   PYTHONPATH=integrations/python python examples/hello-engram-agent.py
 #
-# It reads the public docs/skills/*.md (no .grok/ dep) and walks:
-#   wake-up (session_start + anchors) -> working-memory discipline (meta-work with tile) -> session-end (handoff)
-#   -> "next instance" rehydrate simulation.
+# Demonstrates the Agent Memory MVP loop:
+#   session_start → context_for_edit → recall → quick_trace → remember → session_end
 #
-# Uses the demo client shim from mcp_client.py patterns. For live, import real EngramClient.
-# Current build: target/debug/engram (cargo build; see GITHUB_MVP_PREP_PLAN.md).
-# Follows engram rituals exactly as published for external agents.
+# Load docs/AGENT_MEMORY_CONTRACT.md + SKILLS.md into real agent instructions.
+# Current build: target/debug/engram (cargo build -p engram-server)
 
 import os
-import sys
 
-# --- Minimal EngramClient shim (copy/adapt from examples/mcp_client.py or integrations/python/engram_client.py) ---
+
 class EngramClient:
-    def __init__(self):
-        print("[Enram] Connected to MCP (replace with real client for live calls).")
-    def session_start(self, intent):
-        print(f"[MCP] session_start: {intent}  # loads process sheaf, Phase 1.5 lawfulness, binds continuation")
+    """Shim — replace with integrations/python/engram_client.py for live MCP."""
+
+    def session_start(self, intent, include_spatial=False):
+        print(f"[MCP] session_start(intent={intent!r})")
+        print("  → continuation_bundle: {primary_goal, last_session_end, active_artifacts}")
+        print("  → backend_readiness: {bvh_ready, recall_mode, leg_block_count}")
+
+    def context_for_edit(self, path):
+        print(f"[MCP] context_for_edit({path!r})")
+        print("  → file-scoped spatial + related traces (no watch_workspace)")
+
+    def recall(self, query, k=5, scope="anchors"):
+        print(f"[MCP] recall({query!r}, k={k}, scope={scope!r})")
+
+    def quick_trace(self, decision, why, **kwargs):
+        print(f"[MCP] quick_trace(decision={decision!r}, why={why!r})")
+        return "trace:hello_demo_fork"
+
     def remember(self, concept, text):
-        print(f"[MCP] remember {concept}")
-    def update(self, concept, new_text):
-        print(f"[MCP] update {concept} (evolutionary)")
-    def record_reasoning_trace(self, **kwargs):
-        print(f"[MCP] record_reasoning_trace: {kwargs.get('decision_point')}")
-        return f"trace:{kwargs.get('decision_point', 'demo')[:20]}_demo"
-    def thought_tile_create(self, tile_type, payload, spatial_references=None):
-        print(f"[MCP] thought_tile_create type={tile_type}")
-        return f"tile:{tile_type}_demo"
-    def promote_hot(self, concept):
-        print(f"[MCP] promote_hot {concept}")
-    def relate(self, a, b, label):
-        print(f"[MCP] relate {a} ->[{label}] {b}")
-    def verify_manifold_integrity(self, **k):
-        print("[MCP] verify_manifold_integrity -> healthy (0 issues)")
-    def spatial_status(self):
-        print("[MCP] spatial_status: passive ingested (watch + events)")
+        print(f"[MCP] remember({concept!r})")
+
+    def get_backend_readiness(self):
+        print("[MCP] get_backend_readiness() → lean, sampled_bounded recall")
+
     def session_end(self, summary, prepare_compression=True):
-        print(f"[MCP] session_end: COMPRESS markers, handoff produced for next wake. {summary[:80]}...")
+        print(f"[MCP] session_end → structured handoff packet")
+        print(f"  summary: {summary[:80]}...")
+
+
+def load_contract_snippet():
+    path = os.path.join("docs", "AGENT_MEMORY_CONTRACT.md")
+    if os.path.exists(path):
+        with open(path) as f:
+            return f.read()[:600] + "\n... [load full file in agent context]"
+    return "(docs/AGENT_MEMORY_CONTRACT.md not found)"
+
 
 client = EngramClient()
 
-# --- Load public skills (the key: agents read the published .md files directly) ---
-def load_skill(name):
-    path = os.path.join("docs", "skills", f"{name}.md")
-    if os.path.exists(path):
-        with open(path) as f:
-            return f.read()[:500] + "... [truncated for demo; load full in real agent context]"
-    return f"(skill {name} not found in docs/skills/ - ensure repo layout)"
+print("\n=== Engram Agent Memory MVP — 8-Tool Lean Loop ===\n")
+print("Contract excerpt:\n")
+print(load_contract_snippet())
 
-print("\n=== Agent loads published skills for Enram rituals ===")
-wake = load_skill("engram-wake-up")
-wm = load_skill("engram-working-memory")
-end = load_skill("engram-session-end")
-tiles = load_skill("engram-thought-tiles")
-print("Loaded: wake-up, working-memory, session-end, thought-tiles (from docs/skills/)")
+print("\n=== 1. WAKE (one call) ===")
+client.session_start(intent="hello-engram-agent.py — lean 8-tool demo for Grok Build")
 
-# --- Full loop simulation (follow the protocols) ---
-print("\n=== 1. WAKE-UP (per engram-wake-up.md) ===")
-client.session_start(intent="hello-engram-agent.py demo - full ritual loop for external agents")
-# (in real: query momentum for anchors, verify, spatial_status, relate continuation, rehydrate goals/traces/tiles)
-client.verify_manifold_integrity(min_crs=0.6)
-client.spatial_status()
-
-print("\n=== 2. WORKING-MEMORY + HEAVY META-WORK (per engram-working-memory.md) ===")
-# Geometric first: but here we do meta-work so escalate to tile
-trace = client.record_reasoning_trace(
-    decision_point="Implement richer agent demos for public repo",
-    justification="Addresses 'missing items' for external agents to have full rituals + examples. Dogfood the system.",
-    alternatives_considered="Just update plan; add minimal py only",
-    falsifiability="If agents can't load skills/ and run loop, value is low.",
-    spatial_context="docs/skills/ + examples/",
-    ritual_context="engram-working-memory + thought-tiles for meta"
+print("\n=== 2. WORK ===")
+client.get_backend_readiness()
+client.context_for_edit("/path/to/your/project/README.md")
+client.recall("agent memory contract lean", scope="anchors", k=5)
+trace = client.quick_trace(
+    decision="Document lean contract as default agent path",
+    why="Reduces wake from 5+ tools to 1; survives 181k stores without OOM",
 )
+client.remember("demo:lean_contract_understood", f"Produced {trace} in hello demo.")
 
-# Meta-work -> tile (mandatory per heuristics)
-tile = client.thought_tile_create(
-    tile_type="knowledge_graph",
-    payload="Full cycle demo plan: wake->meta(tile, trace, sub-agent governance example)->end->rehydrate. Links to SKILLS.md, sub_agent_governance.md.",
-    spatial_references=["examples/hello-engram-agent.py", "docs/skills/", "docs/GITHUB_MVP_PREP_PLAN.md"]
-)
-client.promote_hot(tile)
-client.remember("demo:full_cycle_intent", "Agent now has published skills + governance example + hello script.")
-
-print("\n=== 3. SESSION-END (per engram-session-end.md) ===")
+print("\n=== 3. HANDOFF ===")
 client.session_end(
-    summary=f"Demo loop complete. Produced {trace} + {tile}. Handoff ready. Next wake will rehydrate via momentum + hot tiles + continuation bundle. Sub-agent governance patterns documented.",
-    prepare_compression=True
+    summary=f"Lean demo complete. {trace}. Next wake: session_start surfaces handoff inline.",
+    prepare_compression=True,
 )
 
-print("\n=== 4. NEXT INSTANCE REHYDRATE SIM (simulated wake) ===")
-print("(Next agent instance would: session_start, follow wake-up.md to surface hot tile + trace via momentum/relations, recall 'demo:full_cycle_intent', continue work with working-memory discipline. No flat reset.)")
-
-print("\n=== Hello complete. ===")
-print("Your agent should: 1) Connect engram MCP 2) Load docs/skills/*.md at start 3) Follow exactly for real geometric continuation.")
-print("See SKILLS.md (root), docs/skills/README.md, docs/examples/sub_agent_governance.md, and the full cycle doc for more.")
+print("\n=== Done ===")
+print("Real agents should:")
+print("  1. MCP config with safe env (integrations/grok-build/mcp.json)")
+print("  2. Load docs/AGENT_MEMORY_CONTRACT.md + SKILLS.md at session start")
+print("  3. Follow docs/skills/engram-wake-up.md (1-call wake)")
+print("  4. Escalate to deep mode only when lean bundle is insufficient")
+print("\nSee docs/GROK_BUILD_MEMORY.md for the xAI/Grok Build integration pitch.")

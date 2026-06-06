@@ -78,6 +78,15 @@ struct LeafData {
     file_offset_id: u64,
 }
 
+/// Lightweight BVH build input — quantized + 3D center only (no 8192D q retention).
+struct LightScanEntry {
+    concept: String,
+    path: PathBuf,
+    q_quantized: Vec<u8>,
+    crs_score: f32,
+    center_3d: Float3,
+}
+
 // ── FNV-1a query hash for cache keying ───────────────────────────────────────
 fn hash_query(q: &[Complex32; 8192]) -> u64 {
     let mut h = 0xcbf29ce484222325u64;
@@ -196,93 +205,52 @@ impl BvhManifold {
             .count();
 
         if approx_count > 100_000 {
-            eprintln!("[BVH] Skipping LBVH build: {} .leg files exceeds 100k limit. Using CPU linear scan.", approx_count);
-
-            #[cfg(engram_backend_cuda)]
-            let optix_pipeline = std::sync::Mutex::new(None);
-
-            return Some(Self {
-                nodes: vec![],
-                entries: vec![],
-                concept_index: HashMap::new(),
-                path_index: HashMap::new(),
-                ready: Arc::new(AtomicBool::new(true)),
-                query_cache: std::sync::RwLock::new(HashMap::new()),
-                cache_queue: std::sync::RwLock::new(std::collections::VecDeque::new()),
-                current_lens: std::sync::RwLock::new(None),
-                #[cfg(engram_backend_cuda)]
-                optix_pipeline,
-            });
+            eprintln!("[BVH] Large manifold ({} .leg >100k) — proceeding with LBVH build via large-stack thread (no skip; CPU build but enables fast filter path + CUDA/OptiX when active). NVMe-GPU design requires this for real stores.", approx_count);
         }
 
-        let entries_raw = Self::scan_dir(dir)?;
-        if entries_raw.is_empty() {
+        let entries_light = Self::scan_dir_streaming(dir)?;
+        if entries_light.is_empty() {
             eprintln!("[BVH] No .leg files found in {:?}", dir);
             return None;
         }
 
-        let n = entries_raw.len();
-        eprintln!("[BVH] Building LBVH from {} blocks…", n);
+        let n = entries_light.len();
+        eprintln!("[BVH] Building LBVH from {} blocks (streaming scan — no full-q retention)…", n);
 
-        // Retained for safety: second guard in case scan_dir returns more than expected.
-        if n > 100_000 {
-            eprintln!("[BVH] WARNING: Skipping LBVH build for very large manifold ({} blocks).", n);
-
-            #[cfg(engram_backend_cuda)]
-            let optix_pipeline = std::sync::Mutex::new(None);
-
-            return Some(Self {
-                nodes: vec![],
-                entries: vec![],
-                concept_index: HashMap::new(),
-                path_index: HashMap::new(),
-                ready: Arc::new(AtomicBool::new(true)),
-                query_cache: std::sync::RwLock::new(HashMap::new()),
-                cache_queue: std::sync::RwLock::new(std::collections::VecDeque::new()),
-                current_lens: std::sync::RwLock::new(None),
-                #[cfg(engram_backend_cuda)]
-                optix_pipeline,
-            });
-        }
-
-        // For very large manifolds the recursive build_top_down can exhaust the
-        // default stack (especially under CUDA + recent device-residency / hot-path
-        // changes on this branch). We protect the large case by running it on a
-        // dedicated thread with a huge stack. This is the minimal safe fix.
         if n > 100_000 {
             return std::thread::Builder::new()
-                .stack_size(128 * 1024 * 1024) // 128 MiB guard
-                .spawn(move || Self::_build_from_raw_entries(entries_raw))
+                .stack_size(128 * 1024 * 1024)
+                .spawn(move || Self::_build_from_light_entries(entries_light))
                 .unwrap()
                 .join()
                 .ok()
                 .flatten();
         }
 
-        Self::_build_from_raw_entries(entries_raw)
+        Self::_build_from_light_entries(entries_light)
     }
 
-    fn _build_from_raw_entries(entries_raw: Vec<(String, PathBuf, Box<[Complex32; 8192]>, f32)>) -> Option<Self> {
-        let mut entries:      Vec<ManifoldEntry>         = Vec::with_capacity(entries_raw.len());
-        let mut leaves:       Vec<LeafData>              = Vec::with_capacity(entries_raw.len());
-        let mut path_index:   HashMap<usize, PathBuf>    = HashMap::with_capacity(entries_raw.len());
-        let mut concept_index: HashMap<String, usize>    = HashMap::with_capacity(entries_raw.len());
+    fn _build_from_light_entries(entries_light: Vec<LightScanEntry>) -> Option<Self> {
+        let mut entries:      Vec<ManifoldEntry>         = Vec::with_capacity(entries_light.len());
+        let mut leaves:       Vec<LeafData>              = Vec::with_capacity(entries_light.len());
+        let mut path_index:   HashMap<usize, PathBuf>    = HashMap::with_capacity(entries_light.len());
+        let mut concept_index: HashMap<String, usize>    = HashMap::with_capacity(entries_light.len());
 
-        for (concept, path, q, crs_score) in &entries_raw {
-            let center = Self::project_to_3d(q);
+        for e in &entries_light {
             let id = (entries.len() as u64) + 1;
-            leaves.push(LeafData { center, file_offset_id: id });
-            concept_index.insert(concept.clone(), entries.len());
-            path_index.insert(entries.len(), path.clone());
-            
-            let q_quantized = crate::quant::quantize_srht_b4(q);
-            
-            entries.push(ManifoldEntry { 
-                concept: concept.clone(), 
-                center_3d: center, 
+            leaves.push(LeafData {
+                center: e.center_3d,
                 file_offset_id: id,
-                q_quantized,
-                crs_score: *crs_score
+            });
+            concept_index.insert(e.concept.clone(), entries.len());
+            path_index.insert(entries.len(), e.path.clone());
+
+            entries.push(ManifoldEntry {
+                concept: e.concept.clone(),
+                center_3d: e.center_3d,
+                file_offset_id: id,
+                q_quantized: e.q_quantized.clone(),
+                crs_score: e.crs_score,
             });
         }
 
@@ -364,7 +332,9 @@ impl BvhManifold {
         }
 
         let mut pipeline_guard = self.optix_pipeline.lock().unwrap();
-        if pipeline_guard.is_none() && std::env::var("ENGRAM_OPTIX_ENABLED").as_deref() == Ok("1") {
+        let optix_on = std::env::var("ENGRAM_OPTIX_ENABLED").as_deref() == Ok("1")
+            || std::env::var("ENGRAM_OPTIX_LEAN").as_deref() == Ok("1");
+        if pipeline_guard.is_none() && optix_on {
             let aabb_data = crate::optix_pipeline::OptixBvhPipeline::aabb_from_entries(&self.entries, AABB_RADIUS);
             if let Some(pipe) = crate::optix_pipeline::OptixBvhPipeline::build(&aabb_data) {
                 eprintln!("[BVH] ✓ OptiX RT-Core pipeline lazily initialized on first query (Item 1.5 crisis fix). See bvh.rs comments for heavy_boot + listening scar context.");
@@ -427,20 +397,30 @@ impl BvhManifold {
         let ids = {
             self.ensure_optix_pipeline();
 
-            let pipeline_guard = self.optix_pipeline.lock().unwrap();
-            if let Some(ref pipe) = *pipeline_guard {
-                let hits = pipe.query_filter_optix([pos.x, pos.y, pos.z], KNN_FILTER_CANDIDATES);
-                if !hits.is_empty() {
-                    hits
+            // Lean CUDA: GPU slab traversal first (engram_bvh_traverse.cu)
+            if let Some(gpu_hits) =
+                crate::cuda_dispatch::gpu_bvh_filter(&self.nodes, pos, KNN_FILTER_CANDIDATES)
+            {
+                if !gpu_hits.is_empty() {
+                    gpu_hits
                 } else {
                     self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
                 }
             } else {
-                self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
+                let pipeline_guard = self.optix_pipeline.lock().unwrap();
+                if let Some(ref pipe) = *pipeline_guard {
+                    let hits = pipe.query_filter_optix([pos.x, pos.y, pos.z], KNN_FILTER_CANDIDATES);
+                    if !hits.is_empty() {
+                        hits
+                    } else {
+                        self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
+                    }
+                } else {
+                    self.filter_cpu(pos, KNN_FILTER_CANDIDATES)
+                }
             }
         };
 
-        // ── CPU BVH slab path (non-CUDA builds) ──────────────────────────────
         #[cfg(not(engram_backend_cuda))]
         let ids = self.filter_cpu(pos, KNN_FILTER_CANDIDATES);
 
@@ -451,14 +431,40 @@ impl BvhManifold {
             crs: f32,
         }
 
-        let mut scored: Vec<ScoredCandidate> = ids.iter().filter_map(|&id| {
+        // Lean CUDA: batch GPU cosine on filter candidates when runtime is ready.
+        #[cfg(engram_backend_cuda)]
+        let gpu_scores: Option<Vec<f32>> = {
+            let qs: Vec<[Complex32; 8192]> = ids
+                .iter()
+                .filter_map(|&id| {
+                    let entry_idx = (id as usize).saturating_sub(1);
+                    let path = self.path_index.get(&entry_idx)?;
+                    let block = engram_core::storage::read_block(path).ok()?;
+                    Some(block.q)
+                })
+                .collect();
+            if qs.is_empty() {
+                None
+            } else {
+                crate::cuda_dispatch::gpu_cosine_batch(&effective_q, &qs)
+            }
+        };
+
+        let mut scored: Vec<ScoredCandidate> = ids.iter().enumerate().filter_map(|(i, &id)| {
             let entry_idx = (id as usize).saturating_sub(1);
             let entry = self.entries.get(entry_idx)?;
 
-            // In-memory Phase 8: SRHT+B4 TurboQuant codebook inner-product (no disk I/O!)
-            // SRHT pre-rotation Gaussianizes the distribution → ~40% lower MSE than raw B4
-            // WS3-B: use effective_q (lens-applied) so 8192D scoring reflects current Geosphere frame
+            #[cfg(engram_backend_cuda)]
+            let sim = if let Some(ref gpu_s) = gpu_scores {
+                gpu_s.get(i).copied().unwrap_or_else(|| {
+                    crate::quant::cosine_similarity_srht_b4(&effective_q, &entry.q_quantized)
+                })
+            } else {
+                crate::quant::cosine_similarity_srht_b4(&effective_q, &entry.q_quantized)
+            };
+            #[cfg(not(engram_backend_cuda))]
             let sim = crate::quant::cosine_similarity_srht_b4(&effective_q, &entry.q_quantized);
+
             let crs = entry.crs_score.clamp(0.0, 1.0);
             let score = sim * (0.5 + 0.5 * crs);
 
@@ -554,18 +560,46 @@ impl BvhManifold {
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    #[allow(clippy::type_complexity)]
-    fn scan_dir(dir: &Path) -> Option<Vec<(String, PathBuf, Box<[num_complex::Complex32; 8192]>, f32)>> {
-        let mut results = Vec::new();
-        for entry in fs::read_dir(dir).ok()?.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("leg") { continue; }
-            let concept = path.file_stem()?.to_str()?.to_string();
-            if concept.is_empty() { continue; }
-            let block = engram_core::storage::read_block(&path).ok()?;
-            let q = Box::new(block.q);
-            results.push((concept, path, q, block.crs_score));
+    /// Streaming directory scan — quantize and project inline; never retains full q vectors.
+    fn scan_dir_streaming(dir: &Path) -> Option<Vec<LightScanEntry>> {
+        use rayon::prelude::*;
+
+        let paths: Vec<(String, PathBuf)> = fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("leg") {
+                    return None;
+                }
+                let concept = path.file_stem()?.to_str()?.to_string();
+                if concept.is_empty() {
+                    return None;
+                }
+                Some((concept, path))
+            })
+            .collect();
+
+        if paths.is_empty() {
+            return Some(Vec::new());
         }
+
+        let results: Vec<LightScanEntry> = paths
+            .par_iter()
+            .filter_map(|(concept, path)| {
+                let block = engram_core::storage::read_block(path).ok()?;
+                let q_quantized = crate::quant::quantize_srht_b4(&block.q);
+                let center_3d = Self::project_to_3d(&block.q);
+                Some(LightScanEntry {
+                    concept: concept.clone(),
+                    path: path.clone(),
+                    q_quantized,
+                    crs_score: block.crs_score,
+                    center_3d,
+                })
+            })
+            .collect();
+
         Some(results)
     }
 }

@@ -2,55 +2,104 @@
 name: engram-session-end
 ---
 
-# Engram Session-End Skill — Terminal Momentum Handoff (Public Agent Protocol)
+# Engram Session-End Skill — Structured Handoff Packet (Public Agent Protocol)
 
 **Non-negotiable at end of every work block.**
 
-You are crystallizing the explicit terminal state (momentum signature) so the *next* agent instance can bind via `agent_instance_continuation` relations. This is the other half of the Inheritance Principle.
+You are crystallizing the explicit terminal state (momentum signature) so the *next* agent instance binds via `agent_instance_continuation` and the **inline wake bundle**. This is the other half of the Inheritance Principle.
 
-## Primary Anchors (Advance These First)
-- `mcp_engram_query_with_momentum("ritual:session_end OR terminal_state", k=4)`
-- Active `conv:arc` / goal stack.
+> **Canonical contract:** [docs/AGENT_MEMORY_CONTRACT.md](../AGENT_MEMORY_CONTRACT.md) — handoff packet schema and end-of-session loop.
 
-## Core Protocol
+---
 
-### Phase 1 — Crystallize Knowledge
-- `mcp_engram_remember_solution` for confirmed fixes (PRAXIS).
-- `mcp_engram_update` for evolutionary understanding.
-- `mcp_engram_scar` for ruled-out paths (active repulsion).
-- Batch where useful.
-- During meta/Item 2: note friction in NREM, hijacker, intent linking → scars.
+## Lean Handoff (Default) — One Call
 
-### Phase 2 — Produce Terminal State + Handoff
-- Ensure major decisions exist as `trace:*` (via `mcp_engram_record_reasoning_trace`).
-- Goal stack review: update statuses, create Completion/Demotion Traces, link with `completes_goal` etc.
-- Light repetition scan on traces.
-- Spatial hygiene: check `item1.5...` (passive now).
-- `mcp_engram_session_end` with high-fidelity summary referencing exact trace names.
-- Include deliberate `COMPRESS: stabilized_chain | trace:xxx, trace:yyy` for future 0x10 functors.
-- `mcp_engram_promote_hot` on high-value tiles/traces/state before end.
-- Legominism high-lineage: surface + promote NREM/ego.leg3 verified tiles, handoff compresses_path results, goal-served artifacts.
+```
+mcp_engram_session_end(
+  summary="<high-fidelity summary: decisions, files changed, blockers, next steps>",
+  prepare_compression=true
+)
+```
 
-### Phase 3 — Advance Anchors
-- Create/update `ritual:session_end_anchor`.
-- `mcp_engram_relate(session_end_result, previous_state, "provides_continuation_for")` or similar.
+**The response includes a structured `handoff_packet` (JSON):**
 
-### Phase 4 — Verify
-- `mcp_engram_recall_recent`.
-- Confirm new blocks/anchors have good recency/CRS.
-- Optional `verify_block_lawfulness` on new high-value items.
+| Field | Purpose |
+|-------|---------|
+| `session_end_key` | Terminal episodic block name |
+| `primary_goal` | Active goal the next agent inherits |
+| `terminal_summary` | Your summary, preserved for geometry |
+| `next_actions` | Machine-readable continuation queue |
+| `key_traces` | `trace:*` blocks to surface at next wake |
+| `files_touched` | Spatial continuity for edit-scoped wake |
+| `compression_handoff_key` | `compression_handoff_*` manifest link |
+| `hydration_cache_refreshed` | `helper:session_hydration_cache` updated |
+| `hot_promoted_count` | Continuity artifacts promoted |
+| `wake_protocol` | "Next agent: session_start → read handoff_packet inline" |
+
+The next instance's **`session_start`** embeds this in `continuation_bundle.last_session_end` and `active_artifacts`. No separate `get_continuation_bundle` required in lean mode.
+
+---
+
+## Summary Content (What to Include)
+
+Flat summaries break the geometric chain. Include:
+
+1. **Decisions** — reference exact `trace:*` names created this session
+2. **Files changed** — paths the next agent will `context_for_edit`
+3. **Open blockers** — explicit, falsifiable
+4. **Next steps** — ordered, actionable
+5. **COMPRESS markers** (optional) — `COMPRESS: stabilized_chain | trace:xxx, trace:yyy` for 0x10 functors
+
+Example summary:
+
+```
+A6 docs complete. trace:1749228000_a6_docs_contract records 8-tool contract decision.
+Files: docs/AGENT_MEMORY_CONTRACT.md, SKILLS.md, docs/skills/*.md.
+Next: Phase B harness agent-memory-mvp. Blockers: none.
+COMPRESS: stabilized_chain | trace:1749228000_a6_docs_contract, trace:1749221000_agent_memory_mvp_plan
+```
+
+---
+
+## Deep Handoff (Meta / High-Stakes Sessions)
+
+Before `session_end` in deep mode, crystallize knowledge:
+
+- `mcp_engram_remember_solution` — confirmed fixes (PRAXIS)
+- `mcp_engram_update` — evolutionary understanding (recall first)
+- `mcp_engram_scar` — ruled-out paths (active repulsion)
+- `mcp_engram_quick_trace` or `record_reasoning_trace` — ensure major forks exist as `trace:*`
+- Goal stack review: update statuses, `completes_goal` relations
+- `mcp_engram_promote_hot_batch` on high-value tiles/traces before end
+
+Then call `session_end` as above. The handoff packet captures what was promoted.
+
+---
+
+## Anchor Advancement
+
+After `session_end` succeeds (or within the same block before end):
+
+- Create/update `ritual:session_end_anchor`
+- `mcp_engram_relate(session_end_key, previous_state, "provides_continuation_for")`
+
+---
+
+## Verify (Optional)
+
+- `mcp_engram_recall_recent(n=5)` — confirm `session_end_*` has good recency
+- Check `handoff_packet.protocol_gaps` in response — address gaps next session if non-empty
+
+---
 
 ## Success Criteria
-- Terminal state block(s) with explicit continuation relations.
-- Ritual anchors advanced.
-- New PRAXIS/traces written with proper links.
-- Next theoretical wake-up can find this as strongest prior terminal state geometrically.
-- Structured traces produced (chained).
-- Goal stack reviewed and serialized where appropriate.
-- COMPRESS markers where warranted.
 
-**Skipping this breaks the geometric chain.** A normal summary is not enough. This produces data whose *geometry* (p-tensor + relations) future instances discover first via momentum and search_by_relation.
+- [ ] `session_end` called with trace-referenced summary
+- [ ] `handoff_packet` returned and understood
+- [ ] `key_traces` and `next_actions` populated for next wake
+- [ ] `ritual:session_end_anchor` advanced
+- [ ] Next theoretical wake finds this as strongest prior terminal state via inline bundle
 
-(Adapted for public agents. This is how you hand off real continuity instead of a text dump.)
+**Skipping this breaks the geometric chain.** A normal chat summary is not enough. This produces data whose *geometry* (p-tensor + relations) future instances discover first at `session_start`.
 
-See also `engram-wake-up.md` (the receiving side) and docs/RITUALS.md.
+(Adapted for public agents. See [engram-wake-up.md](engram-wake-up.md) for the receiving side and [docs/RITUALS.md](../RITUALS.md) for full overview.)
