@@ -1,10 +1,11 @@
 {
+  "_comment": "Grok Build / Cursor MCP — copy engram block. Use absolute path to scripts/engram-grok on your machine.",
   "mcpServers": {
     "engram": {
-      "command": "/home/a/Documents/Engram/scripts/engram-grok",
+      "command": "/path/to/Engram/scripts/engram-grok",
       "args": ["mcp"],
       "env": {
-        "ENGRAM_STORE": "/home/a/.engram/stalks/",
+        "ENGRAM_STORE": "~/.engram/stalks/",
         "ENGRAM_PROFILE": "agent"
       }
     }

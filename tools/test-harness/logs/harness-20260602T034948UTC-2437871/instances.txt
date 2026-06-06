@@ -1,1 +1,0 @@
-target/debug/engram|/tmp/engram-harness-harness-20260602T034948UTC-2437871-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260602T034948UTC-2437871-engram-continuation-bundle.json|1

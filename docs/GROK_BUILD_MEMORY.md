@@ -36,31 +36,26 @@ MODE   → set_memory_mode("deep")            # only when full recall needed
 
 ---
 
-## Recommended MCP config (large stores, Grok Build default)
+## Recommended MCP config (all ecosystems)
 
-Use the repo launcher or equivalent env — **not** bare `engram mcp` on a 100k+ manifold without safe defaults:
+Use `scripts/engram-grok` — sets `ENGRAM_PROFILE=agent` (lean CUDA, deferred BVH, anchor recall):
 
 ```json
 {
   "mcpServers": {
     "engram": {
-      "command": "/path/to/Engram/target/debug/engram",
+      "command": "/path/to/Engram/scripts/engram-grok",
       "args": ["mcp"],
       "env": {
-        "ENGRAM_STORE": "/home/user/.engram/stalks/",
-        "ENGRAM_MEMORY_MODE": "lean",
-        "ENGRAM_DEFER_BVH": "1",
-        "ENGRAM_DEFER_WATCH_INGEST": "1",
-        "ENGRAM_DISABLE_SHEAF": "1",
-        "ENGRAM_OPTIX_ENABLED": "0",
-        "ENGRAM_KI_DISABLE": "1"
+        "ENGRAM_STORE": "~/.engram/stalks/",
+        "ENGRAM_PROFILE": "agent"
       }
     }
   }
 }
 ```
 
-Or: `scripts/engram-grok` (sets all of the above).
+See [`integrations/README.md`](../integrations/README.md) for Cursor, Claude, Antigravity, Codex.
 
 **Validated on:** 181k `.leg` blocks, ~230MB RSS, <2s lean wake, transport stable.
 

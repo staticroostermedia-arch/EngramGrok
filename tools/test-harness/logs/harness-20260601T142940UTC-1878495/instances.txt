@@ -1,2 +1,0 @@
-/home/a/.engram-ac3509a9/bin/engram|/tmp/engram-harness-harness-20260601T142940UTC-1878495-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260601T142940UTC-1878495-engram-all.json|0
-/home/a/Documents/Engram/target/debug/engram|/tmp/engram-harness-harness-20260601T142940UTC-1878495-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260601T142940UTC-1878495-engram-all.json|0

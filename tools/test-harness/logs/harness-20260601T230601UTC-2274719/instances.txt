@@ -1,1 +1,0 @@
-/home/a/Documents/Engram/target/debug/engram|/tmp/engram-harness-harness-20260601T230601UTC-2274719-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260601T230601UTC-2274719-engram-health.json|0

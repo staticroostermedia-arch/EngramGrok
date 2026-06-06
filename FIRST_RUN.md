@@ -22,29 +22,24 @@ engram --version
 
 ## 2. Configure Your MCP Client (Safe Defaults)
 
-Add Engram to your IDE's MCP config. **Use safe env on any non-trivial store** — bare `engram mcp` on 100k+ blocks can OOM.
+Add Engram to your IDE's MCP config. Use **`ENGRAM_PROFILE=agent`** (via `scripts/engram-grok`) — not the legacy 8-var env block.
 
 ```json
 {
   "mcpServers": {
     "engram": {
-      "command": "engram",
+      "command": "/path/to/Engram/scripts/engram-grok",
       "args": ["mcp"],
       "env": {
         "ENGRAM_STORE": "~/.engram/stalks/",
-        "ENGRAM_MEMORY_MODE": "lean",
-        "ENGRAM_DEFER_BVH": "1",
-        "ENGRAM_DEFER_WATCH_INGEST": "1",
-        "ENGRAM_DISABLE_SHEAF": "1",
-        "ENGRAM_OPTIX_ENABLED": "0",
-        "ENGRAM_KI_DISABLE": "1"
+        "ENGRAM_PROFILE": "agent"
       }
     }
   }
 }
 ```
 
-Copy `integrations/grok-build/mcp.json` or use `scripts/engram-grok` as your launcher.
+See [`integrations/README.md`](integrations/README.md) for Grok, Cursor, Claude, Antigravity, and Codex.
 
 **Restart your IDE** after changing MCP config.
 

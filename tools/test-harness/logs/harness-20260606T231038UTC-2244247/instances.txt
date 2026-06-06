@@ -1,1 +1,0 @@
-/home/a/Documents/Engram/target/debug/engram|/tmp/engram-harness-harness-20260606T231038UTC-2244247-engram_-store|/home/a/Documents/Engram/tools/test-harness/results/harness-20260606T231038UTC-2244247-engram-agent-memory.json|0

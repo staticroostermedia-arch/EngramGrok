@@ -19,7 +19,7 @@ This file + CLAUDE.md + docs/ + .grok/skills/ + processes/*.toml + GITHUB_MVP_PR
 
 **Lean by default.** Do **not** call `watch_workspace`, `rebuild_bvh`, `summarize`, or `query_with_momentum` at wake unless deep mode or a specific task requires it. See [docs/MCP_TOOLS_REFERENCE.md](docs/MCP_TOOLS_REFERENCE.md) for Essential / Power / Lean-avoid tiers.
 
-**MCP config:** Use safe env on large stores (`ENGRAM_MEMORY_MODE=lean`, `ENGRAM_DEFER_BVH=1`, `ENGRAM_DEFER_WATCH_INGEST=1`). See `integrations/grok-build/mcp.json` or `scripts/engram-grok`.
+**MCP config:** `ENGRAM_PROFILE=agent` via `scripts/engram-grok` (two env vars only). See [`integrations/README.md`](integrations/README.md) for Grok, Cursor, Claude, Antigravity, Codex.
 
 Load public skills: [SKILLS.md](SKILLS.md) + `docs/skills/engram-wake-up.md`, `engram-working-memory.md`, `engram-session-end.md`.
 

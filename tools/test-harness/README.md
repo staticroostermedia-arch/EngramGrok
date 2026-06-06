@@ -1,6 +1,8 @@
 # Engram MCP Test Harness
 
-**Ground truth reference**: The now-working stable engram (commit ac3509a9) launched exclusively via `engram-tui` (the fixed safe wrapper at `~/bin/engram-tui` pointing at `~/.engram-ac3509a9/bin/engram` with `ENGRAM_KI_ARTIFACTS_DIR` + `~/.engram/stalks/`).
+**Ground truth reference**: `target/debug/engram` (or `scripts/engram-grok` with `ENGRAM_PROFILE=agent`). Run suites with `STABLE_BIN=target/debug/engram`.
+
+**Note:** `logs/` and `results/` are gitignored — harness writes locally only.
 
 **Location**: `tools/test-harness/`
 

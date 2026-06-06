@@ -71,33 +71,28 @@ engram --version
 # engram-server 0.4.x
 ```
 
-Add to your MCP config (use **safe defaults** on large stores) and restart your IDE:
+Add to your MCP config and **restart your IDE/TUI**:
 
 ```json
 {
   "mcpServers": {
     "engram": {
-      "command": "engram",
+      "command": "/path/to/Engram/scripts/engram-grok",
       "args": ["mcp"],
       "env": {
         "ENGRAM_STORE": "~/.engram/stalks/",
-        "ENGRAM_MEMORY_MODE": "lean",
-        "ENGRAM_DEFER_BVH": "1",
-        "ENGRAM_DEFER_WATCH_INGEST": "1",
-        "ENGRAM_DISABLE_SHEAF": "1",
-        "ENGRAM_OPTIX_ENABLED": "0",
-        "ENGRAM_KI_DISABLE": "1"
+        "ENGRAM_PROFILE": "agent"
       }
     }
   }
 }
 ```
 
-Or copy `scripts/engram-grok` to `~/.local/bin/` and set `"command": "engram-grok"`.
+Or: `cp scripts/engram-grok ~/.local/bin/` and use `"command": "engram-grok"`.
 
-**Agent first call:** `mcp_engram_session_start(intent="your goal")` — returns inline continuation bundle. See [`docs/AGENT_MEMORY_CONTRACT.md`](docs/AGENT_MEMORY_CONTRACT.md).
+**Agent first call:** `mcp_engram_session_start(intent="your goal")` — inline continuation bundle.
 
-Configs: [`integrations/`](integrations/) (Cursor, Claude, Grok Build template in `integrations/grok-build/mcp.json`).
+**All ecosystems:** [`integrations/README.md`](integrations/README.md) (Grok, Cursor, Claude, Antigravity, Codex, local agents). Contract: [`docs/AGENT_MEMORY_CONTRACT.md`](docs/AGENT_MEMORY_CONTRACT.md).
 
 **Dual Quickstart Paths**
 
