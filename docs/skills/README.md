@@ -12,17 +12,19 @@ These are the operational skills and rituals that power the Engram geometric mem
 - Follow them exactly for wake-up, working memory discipline, session termination, thought tiles, goal management, and spatial/Code Edit rituals.
 - The goal is *geometric continuation* across sessions instead of flat context reset. This is "Against Flat Knowledge" made operational.
 
-## Core Ritual Loop (The Minimum You Must Follow)
+## Core Ritual Loop (8-tool lean — all ecosystems)
 
-1. **Every new session or context loss**: Follow `engram-wake-up.md` (or the protocol below).
-2. **During every focused work block**: Follow `engram-working-memory.md` (momentum/relation/spatial first, update-preferred, traces, scars, tiles when meta).
-3. **At the end of every block/session**: Follow `engram-session-end.md` (produce terminal state for the next instance).
+**Contract:** [docs/AGENT_MEMORY_CONTRACT.md](../AGENT_MEMORY_CONTRACT.md)
+
+1. **Wake:** `session_start(intent)` — one call (see `engram-wake-up.md`).
+2. **Work:** `context_for_edit` → `recall(anchors)` → `quick_trace` / `remember` (`engram-working-memory.md`).
+3. **End:** `session_end(summary)` — handoff packet (`engram-session-end.md`).
 
 ## Additional Powerful Skills
 
 - Thought Tiles (`engram-thought-tiles`): For structured offload of plans, policies, knowledge graphs. Mandatory for meta-work.
 - Goal Stack (`engram-goal`): First-class intentional self-model. Primary goal auto-links to traces.
-- Spatial (Item 1.5): `mcp_engram_watch_workspace`, `context_for_file`, `recall_in_file` for AABB-aware edits (passive now!).
+- Spatial (Item 1.5): **lean:** `context_for_edit(path)`; **deep:** optional `watch_workspace` once per project.
 - Lawfulness: `mcp_engram_verify_manifold_integrity`, block lawfulness.
 
 See the full [docs/RITUALS.md](../RITUALS.md) for overview, [docs/MCP_TOOLS_REFERENCE.md](../MCP_TOOLS_REFERENCE.md) for all 55+ tools, and [docs/GEOMETRIC_MEMORY.md](../GEOMETRIC_MEMORY.md) for the non-flat model.

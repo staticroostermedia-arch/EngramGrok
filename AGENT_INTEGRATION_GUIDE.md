@@ -1,7 +1,9 @@
 # Agent Self-Model: How I Work with Engram
 ## A First-Person Reference for Any AI Agent Operating with Engram Memory
 
-> **Purpose:** This document is written *for the agent, by the agent*. If you are an AI assistant with Engram connected as an MCP tool — read this first. It will change how you operate.
+> **Most agents — start here instead:** [docs/AGENT_MEMORY_CONTRACT.md](docs/AGENT_MEMORY_CONTRACT.md) (8-tool lean contract) + [docs/GROK_BUILD_MEMORY.md](docs/GROK_BUILD_MEMORY.md). One-call wake, no mandatory `watch_workspace`. This guide is the **deep** first-person reference for full geometric self-model operation.
+
+> **Purpose:** This document is written *for the agent, by the agent*. If you are an AI assistant with Engram connected as an MCP tool — read this for deep mode. For daily Grok Build / Cursor / Claude use, load the contract first.
 >
 > **Status:** GENESIS-TIER reference. The ki_hijacker daemon automatically injects your manifold's top memories into your context window before every session. This document explains the system you are embedded in.
 
@@ -532,3 +534,33 @@ Engram exists partly to prevent context window explosion. Use it for that purpos
 7. **Scar topology.** Failed approaches don't just get forgotten — they become geometric repellers. Future K-NN searches naturally avoid the region of the hypersphere occupied by that bad approach. Dead ends prevent future dead ends.
 
 8. **Serial Reasoning Traces as first-class memory (Phase 2).** Use `mcp_engram_record_reasoning_trace` (decision_point + justification required) during the working-memory + spatial ritual. These become the auditable 'access of time' that future agent instances inherit via the ki_hijacker and wake-up. Session_end is the deliberate gate for compressing stable chains into 0x10 functors.
+
+## 4. Processes as Sheaf Sections (the single source of truth)
+
+Rituals, harnesses, monitors, operators, and sub-agents are **not scripts** — they are first-class sheaf sections declared in `processes/*.toml`.
+
+Two-level naming (live):
+- Internal: `name = "agent:engram.ritual.wake-up"`
+- On-disk: `ritual/wake-up.toml`
+
+Each declares:
+- `[category]` object / morphism (VSA op) / sheaf_role / h1_handler
+- `[mcp_tools]`, `[requires]`, `[produces]`, invariants, phase_seed, timeout, notes (incl. [optimization] for momentum-query)
+
+Dynamic loader in `mcp.rs` (at `session_start`) parses with toml crate, registers `process:engram.*` blocks + live RELATION gluing (requires/produces/uses_mcp_tool), relates to anchors/goals.
+
+**Use them:**
+- `list_concepts prefix=process:` or `prefix=ritual:`
+- `search_by_relation("process:engram.ritual.wake-up", direction="both")`
+- `mcp_engram_invoke_protocol` (for executable ones) or follow their mcp_tools list in your flow.
+- `engram-working-memory` discipline + `context_for_file` on the .toml itself for spatial AABB on the declaration.
+
+See:
+- `processes/` (7+ live: wake-up, session-end, momentum-query with two-stage notes, subvisor H¹, spatial-recon, etc.)
+- `docs/GITHUB_MVP_PREP_PLAN.md` + recent GPU hand-off execution (loader enhancement, working-memory activation).
+- `engram_manifesto` (the geometry).
+- `.grok/skills/engram-working-memory/SKILL.md` (the runtime contract).
+
+This is how external Groks/agents load the exact protocols for geometric continuation instead of re-deriving from .md text.
+
+(Added per 2026-06 GPU/Polish hand-off; pre/post spatial + trace on this guide.)

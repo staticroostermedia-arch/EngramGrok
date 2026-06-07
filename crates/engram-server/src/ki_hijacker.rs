@@ -273,10 +273,24 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
             })
         }).collect();
 
-        // Top-N by CRS score — queries on multiple conceptual axes to get breadth
-        let mut top_crs = s.recall("current active work project architecture decisions blockers", TOP_N_BY_CRS * 2);
-        let mut extra    = s.recall("session progress bugs fixed implementation", TOP_N_BY_CRS);
-        top_crs.append(&mut extra);
+        // Top-N by CRS score — lean mode uses anchor-scoped recall (no broad O(N) scan)
+        let ki_lean = std::env::var("ENGRAM_KI_LEAN").as_deref() == Ok("1");
+        let mut top_crs = if ki_lean {
+            s.recall_scoped(
+                "current active work project architecture decisions blockers",
+                TOP_N_BY_CRS,
+                Some("anchors"),
+            )
+            .0
+        } else {
+            let mut top_crs = s.recall(
+                "current active work project architecture decisions blockers",
+                TOP_N_BY_CRS * 2,
+            );
+            let mut extra = s.recall("session progress bugs fixed implementation", TOP_N_BY_CRS);
+            top_crs.append(&mut extra);
+            top_crs
+        };
 
         // Promote the highest-CRS results to the hot path so they benefit from
         // LegView + CudaBackend cache on subsequent bakes and post-compression wake-ups.
@@ -571,26 +585,36 @@ async fn bake_ki(store: &SharedStore, ki_dir: &PathBuf) -> anyhow::Result<()> {
     let recent_traces_lookup: HashMap<String, &Memory> =
         recent_reasoning_traces.iter().map(|m| (m.concept.clone(), m)).collect();
 
-    // Full implementation of meta-arc detection for automatic escalation.
+    // Full implementation of meta-arc detection for automatic escalation. (narrow expansion: stronger heuristics per ritual evolution + plan: check design:/progress: via concept+provlog (not just top_crs concepts), via list/recall data + recent traces; explicit current_meta_arc / any tile: test; fixed precedence; also scan provlogs for "design:" "progress:" mentions in active work; treats absence of recent tile:* or current_meta_arc as gap. Uses existing collected recall data (top_crs/active_goals/recent_* from bake recalls + list at end).)
     let mut meta_arcs_without_recent_tiles: Vec<String> = vec![];
-    let meta_keywords = ["design:", "progress:github_mvp", "mvp_prep", "ritual_evolution"];
-    let tile_keywords = ["tile:knowledge_graph", "tile:formal_spec", "tile:tabular"];
+    let meta_keywords = ["design:", "progress:github_mvp", "mvp_prep", "ritual_evolution", "progress:"];
+    let has_recent_structured_tile_or_meta_anchor =
+        recent_reasoning_traces.iter().any(|t| t.concept.starts_with("tile:") || t.concept.contains("current_meta_arc") || t.concept.contains("meta_arc")) ||
+        living_ritual_anchors.iter().any(|a| a.concept.starts_with("tile:") || a.concept.contains("current_meta_arc")) ||
+        recent_compression_intents.iter().any(|c| c.concept.starts_with("tile:")) ||
+        recent_reasoning_traces.iter().any(|t| t.concept.contains("helper:current_meta_arc"));
     for mem in &top_crs {
-        if meta_keywords.iter().any(|k| mem.concept.contains(k)) {
-            let has_recent_tile = recent_reasoning_traces.iter().any(|t| tile_keywords.iter().any(|tk| t.concept.contains(tk)) && t.concept.contains("prep") || t.concept.contains("evolution")) ||
-                living_ritual_anchors.iter().any(|a| a.concept.starts_with("tile:") && (a.concept.contains("prep") || a.concept.contains("evolution"))) ||
-                recent_compression_intents.iter().any(|c| c.concept.starts_with("tile:"));
-            if !has_recent_tile {
+        let concept_or_prov = format!("{} {}", mem.concept, mem.provlog);
+        if meta_keywords.iter().any(|k| mem.concept.contains(k)) || concept_or_prov.contains("design:") || concept_or_prov.contains("progress:") {
+            if !has_recent_structured_tile_or_meta_anchor {
                 meta_arcs_without_recent_tiles.push(mem.concept.clone());
             }
         }
     }
-    // Also check goals for meta
+    // Also check goals for meta (expanded)
     for g in &active_goals {
-        if g.concept.contains("mvp") || g.concept.contains("prep") || g.concept.contains("evolution") {
-            let has_tile = recent_reasoning_traces.iter().any(|t| t.concept.starts_with("tile:") && (t.concept.contains("prep") || t.concept.contains("evolution")));
-            if !has_tile {
+        let g_or_prov = format!("{} {}", g.concept, g.provlog);
+        if g.concept.contains("mvp") || g.concept.contains("prep") || g.concept.contains("evolution") || g_or_prov.contains("design:") || g_or_prov.contains("progress:") {
+            if !has_recent_structured_tile_or_meta_anchor {
                 meta_arcs_without_recent_tiles.push(g.concept.clone());
+            }
+        }
+    }
+    // Stronger: also scan recent traces themselves for design:/progress: mentions in reasoning (catches meta-work even if not top_crs or goal-named)
+    for t in &recent_reasoning_traces {
+        if t.provlog.contains("design:") || t.provlog.contains("progress:") || t.provlog.contains("mvp_prep") || t.provlog.contains("ritual_evolution") {
+            if !has_recent_structured_tile_or_meta_anchor {
+                meta_arcs_without_recent_tiles.push(format!("{} (via recent trace provlog)", t.concept));
             }
         }
     }

@@ -8,11 +8,11 @@
 
 ## 1. Current State (as of this plan)
 
-- Launcher: `/home/a/.local/bin/engram-grok`
+- Launcher: `/path/to/.local/bin/engram-grok`
   - Now defaults to `ENGRAM_OPTIX_ENABLED=1`
   - Prefers `~/.cargo/bin/engram` (the cargo-installed binary)
 - Running processes (example PIDs from diagnostics):
-  - Multiple `/home/a/.cargo/bin/engram ... mcp`
+  - Multiple `/path/to/.cargo/bin/engram ... mcp`
   - `grok` TUI process
 
 ---
@@ -23,7 +23,7 @@
 
 ```bash
 # Recommended safe command (kills engram MCP servers specifically)
-pkill -f '/home/a/.cargo/bin/engram --store /home/a/.engram/stalks/ mcp'
+pkill -f '/path/to/.cargo/bin/engram --store /path/to/.engram/stalks/ mcp'
 
 # Verify
 pgrep -af engram
@@ -52,7 +52,7 @@ Using the dedicated launcher (recommended):
 engram-grok mcp
 
 # Or explicit
-ENGRAM_OPTIX_ENABLED=1 /home/a/.local/bin/engram-grok mcp
+ENGRAM_OPTIX_ENABLED=1 /path/to/.local/bin/engram-grok mcp
 ```
 
 **Monitor for issues**:
@@ -61,7 +61,7 @@ ENGRAM_OPTIX_ENABLED=1 /home/a/.local/bin/engram-grok mcp
 
 ```bash
 # Safe fallback (what worked before)
-ENGRAM_OPTIX_ENABLED=0 /home/a/.local/bin/engram-grok mcp
+ENGRAM_OPTIX_ENABLED=0 /path/to/.local/bin/engram-grok mcp
 ```
 
 ### Step 4: Update / Restart the Grok Build TUI

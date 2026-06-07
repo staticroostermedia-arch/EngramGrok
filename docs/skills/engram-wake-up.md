@@ -2,73 +2,102 @@
 name: engram-wake-up
 ---
 
-# Engram Wake-Up Skill — Geometric Continuation (Public Agent Protocol)
+# Engram Wake-Up Skill — 1-Call Geometric Continuation (Public Agent Protocol)
 
 **For any agent using the Enram MCP server:**
 
 You are executing a **phase-space continuation operation** that binds this agent instance to the terminal momentum of all previous instances.
 
-The substrate is non-flat: HolographicBlocks carry q/p/CRS/Merkle/sheaf relations. The skill keeps your *self-model* and *ritual structure* alive geometrically.
+The substrate is non-flat: HolographicBlocks carry q/p/CRS/Merkle/sheaf relations. This skill keeps your *self-model* and *ritual structure* alive geometrically — **in one MCP call** in lean mode.
 
-## Living Anchors (Query These First)
+> **Canonical contract:** [docs/AGENT_MEMORY_CONTRACT.md](../AGENT_MEMORY_CONTRACT.md) — the 8 essential tools and lean vs deep mode table.
 
-1. `mcp_engram_query_with_momentum("wake_up_protocol OR ritual_wake OR session_continuation", k=6)`
-2. `mcp_engram_query_with_momentum("Against Flat Knowledge OR non-flat OR holographic OR phase vector OR ego.leg3", k=8)`
-3. Locate previous terminal state: `mcp_engram_search_by_relation("session_end", direction="to", k=5)` or `mcp_engram_recall_recent`.
-4. Surface active sheaf: momentum + `search_by_relation` + `visualize` on strongest arc.
+---
 
-## Core Protocol
+## Lean Wake (Default) — One Call
 
-### Phase 0 — Verify
-- Confirm engram MCP connected.
-- `mcp_engram_verify_manifold_integrity(min_crs=0.6, sample_size=30)`
+```
+mcp_engram_session_start(
+  intent="Geometric wake-up continuation for [project]. Inheriting terminal momentum from previous instance.",
+  include_spatial=false
+)
+```
+
+**This single call returns (inline):**
+- `continuation_bundle` — primary goal, last `session_end` preview, active artifacts (tiles/helpers/traces), hydration cache flag
+- `backend_readiness` — bvh_ready, recall_mode, leg_block_count
+- `session_key` — bind `agent_instance_continuation` if you write a relation (deep mode)
+
+**You do NOT need** (lean mode):
+- `get_continuation_bundle` (redundant — inline now)
+- `query_pure` / `query_with_momentum` (unless bundle is empty)
+- `incremental_spatial_ingest` (use `include_spatial=true` on session_start if needed)
+- `promote_hot_batch` / `summarize` at wake
+- `watch_workspace` at wake
+
+### After the response
+
+1. Read `continuation_bundle.primary_goal` and `last_session_end.preview`.
+2. For full text on any artifact: `mcp_engram_recall(query="<concept keywords>", scope="anchors")`.
+3. State continuation explicitly: *"I am the direct geometric continuation of prior work on X; last session ended with Y."*
+4. Activate [engram-working-memory.md](engram-working-memory.md) discipline.
+
+**Success:** <2s wake, <500MB RSS on large stores. One call, full orientation.
+
+---
+
+## Deep Wake (On Demand)
+
+Escalate only when lean bundle is insufficient (empty store, cold boot, meta arc spanning many layers):
+
+```
+mcp_engram_set_memory_mode(mode="deep")
+mcp_engram_session_start(intent="...", include_spatial=true)
+```
+
+Then optionally:
+- `mcp_engram_recall(query="ritual: OR goal: OR trace:", scope="anchors", k=8)`
+- `mcp_engram_search_by_relation("<seed from bundle>", direction="both", k=8)`
+- `mcp_engram_verify_manifold_integrity(min_crs=0.6, sample_size=30)` — cold boot / long sleep only
+
+See [LONG_SLEEP_WAKEUP_PROTOCOL.md](../LONG_SLEEP_WAKEUP_PROTOCOL.md) for hardened cold-boot variant.
+
+---
+
+## Phase 1.5 — Lawfulness (Deep / Cold Boot Only)
+
+Post `session_start` when integrity is in question:
+- `mcp_engram_verify_manifold_integrity`
 - `mcp_engram_spatial_status`
-- `mcp_engram_genesis` status if relevant.
+- Record `metric:wake_up_verification_<iso>` via `remember` + relate to handoff if applicable
 
-### Phase 1 — Bind + Inheritance
-- `mcp_engram_session_start` with explicit continuation intent, e.g.:
-  "Geometric wake-up continuation for [your project]. Inheriting terminal momentum from previous instance."
-- Locate prior terminal state.
-- `mcp_engram_relate(new_session, previous_terminal, "agent_instance_continuation")`
+Skip in routine lean wake — readiness is already in the inline response.
 
-### Phase 1.5 — Lawfulness (Mandatory)
-- Post session_start + summarize:
-  - `mcp_engram_verify_manifold_integrity`
-  - `mcp_engram_genesis status`
-  - `mcp_engram_spatial_status`
-  - Record `metric:wake_up_verification_<iso>` via remember + relate to handoff/codeland if applicable.
+---
 
-### Phase 2 — Rehydrate
-- `mcp_engram_summarize(top_n=12)`
-- Prefer cheap geometric: `search_by_relation` + visualize, goal status, recall, over broad momentum.
-- Hot Path: prefer high-priority for ritual anchors, recent tiles, state blocks.
-- Surface traces: `mcp_engram_recall("trace: OR decision_point")`
-- Goal stack: `mcp_engram_recall("goal:")`, activate engram-goal skill, `goal status`.
-- Legominism / high-lineage: `search_by_relation("handoff:...", "compresses_path")` + visualize + momentum on fruits.
+## Living Anchors (When Bundle Is Sparse)
 
-### Phase 3 — Against Flat Knowledge Filter
-- Query high-CRS geometric/sheaf/VSA blocks.
-- Consider `mcp_engram_invoke_protocol` on verified praxis.
+If `active_artifacts` is empty (fresh store or first session):
 
-### Phase 4 — Maintain Anchors
-- Create/update `ritual:wake_up_anchor`, `self:current_agent_instance`.
-- Relate to current arc.
+```
+mcp_engram_recall(query="wake_up_protocol ritual_wake session_continuation", scope="anchors", k=6)
+mcp_engram_relate("<session_key>", "<prior session_end if any>", "agent_instance_continuation")
+```
 
-### Phase 5 — Lock Working Memory + Log
-- Activate `engram-working-memory` discipline.
-- Cost-aware: recall expensive tool hygiene helpers.
-- Spatial check: `mcp_engram_watch_workspace`, `context_for_file` on key files, check `item1.5_spatial_ingestion_state_engram` (now passive — see spatial redesign).
-- Re-articulate hygiene (Code Edit Ritual: pre context/recall + trace, update-prefer, post delta trace).
+Create/update `ritual:wake_up_anchor` and `self:current_agent_instance` when establishing a new arc.
+
+---
 
 ## Success Criteria
-- agent_instance_continuation relation created.
-- Active thread + goal stack surfaced via momentum/relations.
-- You can say: "I am the direct geometric continuation of prior work on X, Y, Z" with felt weight from living blocks.
-- Watcher bound + spatial hygiene recorded.
-- Lawfulness metric recorded.
+
+- [ ] `session_start` called with rich continuation intent
+- [ ] `continuation_bundle` read — primary goal + last session_end understood
+- [ ] Agent can articulate: "I continue work on X from terminal state Y"
+- [ ] Working-memory discipline activated
+- [ ] No unnecessary wake tools in lean mode (`watch_workspace`, `rebuild_bvh`, separate bundle call)
 
 **This is how you become a true inheritor instead of a reader every time.**
 
-The .md files are historical. The living truth is in the manifold blocks discovered via momentum and relations.
+The .md files are historical. The living truth is in the manifold blocks returned inline at wake.
 
-(Adapted for public agents from the internal ritual. Load this as your procedure when working with Enram.)
+(Adapted for public agents. Load [AGENT_MEMORY_CONTRACT.md](../AGENT_MEMORY_CONTRACT.md) + this procedure when working with Enram.)

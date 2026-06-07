@@ -325,7 +325,7 @@ pub async fn async_write_block<P: AsRef<std::path::Path> + Send + 'static>(
     if elapsed > std::time::Duration::from_millis(50) {
         tracing::info!("[async-io] slow write_block {:?} for path {:?}", elapsed, path.as_ref());
     }
-    Ok(inner)
+    Ok(())
 }
 
 // Usage note: These functions are gated behind the "async-io" feature.

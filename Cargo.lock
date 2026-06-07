@@ -717,6 +717,7 @@ dependencies = [
  "engram-core",
  "engram-gpu",
  "flume",
+ "libc",
  "notify",
  "notify-debouncer-full",
  "regex",

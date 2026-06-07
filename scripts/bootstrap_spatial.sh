@@ -4,7 +4,7 @@
 
 set -e
 
-ENGRA M_ROOT="/home/a/Documents/Engram"
+ENGRA M_ROOT="/path/to/Documents/Engram"
 
 echo "=== Item 1.5 Spatial Bootstrap ==="
 echo "This will use mcp_engram_force_spatial_ingest on priority directories."

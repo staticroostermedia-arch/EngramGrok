@@ -135,23 +135,27 @@ impl CudaBackend {
             device_resident_buffers: RwLock::new(HashMap::new()),
         };
 
-        // Kick off background BVH build so first query is fast.
-        // The thread holds a cloned Arc — no raw pointers, no dangling references.
-        let path_clone = path.clone();
-        std::thread::Builder::new()
-            .name("engram-bvh-build".to_string())
-            .spawn(move || {
-                let t0 = std::time::Instant::now();
-                eprintln!("[BVH] Background build started…");
-                let new_bvh = BvhManifold::build_from_dir(&path_clone);
-                if let Ok(mut guard) = bvh.write() {
-                    let n = new_bvh.as_ref().map_or(0, |b| b.len());
-                    *guard = new_bvh;
-                    eprintln!("[BVH] ✓ Background build complete: {} concepts in {:.1}s",
-                        n, t0.elapsed().as_secs_f32());
-                }
-            })
-            .ok();
+        // Kick off background BVH build so first query is fast — unless deferred
+        // (MCP mode on 50k+ manifolds sets ENGRAM_DEFER_BVH=1 to avoid 10–30GB RAM spikes).
+        if std::env::var("ENGRAM_DEFER_BVH").as_deref() != Ok("1") {
+            let path_clone = path.clone();
+            std::thread::Builder::new()
+                .name("engram-bvh-build".to_string())
+                .spawn(move || {
+                    let t0 = std::time::Instant::now();
+                    eprintln!("[BVH] Background build started…");
+                    let new_bvh = BvhManifold::build_from_dir(&path_clone);
+                    if let Ok(mut guard) = bvh.write() {
+                        let n = new_bvh.as_ref().map_or(0, |b| b.len());
+                        *guard = new_bvh;
+                        eprintln!("[BVH] ✓ Background build complete: {} concepts in {:.1}s",
+                            n, t0.elapsed().as_secs_f32());
+                    }
+                })
+                .ok();
+        } else {
+            eprintln!("[BVH] Build deferred (ENGRAM_DEFER_BVH=1) — queries use CPU scan until explicit rebuild");
+        }
 
         backend
     }
@@ -163,6 +167,62 @@ impl CudaBackend {
         if let Ok(mut guard) = self.bvh.write() {
             *guard = bvh;
         }
+    }
+
+    /// True when the BVH index is built and non-empty.
+    pub fn bvh_is_ready(&self) -> bool {
+        if let Ok(guard) = self.bvh.read() {
+            guard.as_ref().is_some_and(|b| !b.is_empty())
+        } else {
+            false
+        }
+    }
+
+    /// Whether a CUDA-capable GPU was detected at startup.
+    pub fn is_gpu_available(&self) -> bool {
+        self.gpu_available
+    }
+
+    /// Kick off a background BVH build (on-demand after ENGRAM_DEFER_BVH=1).
+    /// Returns true if a build thread was spawned.
+    pub fn rebuild_bvh_async(&self) -> bool {
+        if let Ok(mut guard) = self.bvh.write() {
+            *guard = None;
+        }
+        let bvh_arc = Arc::clone(&self.bvh);
+        let path_clone = self.store_path.clone();
+        std::thread::Builder::new()
+            .name("engram-bvh-on-demand".to_string())
+            .spawn(move || {
+                let t0 = std::time::Instant::now();
+                eprintln!("[BVH] On-demand build started…");
+                let new_bvh = BvhManifold::build_from_dir(&path_clone);
+                if let Ok(mut guard) = bvh_arc.write() {
+                    let n = new_bvh.as_ref().map_or(0, |b| b.len());
+                    *guard = new_bvh;
+                    eprintln!(
+                        "[BVH] ✓ On-demand build complete: {} concepts in {:.1}s",
+                        n,
+                        t0.elapsed().as_secs_f32()
+                    );
+                }
+            })
+            .is_ok()
+    }
+
+    fn leg_block_count(&self) -> usize {
+        std::fs::read_dir(&self.store_path)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.path()
+                            .extension()
+                            .and_then(|x| x.to_str())
+                            == Some("leg")
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
     }
 
     /// Check if a CUDA-capable GPU is reachable.
@@ -278,6 +338,12 @@ impl VsaBackend for CudaBackend {
 
         if best_bvh_score >= BVH_FALLBACK_THRESHOLD {
             bvh_results
+        } else if self.leg_block_count() > 10_000 {
+            // Large manifold without a usable BVH: never O(N) scan 100k+ blocks.
+            tracing::debug!(
+                "[CudaBackend] BVH miss on large manifold — skipping CPU full scan (use rebuild_bvh)"
+            );
+            vec![]
         } else {
             tracing::debug!(
                 "[CudaBackend] BVH best score {:.4} < {:.3} — falling back to CPU linear scan",
@@ -290,13 +356,12 @@ impl VsaBackend for CudaBackend {
     fn store(&self, concept: &str, block: Leg3Pointer) -> Result<()> {
         let result = self.cpu.store(concept, block);
         // Trigger a background BVH rebuild so the new block is indexed.
-        // We invalidate first so in-flight queries fall back to CPU scan,
-        // then rebuild in a background thread (non-blocking).
-        if result.is_ok() {
+        // Skip when ENGRAM_DEFER_BVH=1 — each store was spawning a full 181k scan
+        // (incremental_spatial × 22 items = 22 parallel rebuilds → 40GB RSS death).
+        if result.is_ok() && std::env::var("ENGRAM_DEFER_BVH").as_deref() != Ok("1") {
             if let Ok(mut guard) = self.bvh.write() {
-                *guard = None; // invalidate — queries fall back to CPU until rebuild
+                *guard = None;
             }
-            // Clone the Arc — thread holds a stable reference, no raw pointers.
             let bvh_arc = Arc::clone(&self.bvh);
             let path_clone = self.store_path.clone();
             std::thread::Builder::new()
@@ -427,7 +492,8 @@ impl CudaBackend {
                     // with the high_priority_cache. Respects the same protection rules (trace:/tile:/helper:/ritual:).
                     #[cfg(feature = "device_residency")]
                     if let Ok(mut dev_map) = self.device_resident_buffers.write() {
-                        if dev_map.remove(&old_key).is_some() {
+                        if let Some(old_buf) = dev_map.remove(&old_key) {
+                            crate::cuda_dispatch::free_device_ptr(old_buf.gpu_ptr);
                             tracing::debug!("[device-residency] evicted device buffer for {}", old_key);
                         }
                     }
@@ -517,26 +583,39 @@ impl CudaBackend {
     /// Will be called from promote_to_high_priority when device_residency is enabled.
     #[cfg(feature = "device_residency")]
     pub fn register_hot_item_for_device_residency(&self, concept: &str, _size: usize) -> bool {
-        // Concrete lifecycle step (Tier 3.1, trace:1780023403).
-        // Stub implementation: creates a DeviceResidentBuffer entry and inserts into the map.
-        // Real path (future, when cuFile/nvidia-fs + drivers present):
-        //   cuFileHandleRegister + cuFileBufRegister or GPUDirect staging from .leg via O_DIRECT bypass.
-        // Eviction and lifetime tied to high_priority_cache + compute_eviction_score (AccessIndex LRU).
-        // Metrics (register time) feed dual-lens [DUAL_LENS_SNAPSHOT] re-hydration cost.
-        // References: helper:current_arc_status_gpu_item2_phase2_handoff_2026-06 (superposition 56),
-        // plan §3.1, and the pre-edit spatial recon (backend__struct__deviceresidentbuffer + promote lines 359-392).
+        // Lean device residency: stage hot q-vector to GPU VRAM (cudaMalloc + H2D).
+        // Future: cuFile/GDS direct NVMe→GPU for the same .leg path.
+        let q = if let Ok(cache) = self.high_priority_cache.read() {
+            cache.get(concept).map(|b| b.q)
+        } else {
+            None
+        };
+        let Some(q) = q else {
+            return false;
+        };
+
+        let gpu_ptr = crate::cuda_dispatch::upload_hot_q_to_device(&q).unwrap_or(0);
         let buffer = DeviceResidentBuffer {
-            cu_file_handle: 0, // Placeholder; real = cuFile handle or nvidia-fs registration
-            gpu_ptr: 0,        // Placeholder; real = cudaMalloc / cuMemAlloc result
+            cu_file_handle: 0,
+            gpu_ptr,
             size: _size,
             concept: concept.to_string(),
         };
 
         if let Ok(mut map) = self.device_resident_buffers.write() {
-            map.insert(concept.to_string(), buffer);
-            tracing::debug!("[device-residency] registered stub buffer for {} (size {}B)", concept, _size);
+            if let Some(old) = map.insert(concept.to_string(), buffer) {
+                crate::cuda_dispatch::free_device_ptr(old.gpu_ptr);
+            }
+            tracing::debug!(
+                "[device-residency] registered GPU buffer for {} (ptr={:#x})",
+                concept,
+                gpu_ptr
+            );
             true
         } else {
+            if gpu_ptr != 0 {
+                crate::cuda_dispatch::free_device_ptr(gpu_ptr);
+            }
             tracing::warn!("[device-residency] failed to acquire device map write lock for {}", concept);
             false
         }

@@ -1,7 +1,7 @@
 # Phase C – Buffer Companion Patch Artifact
 
 **Source**: Extracted from `conv_task_elevate_praxis_to_operational_protocols.md` (Phase C Execution – Buffer Companion Sketch)
-**Target**: `/home/a/Documents/CodeLand/crates/monad_praxis/src/buffer.rs`
+**Target**: `/path/to/Documents/CodeLand/crates/monad_praxis/src/buffer.rs`
 **Date**: 2026-05-26
 **Status**: Ready to apply (review + manual edit)
 

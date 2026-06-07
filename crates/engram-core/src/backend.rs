@@ -542,6 +542,16 @@ impl VsaBackend for SheafBackend {
 /// interpretive lens: same cosine score, Ego-recognized content wins.
 ///
 /// When `ego_q` is `None`, D3 is pure structural stability (backward compat).
+/// Score a single block against a query vector (Dirichlet composite).
+pub fn score_memory(
+    concept: String,
+    query: &[Complex32; 8192],
+    block: &crate::types::HolographicBlock,
+    ego_q: Option<&[Complex32; 8192]>,
+) -> Memory {
+    score_block(concept, query, block, ego_q)
+}
+
 fn score_block(
     concept: String,
     query: &[Complex32; 8192],

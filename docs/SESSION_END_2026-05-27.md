@@ -146,16 +146,16 @@ ENGRAM_OPTIX_ENABLED=0 engram-grok mcp
 **Direct binary equivalent:**
 
 ```bash
-ENGRAM_OPTIX_ENABLED=0 /home/a/.cargo/bin/engram --store /home/a/.engram/stalks/ mcp
+ENGRAM_OPTIX_ENABLED=0 /path/to/.cargo/bin/engram --store /path/to/.engram/stalks/ mcp
 ```
 
 (Or prefix any manual invocation the same way.)
 
 This matches the behavior the user described as the pre-restart / start-of-day state where the MCP layer remained responsive.
 
-Once `cargo install --path crates/engram-server --force` (or equivalent) is run with the current source (including the lazy OptiX change in [crates/engram-gpu/src/bvh.rs](/home/a/Documents/Engram/crates/engram-gpu/src/bvh.rs)), the full OptiX=1 path becomes viable again because the expensive ~150k-primitive GAS/pipeline/SBT work is deferred out of the critical MCP handshake window into first actual spatial query.
+Once `cargo install --path crates/engram-server --force` (or equivalent) is run with the current source (including the lazy OptiX change in [crates/engram-gpu/src/bvh.rs](/path/to/Engram/crates/engram-gpu/src/bvh.rs)), the full OptiX=1 path becomes viable again because the expensive ~150k-primitive GAS/pipeline/SBT work is deferred out of the critical MCP handshake window into first actual spatial query.
 
-The launcher at `/home/a/.local/bin/engram-grok` currently forces `ENGRAM_OPTIX_ENABLED=1` (line 27). The top comment is stale. Override with the env var above until the built binary carries the lazy initialization.
+The launcher at `/path/to/.local/bin/engram-grok` currently forces `ENGRAM_OPTIX_ENABLED=1` (line 27). The top comment is stale. Override with the env var above until the built binary carries the lazy initialization.
 
 ### Lazy OptiX Fix Status (Source Truth)
 - Change landed in source: `optix_pipeline` is now `Mutex<Option<OptixBvhPipeline>>`, initialized to None at construction, built on first use inside `query()` (with env check).

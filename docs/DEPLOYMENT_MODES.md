@@ -22,14 +22,18 @@ User → IDE → Cloud LLM (Gemini / Claude / GPT-4)
                Engram (local memory, 50+ MCP tools — surface evolves; always `search_tool` first for exact current schema)
 ```
 
-**Setup:**
+**Setup:** See [`integrations/README.md`](../integrations/README.md). Minimal config:
+
 ```json
-// ~/.gemini/antigravity/mcp_config.json
 {
   "mcpServers": {
     "engram": {
-      "command": "engram",
-      "args": ["mcp"]
+      "command": "/path/to/Engram/scripts/engram-grok",
+      "args": ["mcp"],
+      "env": {
+        "ENGRAM_STORE": "~/.engram/stalks/",
+        "ENGRAM_PROFILE": "agent"
+      }
     }
   }
 }

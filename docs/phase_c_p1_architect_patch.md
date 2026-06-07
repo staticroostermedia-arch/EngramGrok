@@ -1,7 +1,7 @@
 # Phase C – P1 Patch Artifact: mint_praxis_block_as_public_executable_protocol
 
 **Source**: Extracted from `conv_task_elevate_praxis_to_operational_protocols.md` (Phase C Execution – P1 Sketch)
-**Target**: `/home/a/Documents/CodeLand/crates/monad_praxis/src/architect.rs`
+**Target**: `/path/to/Documents/CodeLand/crates/monad_praxis/src/architect.rs`
 **Date**: 2026-05-26
 **Status**: Ready to apply (review + `git apply` or manual)
 

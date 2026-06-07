@@ -10,9 +10,9 @@ echo "   (Run: mcp_engram_read_concept concept:item1.5_spatial_ingestion_state_e
 
 echo ""
 echo "2. Quick verification on key files:"
-echo "   context_for_file path:\"/home/a/Documents/Engram/crates/engram-server/src/store.rs\""
-echo "   context_for_file path:\"/home/a/Documents/Engram/.grok/skills/engram-wake-up/SKILL.md\""
+echo "   context_for_file path:\"/path/to/Documents/Engram/crates/engram-server/src/store.rs\""
+echo "   context_for_file path:\"/path/to/Documents/Engram/.grok/skills/engram-wake-up/SKILL.md\""
 
 echo ""
 echo "3. If you want to force a refresh right now:"
-echo "   mcp_engram_force_spatial_ingest paths:[\"/home/a/Documents/Engram/crates/engram-server/src\"] recursive:true"
+echo "   mcp_engram_force_spatial_ingest paths:[\"/path/to/Documents/Engram/crates/engram-server/src\"] recursive:true"
