@@ -28,7 +28,7 @@ blank every session.
   containing the ~149k real .leg primitives so that SheafBackend + CudaBackend
   actually see the data for O(log N) queries.
 - The engram binary is (being) rebuilt from source in this environment with
-  `OPTIX_SDK_PATH=/home/a/optix` and `ENGRAM_OPTIX_ENABLED=1` so the full
+  `OPTIX_SDK_PATH=/path/to/optix` and `ENGRAM_OPTIX_ENABLED=1` so the full
   intended CudaBackend + LBVH + OptiX RT-core path is compiled in for the
   RTX 5060 Ti (SM 12.0) hardware.
 
@@ -37,8 +37,8 @@ blank every session.
 1. After any significant change to Engram source or the OptiX/CUDA stack,
    re-run the rebuild with the same environment:
    ```
-   cd /home/a/Documents/Engram
-   OPTIX_SDK_PATH=/home/a/optix ENGRAM_OPTIX_ENABLED=1 \
+   cd /path/to/Engram
+   OPTIX_SDK_PATH=/path/to/optix ENGRAM_OPTIX_ENABLED=1 \
    cargo install --path crates/engram-server --force
    ```
    Then re-invoke `engram-grok` (or let Grok respawn the MCP server).
@@ -51,7 +51,7 @@ blank every session.
    not currently link `engram-gpu`. Use the MCP tools (via Grok or another
    client) or the `engram` server binary for accelerated paths.
 
-4. When working inside `/home/a/Documents/Engram` or `/home/a/Documents/CodeLand`,
+4. When working inside `/path/to/Engram` or `/path/to/Documents/CodeLand`,
    the project-scoped `.grok/config.toml` files take precedence and already
    reference the overall integration.
 

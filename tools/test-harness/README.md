@@ -85,7 +85,7 @@ Pure-Python, no external deps beyond stdlib. Acts as a real MCP client:
 Run it standalone for ad-hoc debugging:
 ```bash
 python3 tools/test-harness/python/mcp_test_client.py \
-  --binary /home/a/.engram-ac3509a9/bin/engram \
+  --binary /path/to/.engram-ac3509a9/bin/engram \
   --store /tmp/harness-test-$$ \
   --suite transport-lifetime --iterations 15 --verbose
 ```
@@ -95,7 +95,7 @@ python3 tools/test-harness/python/mcp_test_client.py \
 From repo root, inside a TUI session connected to the stable server (so you also have live MCP tools for recording results):
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Documents/Engram
 
 # Minimal health gate (fast)
 tools/test-harness/bin/engram-harness.sh --suite health

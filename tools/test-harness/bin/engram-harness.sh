@@ -178,8 +178,8 @@ if $REPRO_PRE_FIX; then
   #   3. Does not force-clean .leg-http.pid
   #   4. May launch without the exact KI env
   echo -e "${YELLOW}REPRO MODE: Simulating pre-fix (May 31) wrapper logic${RESET}"
-  if [[ -x "/home/a/.cargo/bin/engram" ]]; then
-    EFFECTIVE_BIN="/home/a/.cargo/bin/engram"
+  if [[ -x "/path/to/.cargo/bin/engram" ]]; then
+    EFFECTIVE_BIN="/path/to/.cargo/bin/engram"
   elif [[ -x "$REPRO_BIN" ]]; then
     EFFECTIVE_BIN="$REPRO_BIN"
   elif command -v engram >/dev/null 2>&1; then

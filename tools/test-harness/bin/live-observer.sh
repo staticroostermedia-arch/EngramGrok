@@ -25,7 +25,7 @@ echo "Press Ctrl-C to stop. Also watch your TUI for any MCP symptoms."
 MON_PID=$!
 
 # Log tails (common locations)
-for log in ~/.grok/logs/mcp/engram.stderr.log /tmp/*.log /home/a/Documents/Engram/*.log 2>/dev/null; do
+for log in ~/.grok/logs/mcp/engram.stderr.log /tmp/*.log /path/to/Documents/Engram/*.log 2>/dev/null; do
   if [[ -f "$log" ]]; then
     tail -f "$log" | grep --line-buffered -iE '(transport|closed|mcp-fast|pipeline|lbvh|bvh|starv|error|ready|ki_hijacker)' &
   fi

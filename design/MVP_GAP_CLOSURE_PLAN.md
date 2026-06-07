@@ -87,7 +87,7 @@ WAL sidecar protocol, full H¹ audit — post-MVP.
 cargo build -p engram-server
 target/debug/engram --version
 
-STABLE_BIN=/home/a/Documents/Engram/target/debug/engram \
+STABLE_BIN=/path/to/Engram/target/debug/engram \
   tools/test-harness/bin/engram-harness.sh --suite agent-memory
 ```
 

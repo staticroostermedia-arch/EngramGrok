@@ -509,7 +509,7 @@ class MCPTestClient:
                 "scope": "anchors",
             }),
             ("mcp_engram_context_for_edit", {
-                "path": "/home/a/Documents/Engram/crates/engram-server/src/profile.rs",
+                "path": "/path/to/Documents/Engram/crates/engram-server/src/profile.rs",
                 "auto_ingest": True,
             }),
             ("mcp_engram_quick_trace", {

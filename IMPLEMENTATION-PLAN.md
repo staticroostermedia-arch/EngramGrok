@@ -1,5 +1,5 @@
 # IMPLEMENTATION PLAN: Monad Agent Memory Pre-Contextualization System
-# See full plan: /home/a/.gemini/antigravity/brain/306c13e9-3cea-4a77-99c1-27497f667441/agent_precontextualization_plan.md
+# See full plan: /path/to/.gemini/antigravity/brain/306c13e9-3cea-4a77-99c1-27497f667441/agent_precontextualization_plan.md
 
 ## Phase Sequence
 
@@ -31,7 +31,7 @@
 - Pinned blocks (CRS=1.0) survive autophagy. Genesis blocks must be pinned.
 
 ## Deployment Notes
-- Binary installed at: `/home/a/.local/bin/engram` (IDE MCP path — must update this one)
+- Binary installed at: `/path/to/.local/bin/engram` (IDE MCP path — must update this one)
 - `cargo install` writes to `~/.cargo/bin/engram` — **always copy to `.local/bin` too**
 - Command: `cargo build --release -p engram-server && cp target/release/engram ~/.local/bin/engram`
 - IDE must be restarted to unlock the binary before copying (Text file busy otherwise)

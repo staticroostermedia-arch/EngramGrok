@@ -15,7 +15,7 @@
 
 ### Default / Recommended (auto-detect best backend)
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 cargo check -p engram-core -p engram-gpu -p engram-server
 cargo install --path crates/engram-server
 ```
@@ -77,13 +77,13 @@ engram mcp --store ~/ .engram/stalks/
 ```
 
 **Key observed details from startup log:**
-- Store root: `/home/a/.engram/stalks/`
+- Store root: `/path/to/.engram/stalks/`
 - Stalks loaded: multiple (including `hadwiger_nelson`, `inbox`, `ego.leg3`)
-- Ego resonance active: `Ego q-vector loaded from /home/a/.engram/ego.leg3` (new memories CRS-gated by Ego)
+- Ego resonance active: `Ego q-vector loaded from /path/to/.engram/ego.leg3` (new memories CRS-gated by Ego)
 - Backend: `engram-gpu: CUDA device detected` + `Sheaf × CudaBackend – 4 stalks with BVH K-NN`
 - Ki_hijacker configuration (hard in this build):
   - Profile: Grok Build TUI
-  - Artifacts directory: `/home/a/.gemini/antigravity/knowledge/active_engram_context/artifacts`
+  - Artifacts directory: `/path/to/.gemini/antigravity/knowledge/active_engram_context/artifacts`
   - Override env var: `ENGRAM_KI_ARTIFACTS_DIR`
   - Ticking every 60s, injecting context.md + context.json sidecar
 - Health watchdog: No processes configured (disabled / no-op)
@@ -121,7 +121,7 @@ help: package with the missing feature: engram-gpu
 **Correct command to force wgpu-backend fallback (Linux + CUDA machine, to avoid the currently crashing CUDA LBVH path):**
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 cargo install --path crates/engram-server --features engram-gpu/wgpu-backend
 ```
 
@@ -134,7 +134,7 @@ cargo install --path crates/engram-server --no-default-features --features engra
 After this install, relaunch with the same command + env var you used in the log that showed the DUAL_LENS_SNAPSHOTS:
 
 ```bash
-ENGRAM_KI_ARTIFACTS_DIR=/home/a/.gemini/antigravity/knowledge/active_engram_context/artifacts \
+ENGRAM_KI_ARTIFACTS_DIR=/path/to/.gemini/antigravity/knowledge/active_engram_context/artifacts \
 engram mcp --store ~/.engram/stalks/
 ```
 
@@ -154,7 +154,7 @@ This is by design ("auto-detect best backend"), but it means there is currently 
 **Immediate workaround (use this to get a working server right now):**
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 
 # Make the CUDA probe fail so build.rs falls through to wgpu
 CUDA_HOME=/tmp/nonexistent cargo install --path crates/engram-server
@@ -189,7 +189,7 @@ Add this section to the tracked config so we don't forget the workaround.
 
 1. Get a backtrace (this is the single highest-leverage thing):
    ```bash
-   gdb --args /home/a/.cargo/bin/engram mcp --store ~/.engram/stalks/
+   gdb --args /path/to/.cargo/bin/engram mcp --store ~/.engram/stalks/
    ```
    Inside gdb:
    ```
@@ -217,7 +217,7 @@ Update rule: Keep this section current as we gather more data.
 - Small LBVHs built for other stalks.
 - Large LBVH for main manifold (~154473 blocks) still triggers the exact same segfault right after "LBVH ready".
 - User started GDB on the installed binary.
-- GDB reports: **(No debugging symbols found in /home/a/.cargo/bin/engram)**
+- GDB reports: **(No debugging symbols found in /path/to/.cargo/bin/engram)**
 
 This confirms the root problem: we are debugging a stripped release binary. We cannot see the exact line or call stack.
 
@@ -227,7 +227,7 @@ Build and run a debug binary that has full symbols.
 Recommended right now (fastest path to symbols):
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 
 # Build debug version (has symbols by default)
 cargo build --package engram-server
@@ -277,7 +277,7 @@ If you can still type them before quitting, do it and paste the output.
 **For the next attempt (much better backtrace):**
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 
 # Rebuild with forced frame pointers (dramatically improves unwinding on crashes)
 RUSTFLAGS="-C force-frame-pointers=yes" cargo build --package engram-server
@@ -332,7 +332,7 @@ The patch was applied via the agent's edit tools (no hand editing by the user).
 **Rebuild commands (run these now):**
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 
 # Debug build (for GDB / future diagnostics)
 RUSTFLAGS="-C force-frame-pointers=yes" cargo build --package engram-server
@@ -344,7 +344,7 @@ cargo install --path crates/engram-server
 **Test launch (exact command you have been using):**
 
 ```bash
-ENGRAM_KI_ARTIFACTS_DIR=/home/a/.gemini/antigravity/knowledge/active_engram_context/artifacts \
+ENGRAM_KI_ARTIFACTS_DIR=/path/to/.gemini/antigravity/knowledge/active_engram_context/artifacts \
 engram mcp --store ~/.engram/stalks/
 ```
 
@@ -429,7 +429,7 @@ Build a stable `engram-stable` binary from a known-good commit, keep it installe
 Example (using a commit before the heavy device-residency/hot-path changes that introduced the current segfault):
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 
 # Stash any uncommitted work on the current branch
 git stash
@@ -449,7 +449,7 @@ The stable binary will be at:
 Launch command using the stable binary (with your TUI context):
 
 ```bash
-ENGRAM_KI_ARTIFACTS_DIR=/home/a/.gemini/antigravity/knowledge/active_engram_context/artifacts \
+ENGRAM_KI_ARTIFACTS_DIR=/path/to/.gemini/antigravity/knowledge/active_engram_context/artifacts \
 ~/.engram-stable/bin/engram mcp --store ~/.engram/stalks/
 ```
 
@@ -463,21 +463,21 @@ Inspection of the filesystem:
 - `~/.cargo/bin/engram` (the one you have been `cargo install`ing into) was last modified **today at 10:49** — this is your latest dev build. It overwrote whatever was there this morning.
 
 - There is still an older binary at:
-  `/home/a/.local/bin/engram`
+  `/path/to/.local/bin/engram`
   Last modified: **2026-05-21 10:43**
 
-- There's also a tiny `/home/a/.local/bin/engram-grok` (May 26).
+- There's also a tiny `/path/to/.local/bin/engram-grok` (May 26).
 
 **Conclusion:**
 The exact binary you killed this morning is gone (overwritten by `cargo install`).
 
-However, the May 21 binary at `/home/a/.local/bin/engram` is an excellent candidate for a "known working" version from before the recent device-residency / hot-path / LBVH changes on this branch that introduced the current segfault.
+However, the May 21 binary at `/path/to/.local/bin/engram` is an excellent candidate for a "known working" version from before the recent device-residency / hot-path / LBVH changes on this branch that introduced the current segfault.
 
 **Recommended immediate test (use the old binary with your current TUI context):**
 
 ```bash
-ENGRAM_KI_ARTIFACTS_DIR=/home/a/.gemini/antigravity/knowledge/active_engram_context/artifacts \
-/home/a/.local/bin/engram mcp --store ~/.engram/stalks/
+ENGRAM_KI_ARTIFACTS_DIR=/path/to/.gemini/antigravity/knowledge/active_engram_context/artifacts \
+/path/to/.local/bin/engram mcp --store ~/.engram/stalks/
 ```
 
 If this one starts cleanly and stays up, you now have a working server for daily use while we debug the current branch.
@@ -496,7 +496,7 @@ Best practical target: the remote tracking branch `origin/docs/rename-agent-self
 Commands to build a stable binary from that state:
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 
 git stash push -m "temp stash for stable binary build"
 
@@ -516,7 +516,7 @@ Stable binary will be at:
 Launch command (with your TUI context):
 
 ```bash
-ENGRAM_KI_ARTIFACTS_DIR=/home/a/.gemini/antigravity/knowledge/active_engram_context/artifacts \
+ENGRAM_KI_ARTIFACTS_DIR=/path/to/.gemini/antigravity/knowledge/active_engram_context/artifacts \
 ~/.engram-2days-ago/bin/engram mcp --store ~/.engram/stalks/
 ```
 
@@ -535,7 +535,7 @@ This is significantly newer than the May 21 binary and represents the actual "la
 **Precise commands to build the exact binary from that commit:**
 
 ```bash
-cd /home/a/Documents/Engram
+cd /path/to/Engram
 
 git stash push -m "temp stash for ac3509a9 stable binary"
 
@@ -553,7 +553,7 @@ Stable binary location:
 **Launch command (with your exact current TUI context):**
 
 ```bash
-ENGRAM_KI_ARTIFACTS_DIR=/home/a/.gemini/antigravity/knowledge/active_engram_context/artifacts \
+ENGRAM_KI_ARTIFACTS_DIR=/path/to/.gemini/antigravity/knowledge/active_engram_context/artifacts \
 ~/.engram-ac3509a9/bin/engram mcp --store ~/.engram/stalks/
 ```
 
@@ -569,7 +569,7 @@ Use this stable binary for daily work while we continue debugging the current de
 - `~/.engram-ac3509a9/bin/engram` (built exactly from commit ac3509a9084bcb82ce6f76e47d40eeac1c9a727c) started cleanly.
 - Used the user's observed launch environment:
   ```bash
-  ENGRAM_KI_ARTIFACTS_DIR=/home/a/.gemini/antigravity/knowledge/active_engram_context/artifacts \
+  ENGRAM_KI_ARTIFACTS_DIR=/path/to/.gemini/antigravity/knowledge/active_engram_context/artifacts \
   ~/.engram-ac3509a9/bin/engram mcp --store ~/.engram/stalks/
   ```
 - Grok Build TUI restarted successfully against the stable server.
@@ -577,8 +577,8 @@ Use this stable binary for daily work while we continue debugging the current de
 
 **Current daily driver state:**
 - Stable binary (ac3509a9) is the active server for normal TUI work.
-- Dev branch (`docs/rename-agent-self-model`) retains the temporary large-manifold guard in [crates/engram-gpu/src/bvh.rs](/home/a/Documents/Engram/crates/engram-gpu/src/bvh.rs) (returns valid empty BvhManifold + clear WARNING + DIAG line for n>100k, plus the 128 MiB dedicated stack thread path) so diagnosis of the post-"LBVH ready" segfault under CUDA can continue without blocking the user.
-- This agent context attempted full engram-wake-up ritual (per [.grok/skills/engram-wake-up/SKILL.md](/home/a/Documents/Engram/.grok/skills/engram-wake-up/SKILL.md)) immediately after the user's TUI restart report. MCP transport was closed for watch_workspace + session_start in this CLI execution (substrate signal recorded; the user's TUI session has the live connection to the stable server and therefore the active legominism rehydration).
+- Dev branch (`docs/rename-agent-self-model`) retains the temporary large-manifold guard in [crates/engram-gpu/src/bvh.rs](/path/to/Engram/crates/engram-gpu/src/bvh.rs) (returns valid empty BvhManifold + clear WARNING + DIAG line for n>100k, plus the 128 MiB dedicated stack thread path) so diagnosis of the post-"LBVH ready" segfault under CUDA can continue without blocking the user.
+- This agent context attempted full engram-wake-up ritual (per [.grok/skills/engram-wake-up/SKILL.md](/path/to/Engram/.grok/skills/engram-wake-up/SKILL.md)) immediately after the user's TUI restart report. MCP transport was closed for watch_workspace + session_start in this CLI execution (substrate signal recorded; the user's TUI session has the live connection to the stable server and therefore the active legominism rehydration).
 
 **Ritual continuation performed:**
 - Read current wake-up skill definition + working-memory discipline.

@@ -112,7 +112,7 @@ fn load_process_sheaf(store: &SharedStore) -> Result<(), String> {
     // executable and queryable via search_by_relation / visualize / momentum as first-class sheaf sections.
     // Supports subvisor H¹, gluing, continuity. Spatial AABB on the toml defs themselves is handled by daemon/force + engram-ast (see extract_toml_structure).
     // Called at mcp_engram_session_start for dynamic registration at wake-up boundary.
-    // NOTE: Fully portable for public clones (no /home/a paths). See processes/, docs/GITHUB_MVP_PREP_PLAN.md, AGENT_INTEGRATION_GUIDE.md.
+    // NOTE: Fully portable for public clones (no /path/to paths). See processes/, docs/GITHUB_MVP_PREP_PLAN.md, AGENT_INTEGRATION_GUIDE.md.
     let t_load = std::time::Instant::now();
     eprintln!("TIMING[load_process_sheaf]: start (T1 diagnostic for wake hang repro)");
     let base = std::env::var("ENGRAM_PROCESSES_DIR")

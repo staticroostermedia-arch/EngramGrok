@@ -7,7 +7,7 @@
 **Prerequisites (must be completed before starting this checklist)**
 - [ ] Updated `engram` binary installed via `cargo install --path crates/engram-server --force` (or equivalent)
 - [ ] Old `engram mcp` process killed
-- [ ] New MCP server launched via `/home/a/.local/bin/engram-grok mcp` (or respawned by Grok TUI)
+- [ ] New MCP server launched via `/path/to/.local/bin/engram-grok mcp` (or respawned by Grok TUI)
 - [ ] Verification: `search_tool` (query: "engram" or "invoke_protocol") now shows `mcp_engram_invoke_protocol` (and any remember_protocol exposure)
 
 ---

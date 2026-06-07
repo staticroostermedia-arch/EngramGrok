@@ -35,7 +35,7 @@
 
 ## Prerequisites (15s)
 
-- Working dir: `/home/a/Documents/Engram`
+- Working dir: `/path/to/Documents/Engram`
 - Python 3 (for static http.server)
 - `engram` CLI available for live phase (optional but recommended)
 - Browser with JS (any modern)
@@ -48,7 +48,7 @@
 
 **Launch Command (copy-paste entire block):**
 ```bash
-cd /home/a/Documents/Engram && python3 -m http.server 8765 --directory tools/leg-browser >/dev/null 2>&1 & SERVER=$!; sleep 1.5; (open "http://localhost:8765" || xdg-open "http://localhost:8765" || echo "Open http://localhost:8765 manually"); echo "LEG Browser v0.5+ static open. Hero + Review button + fresh sub-agent tiles should be visible immediately (WS0 closure). Run full checklist below. Kill with: kill $SERVER"; wait $SERVER
+cd /path/to/Documents/Engram && python3 -m http.server 8765 --directory tools/leg-browser >/dev/null 2>&1 & SERVER=$!; sleep 1.5; (open "http://localhost:8765" || xdg-open "http://localhost:8765" || echo "Open http://localhost:8765 manually"); echo "LEG Browser v0.5+ static open. Hero + Review button + fresh sub-agent tiles should be visible immediately (WS0 closure). Run full checklist below. Kill with: kill $SERVER"; wait $SERVER
 ```
 
 **Post-Launch Immediate Checks (WS0 + Prior Polish Interfacing Fix):**
@@ -206,7 +206,7 @@ See the companion dual Thought Tiles (formal_spec + html_visualization dashboard
 
 ```bash
 # Re-launch static anytime (macOS; Linux: replace open with xdg-open)
-cd /home/a/Documents/Engram && python3 -m http.server 8765 --directory tools/leg-browser >/dev/null 2>&1 & SERVER=$!; sleep 1; (open "http://localhost:8765" || xdg-open "http://localhost:8765"); wait $SERVER
+cd /path/to/Documents/Engram && python3 -m http.server 8765 --directory tools/leg-browser >/dev/null 2>&1 & SERVER=$!; sleep 1; (open "http://localhost:8765" || xdg-open "http://localhost:8765"); wait $SERVER
 
 # Kill any stray test server
 pkill -f "http.server 8765 --directory tools/leg-browser" || true
