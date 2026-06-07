@@ -314,12 +314,11 @@ impl MetalBackend {
             true
         };
 
-        // Return buffers to pool for reuse (regardless of success for simplicity).
-        self.return_buffer_to_pool(query_buf);
-        self.return_buffer_to_pool(cand_buf);
-        self.return_buffer_to_pool(scores_buf);
-
         if !dispatch_ok {
+            // Return buffers to pool even on failure
+            self.return_buffer_to_pool(query_buf);
+            self.return_buffer_to_pool(cand_buf);
+            self.return_buffer_to_pool(scores_buf);
             return Err("Metal dispatch timed out".to_string());
         }
 
@@ -327,6 +326,11 @@ impl MetalBackend {
 
         let scores_ptr = scores_buf.contents() as *const f32;
         let scores = unsafe { std::slice::from_raw_parts(scores_ptr, n) }.to_vec();
+
+        // Return buffers to pool for reuse
+        self.return_buffer_to_pool(query_buf);
+        self.return_buffer_to_pool(cand_buf);
+        self.return_buffer_to_pool(scores_buf);
 
         Ok(scores)
     }
