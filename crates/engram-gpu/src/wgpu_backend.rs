@@ -79,8 +79,8 @@ impl HotBlockCache {
             self.blocks.remove(0); // simple FIFO evict
         }
         self.blocks.push(b);
-        if let Some(dev) = &self.device {
-            self.rebuild_resident(dev);
+        if let Some(dev) = self.device.clone() {
+            self.rebuild_resident(&dev);
         }
     }
 

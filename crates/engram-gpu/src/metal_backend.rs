@@ -307,7 +307,7 @@ impl MetalBackend {
 
         // Async dispatch with timeout + CPU fallback (Metal patch for GPU hand-off).
         // Avoids indefinite block; on timeout or error fall back gracefully.
-        let dispatch_ok = if let Err(e) = self.wait_until_completed_timeout(command_buffer.as_ref(), 5.0) {
+        let dispatch_ok = if let Err(e) = self.wait_until_completed_timeout(&command_buffer, 5.0) {
             warn!("Metal dispatch timeout or error: {:?}, falling back to CPU", e);
             false
         } else {
