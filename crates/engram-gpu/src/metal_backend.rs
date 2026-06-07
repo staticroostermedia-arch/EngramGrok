@@ -97,7 +97,7 @@ pub struct MetalBackend {
     /// Buffer pool for high-priority / repeated GPU dispatches (Metal patch for GPU hand-off).
     /// Reuses MTLBuffer instead of per-query new_buffer (avoids allocation overhead on hot paths).
     /// Pool is simple Vec; get_or_create reuses if size matches or allocates new.
-    high_priority_buffers: RwLock<Vec<MTLBuffer>>,
+    high_priority_buffers: RwLock<Vec<Buffer>>,
 }
 
 // Metal objects are thread-safe Objective-C objects with retain/release semantics.
@@ -239,7 +239,7 @@ impl MetalBackend {
         // Reuse from high_priority_buffers instead of new_buffer every dispatch.
 
         // Query buffer: single 8192 × Complex32 = 64KB
-        let query_buf = self.get_or_create_buffer(vec_bytes as u64);
+        let query_buf: Buffer = self.get_or_create_buffer(vec_bytes as u64);
         // copy query data
         unsafe {
             std::ptr::copy_nonoverlapping(
@@ -251,7 +251,7 @@ impl MetalBackend {
 
         // Candidates buffer: N × 64KB contiguous
         let total_cand_bytes = (n * vec_bytes) as u64;
-        let cand_buf = self.get_or_create_buffer(total_cand_bytes);
+        let cand_buf: Buffer = self.get_or_create_buffer(total_cand_bytes);
         // Pack candidate q-vectors contiguously into the GPU buffer.
         // On UMA this is a simple memcpy within the same physical memory pool.
         let cand_ptr = cand_buf.contents() as *mut u8;
@@ -267,7 +267,7 @@ impl MetalBackend {
 
         // Scores buffer: N × f32
         let scores_bytes = (n * std::mem::size_of::<f32>()) as u64;
-        let scores_buf = self.get_or_create_buffer(scores_bytes);
+        let scores_buf: Buffer = self.get_or_create_buffer(scores_bytes);
 
         // ── Encode and dispatch compute kernel ───────────────────────────────
 
@@ -275,9 +275,9 @@ impl MetalBackend {
         let encoder = command_buffer.new_compute_command_encoder();
 
         encoder.set_compute_pipeline_state(&self.cosine_pipeline);
-        encoder.set_buffer(0, Some(&query_buf), 0);
-        encoder.set_buffer(1, Some(&cand_buf), 0);
-        encoder.set_buffer(2, Some(&scores_buf), 0);
+        encoder.set_buffer(0, Some(query_buf.as_ref()), 0);
+        encoder.set_buffer(1, Some(cand_buf.as_ref()), 0);
+        encoder.set_buffer(2, Some(scores_buf.as_ref()), 0);
 
         // Buffer 3: candidate count (int)
         let n_i32 = n as i32;
@@ -307,7 +307,7 @@ impl MetalBackend {
 
         // Async dispatch with timeout + CPU fallback (Metal patch for GPU hand-off).
         // Avoids indefinite block; on timeout or error fall back gracefully.
-        let dispatch_ok = if let Err(e) = self.wait_until_completed_timeout(&command_buffer, 5.0) {
+        let dispatch_ok = if let Err(e) = self.wait_until_completed_timeout(command_buffer.as_ref(), 5.0) {
             warn!("Metal dispatch timeout or error: {:?}, falling back to CPU", e);
             false
         } else {
@@ -332,7 +332,7 @@ impl MetalBackend {
     }
 
     /// Helper: wait with timeout (simple poll + sleep for Metal; production would use semaphore + dispatch_after).
-    fn wait_until_completed_timeout(&self, cb: &CommandBuffer, timeout_secs: f64) -> Result<(), String> {
+    fn wait_until_completed_timeout(&self, cb: &CommandBufferRef, timeout_secs: f64) -> Result<(), String> {
         use std::time::{Duration, Instant};
         let start = Instant::now();
         let timeout = Duration::from_secs_f64(timeout_secs);
@@ -422,14 +422,14 @@ impl MetalBackend {
     /// Buffer pool helper (Metal patch): reuse or create MTLBuffer of exact size.
     /// Reduces per-query allocation overhead for hot dispatch paths (query, candidates, scores).
     /// Simple pool; in production could size-class or cap size.
-    fn get_or_create_buffer(&self, size: u64) -> MTLBuffer {
+    fn get_or_create_buffer(&self, size: u64) -> Buffer {
         if let Ok(mut pool) = self.high_priority_buffers.write() {
             // Try to find exact size match (or close); for simplicity exact for now.
             if let Some(idx) = pool.iter().position(|b| b.length() == size) {
                 return pool.remove(idx);
             }
             // Allocate new if none suitable.
-            let buf = self.device.new_buffer(size, MTLResourceOptions::StorageModeShared);
+            let buf: Buffer = self.device.new_buffer(size, MTLResourceOptions::StorageModeShared);
             // Optionally cap pool size to avoid unbounded growth.
             if pool.len() > 32 {
                 pool.remove(0);
@@ -441,7 +441,7 @@ impl MetalBackend {
     }
 
     /// Return a buffer to the pool after use (for reuse on next dispatch).
-    fn return_buffer_to_pool(&self, buf: MTLBuffer) {
+    fn return_buffer_to_pool(&self, buf: Buffer) {
         if let Ok(mut pool) = self.high_priority_buffers.write() {
             // Simple push; real impl might dedup by size or evict LRU.
             if pool.len() < 64 {

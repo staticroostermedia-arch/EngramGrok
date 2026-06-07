@@ -450,6 +450,7 @@ impl BvhManifold {
             }
         };
 
+        #[allow(unused_variables)]
         let mut scored: Vec<ScoredCandidate> = ids.iter().enumerate().filter_map(|(i, &id)| {
             let entry_idx = (id as usize).saturating_sub(1);
             let entry = self.entries.get(entry_idx)?;

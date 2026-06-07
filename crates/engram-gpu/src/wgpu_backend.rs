@@ -34,7 +34,7 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
 use bytemuck;
@@ -65,7 +65,7 @@ struct PackedBlock {
 struct HotBlockCache {
     blocks: Vec<PackedBlock>,          // host metadata (concept/crs/provlog) + for final results
     device_db: Option<wgpu::Buffer>,   // resident flat [u32] packed data on device for current hot set
-    device: Option<wgpu::Device>,      // stored for rebuilds (Device is cheap Clone Arc)
+    device: Option<Arc<wgpu::Device>>,      // stored for rebuilds (Device is cheap Clone Arc)
     max_hot: usize,
 }
 
@@ -79,8 +79,8 @@ impl HotBlockCache {
             self.blocks.remove(0); // simple FIFO evict
         }
         self.blocks.push(b);
-        if let Some(dev) = self.device.clone() {
-            self.rebuild_resident(&dev);
+        if let Some(dev) = &self.device {
+            self.rebuild_resident(dev);
         }
     }
 
@@ -93,7 +93,7 @@ impl HotBlockCache {
         // TODO: real paged load from disk/CPU only on miss; for patch keeps hot set small.
     }
 
-    fn set_device(&mut self, d: wgpu::Device) {
+    fn set_device(&mut self, d: Arc<wgpu::Device>) {
         self.device = Some(d);
     }
 
@@ -128,8 +128,8 @@ pub struct WgpuBackend {
     store_path: PathBuf,
     /// CPU backend — handles encode / store / forget / list / fetch.
     cpu: CpuBackend,
-    /// GPU device.
-    device: wgpu::Device,
+    /// GPU device (shared via Arc for hot cache residency without cloning).
+    device: Arc<wgpu::Device>,
     /// GPU submit queue.
     queue: wgpu::Queue,
     /// Compiled `int8_raytracer.wgsl` compute pipeline.
@@ -162,8 +162,9 @@ impl WgpuBackend {
         let cpu = CpuBackend::new(&store_path);
 
         // ── Async GPU initialisation (driven synchronously via pollster) ──
-        let (device, queue) = pollster::block_on(Self::init_gpu())
+        let (raw_device, queue) = pollster::block_on(Self::init_gpu())
             .context("WebGPU initialisation failed")?;
+        let device = Arc::new(raw_device);
 
         // ── Bind group layout (matches WGSL @group(0) @binding(0..3)) ──
         let bind_group_layout = device.create_bind_group_layout(
@@ -219,7 +220,7 @@ impl WgpuBackend {
 
         // ── Build paged/hot INT8 cache (GPU hand-off patch; full mirror avoided) ──
         let mut hot_db = HotBlockCache::new(65536); // cap for hot residency
-        hot_db.set_device(device.clone()); // store for device-resident rebuilds on hot mutations (A wire)
+        hot_db.set_device(Arc::clone(&device)); // share Arc (no Device Clone needed)
         // Lazy paged load: no initial full scan at init (avoids startup time/RAM on 130k+ large-by-design store; matches Codeland lazy on-demand decode for scale without spike).
         // Load happens on first query (see below). (Pre-populate removed per Codeland patterns + TODO in load_if_needed.)
 

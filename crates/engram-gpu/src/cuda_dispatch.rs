@@ -5,7 +5,10 @@
 
 use crate::bvh::{Float3, LBVHNode};
 use num_complex::Complex32;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+// Ordering only used under cuda cfg; silence warning on wgpu/metal builds
+#[cfg_attr(not(feature = "cuda-kernels"), allow(unused_imports))]
+use std::sync::atomic::Ordering;
 
 static CUDA_RUNTIME_OK: AtomicBool = AtomicBool::new(false);
 static CUDA_INIT_TRIED: AtomicBool = AtomicBool::new(false);
